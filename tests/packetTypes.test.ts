@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseModel } from "../../wsn-codegen/src/engine/parser";
+import type { RawContext } from "../../wsn-codegen/src/engine/types";
 import { packetTypeLattice } from "../engine/packetTypes";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -11,6 +12,15 @@ const load = (rel: string) => {
   return parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))
     .map((f) => ({ name: f, xml: readFileSync(resolve(dir, f), "utf8") })));
 };
+
+// Minimal synthetic RawContext builder for tests that don't need real .buc
+// fixtures -- just a name and a list of axiom predicate strings.
+const ctx = (name: string, axiomTexts: string[]): RawContext => ({
+  name,
+  sets: [],
+  constants: [],
+  axioms: axiomTexts.map((text, i) => ({ label: `axm${i}`, text })),
+});
 
 describe("packetTypeLattice", () => {
   it("reads MintRoute's nested partitions", () => {
@@ -31,5 +41,28 @@ describe("packetTypeLattice", () => {
 
   it("returns null when no partition axiom exists", () => {
     expect(packetTypeLattice([])).toBeNull();
+  });
+
+  it("anchors the root on the `type in PKT -> NAME` axiom, not on file order", () => {
+    // AAAA_UNRELATED is processed first and, like TYPE, is nobody else's
+    // child -- under the old "first nobody's-child wins" heuristic it would
+    // be picked as root purely because it comes first. The `type` axiom
+    // must override that and select TYPE instead.
+    const contexts = [
+      ctx("A_first.buc", ["partition(AAAA_UNRELATED, {x}, {y})"]),
+      ctx("C1.buc", ["partition(TYPE, CONTROL, {DATA})", "type ∈ PKT → TYPE"]),
+    ];
+    const lat = packetTypeLattice(contexts)!;
+    expect(lat.root).toBe("TYPE");
+    expect(lat.children.get("TYPE")).toEqual(["CONTROL", "DATA"]);
+  });
+
+  it("throws naming the candidates when several partition roots exist and no type axiom decides it", () => {
+    const contexts = [
+      ctx("A.buc", ["partition(FOO, {a}, {b})"]),
+      ctx("B.buc", ["partition(BAR, {c}, {d})"]),
+    ];
+    expect(() => packetTypeLattice(contexts)).toThrow(/FOO/);
+    expect(() => packetTypeLattice(contexts)).toThrow(/BAR/);
   });
 });
