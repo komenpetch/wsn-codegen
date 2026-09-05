@@ -8,6 +8,7 @@
     "scan": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/scan.ts",
     "shapes": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/shapes.ts",
     "selftest": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/shapes.ts --selftest",
-    "event": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/event.ts"
+    "event": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/event.ts",
+    "test": "cd ../wsn-codegen && npx vitest run --config ../netlayer/vitest.config.ts"
   }
 }
