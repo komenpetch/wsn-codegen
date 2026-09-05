@@ -1,0 +1,13 @@
+{
+  "name": "wsn-codegen-netlayer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Network-layer (M4-M6) extension work for wsn-codegen. Kept separate from the finished app layer until the two are merged.",
+  "scripts": {
+    "scan": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/scan.ts",
+    "shapes": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/shapes.ts",
+    "selftest": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/shapes.ts --selftest",
+    "event": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/event.ts"
+  }
+}
