@@ -19,6 +19,9 @@ import type { PacketField } from "../engine/packetModel";
 import { emitPacketClasses } from "../engine/packetEmitter";
 import { packetRules } from "../engine/packetRules";
 import { miscRules } from "../engine/miscRules";
+import { scalarRules } from "../engine/scalarRules";
+import { composedRules } from "../engine/composedRules";
+import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "../engine/nestedMap";
 import { composeRules } from "../engine/compose";
 import { fixAliasedEncodings, fixBooleanEncodings } from "../engine/aliasEncoding";
 
@@ -51,7 +54,9 @@ export function generateNet(project: string, machine: string): GeneratedTree {
 
   // Composition is installed for the duration of this generation only, so the
   // app-layer catalog module is never mutated for other callers.
-  const composed = composeRules([...packetRules(pm.fields), ...miscRules()]);
+  const nested = nestedMapVars(model);
+  const composed = composeRules([...packetRules(pm.fields), ...miscRules(), ...scalarRules(),
+    ...composedRules(), ...nestedMapRules(nested)]);
   let tree = withRules(composed, () => emit(model, defaultName(machine), 4, raw.contexts));
 
   // Splice the packet classes into the header, above the module class.
@@ -66,6 +71,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = addMissingPacketTypeConstants(tree, pm.lattice.tagOf);
   tree = fixNonLeafSetConstants(tree, pm.lattice);
   tree = fixSetTypedParameters(tree, defaultName(machine));
+  tree = fixNestedMapDeclarations(tree, nested);
   tree = insertPacketRegistry(tree);
   return tree;
 }

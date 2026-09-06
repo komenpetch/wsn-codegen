@@ -88,7 +88,7 @@ describe("generateNet for MintRoute M4", () => {
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(153);
+    expect(after).toBe(91);
   });
 
   it("keeps the flooding events translatable", () => {
