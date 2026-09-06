@@ -13,6 +13,7 @@ import { RULES } from "../../wsn-codegen/src/engine/rules";
 import type { Rule } from "../../wsn-codegen/src/engine/rules";
 import type { GeneratedTree } from "../../wsn-codegen/src/engine/types";
 import { packetTypeLattice } from "../engine/packetTypes";
+import type { TypeLattice } from "../engine/packetTypes";
 import { packetModel } from "../engine/packetModel";
 import type { PacketField } from "../engine/packetModel";
 import { emitPacketClasses } from "../engine/packetEmitter";
@@ -63,7 +64,8 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = undefReservedMacros(tree);
   tree = stripDeadPacketFieldMaps(tree, pm.fields);
   tree = addMissingPacketTypeConstants(tree, pm.lattice.tagOf);
-  tree = fixSetTypedParameters(tree);
+  tree = fixNonLeafSetConstants(tree, pm.lattice);
+  tree = fixSetTypedParameters(tree, defaultName(machine));
   return tree;
 }
 
@@ -87,17 +89,40 @@ export function generateNet(project: string, machine: string): GeneratedTree {
 // only a container can be used (`.count(`/`.empty()`/`.at(`, or `for (auto
 // _v : name)`). Only a parameter the body itself proves needs retyping is
 // retyped, in both the `.cc` definition and the `.h` declaration.
-function fixSetTypedParameters(tree: GeneratedTree): GeneratedTree {
+//
+// `className` MUST be the same name the emitter actually used (`defaultName
+// (machine)` -- "M4App"/"M6App"/whatever the machine label produces), not a
+// literal "M4App". Hardcoding "M4App" here (the bug this fixes, task-7
+// finding surfaced against RTMCS M6) makes `defRe` match nothing for any
+// OTHER machine's class -- RTMCS M6 generates as "M6App" -- so the whole
+// pass silently no-ops and every `int nbs` parameter the body already uses
+// as a set (`nbs.empty()`, `nbs.count(...)`, `for (auto _v : nbs)`) stays
+// declared `int`, a real compile error (7 of `g++ -fsyntax-only`'s 9 errors
+// on the ungated RTMCS M6 output are exactly this: "request for member
+// 'empty'/'count' in 'nbs', which is of non-class type 'int'"). A pass that
+// quietly does nothing is worse than one that fails loudly, so this now
+// throws if `className` matches zero function definitions at all -- that
+// can only mean the class name is wrong, not that the machine legitimately
+// has no guarded-bool-method events (every machine this project generates
+// has at least one).
+function fixSetTypedParameters(tree: GeneratedTree, className: string): GeneratedTree {
   const hFile = tree.find((f) => f.path.endsWith(".h"));
   const ccFile = tree.find((f) => f.path.endsWith(".cc"));
   if (!hFile || !ccFile) return tree;
   let h = hFile.content;
   let cc = ccFile.content;
 
-  const defRe = /^bool M4App::(\w+)\(([^)]*)\) \{$/gm;
+  const escClass = className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const defRe = new RegExp(`^bool ${escClass}::(\\w+)\\(([^)]*)\\) \\{$`, "gm");
   const defs: { method: string; params: string; start: number }[] = [];
   for (let m = defRe.exec(cc); m; m = defRe.exec(cc))
     defs.push({ method: m[1], params: m[2], start: m.index });
+  if (defs.length === 0)
+    throw new Error(
+      `fixSetTypedParameters: found no "bool ${className}::method(...) {" definitions in the ` +
+        `generated .cc -- className is almost certainly wrong (it must match the name the ` +
+        `emitter actually used, defaultName(machine)), not that this machine has zero events.`
+    );
 
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
@@ -119,8 +144,8 @@ function fixSetTypedParameters(tree: GeneratedTree): GeneratedTree {
     if (!changed) continue;
     const newParams = newParamList.join(", ");
     const escParams = def.params.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    cc = cc.replace(new RegExp(`bool M4App::${def.method}\\(${escParams}\\) \\{`),
-      `bool M4App::${def.method}(${newParams}) {`);
+    cc = cc.replace(new RegExp(`bool ${escClass}::${def.method}\\(${escParams}\\) \\{`),
+      `bool ${className}::${def.method}(${newParams}) {`);
     h = h.replace(new RegExp(`bool ${def.method}\\(${escParams}\\);`),
       `bool ${def.method}(${newParams});`);
   }
@@ -160,6 +185,45 @@ function addMissingPacketTypeConstants(tree: GeneratedTree, tagOf: Map<string, n
       `the partition axiom only proves set membership, never a value -- kept equal to PktType::${tag})`
     ).join("\n") + "\n";
     return { ...f, content: f.content.slice(0, at) + decls + f.content.slice(at) };
+  });
+}
+
+// The app-layer's context-constant emission (codeEmitter.ts, off-limits)
+// derives a partition's non-singleton part's VALUE straight off that one
+// axiom's own text -- `partition(TYPE, CONTROL, {DATA})` becomes the literal
+// `inline std::set<int> CONTROL = {1};` -- with no knowledge that CONTROL is
+// itself partitioned further down the lattice (MintRoute's
+// `partition(CONTROL, {ROUTE}, {BEACON})`, RTMCS's `partition(CONTROL,
+// {RREQ}, {RREP}, {RRER})`). So the emitted CONTROL literal and the emitted
+// per-leaf tags contradict each other: MintRoute's `create_bconPkt` guards
+// both `CONTROL.count(type.at(pkt)) > 0` (true only for tag 1) and
+// `type.at(pkt) == BEACON` (tag 2) -- mutually unsatisfiable -- and RTMCS is
+// worse, silently excluding RREP (2) and RRER (3) from CONTROL everywhere
+// (13 `CONTROL.count` sites). packetTypeLattice already holds the whole
+// lattice, so fix it here in terms of THAT, generally: any node this project
+// emits as a `std::set<int>` gets corrected to contain exactly its
+// descendant leaves' tags, whatever those happen to be -- nothing here
+// hardcodes the name "CONTROL", so a model with a deeper or differently
+// shaped lattice is handled the same way.
+function fixNonLeafSetConstants(tree: GeneratedTree, lattice: TypeLattice): GeneratedTree {
+  const leafTagsOf = (node: string): number[] => {
+    const kids = lattice.children.get(node);
+    if (!kids) {
+      const tag = lattice.tagOf.get(node);
+      return tag === undefined ? [] : [tag];
+    }
+    return kids.flatMap(leafTagsOf);
+  };
+  return tree.map((f) => {
+    if (!f.path.endsWith(".h")) return f;
+    let content = f.content;
+    for (const node of lattice.children.keys()) {
+      const tags = [...new Set(leafTagsOf(node))].sort((a, b) => a - b);
+      if (tags.length === 0) continue;
+      const declRe = new RegExp(`(inline std::set<int> ${node} = )\\{[^}]*\\}`);
+      content = content.replace(declRe, `$1{${tags.join(", ")}}`);
+    }
+    return { ...f, content };
   });
 }
 

@@ -29,6 +29,21 @@ describe("generateNet for MintRoute M4", () => {
     expect(h).toContain("class RoutePkt : public PPkt");
   });
 
+  // Important finding fixed 2026-09-06 (final-review pass): the app-layer's
+  // context-constant emission (codeEmitter.ts, off-limits) hardcodes
+  // CONTROL's value straight off the `partition(TYPE, CONTROL, {DATA})`
+  // axiom text alone, with no knowledge that CONTROL is partitioned FURTHER
+  // (`partition(CONTROL, {ROUTE}, {BEACON})`) -- so it always emits `{1}`,
+  // contradicting the leaf tags ROUTE=1/BEACON=2 the SAME header declares a
+  // few lines later. `create_bconPkt` guards both `CONTROL.count(type.at(
+  // pkt)) > 0` (true only for tag 1) and `type.at(pkt) == BEACON` (tag 2) --
+  // mutually unsatisfiable. The fix derives CONTROL from the lattice's own
+  // descendant leaves (ROUTE=1, BEACON=2), so it must be exactly {1, 2}.
+  it("emits CONTROL as exactly its descendant leaf tags, not the app-layer's hardcoded {1}", () => {
+    const h = byExt(".h");
+    expect(h).toMatch(/inline std::set<int> CONTROL = \{1, 2\};/);
+  });
+
   // The 153 baseline (findings/2026-09-06-gap-baseline.md) was measured
   // BEFORE the 2026-09-06 PKT-DOM fix (task-6-report.md). That fix makes
   // `pkt ∉ dom(packetField)` -- the "this packet does not exist yet"
@@ -53,14 +68,27 @@ describe("generateNet for MintRoute M4", () => {
   // "map-of-sets"-encoded one (both individually correct encodings for how
   // each variable is used elsewhere), which the generic app-layer "EQ" rule
   // cannot compile. Every one of these newly-refused clauses is a real,
-  // previously-silent compile hazard, not a weakened guard -- this is the
-  // honest number. Pinned exactly (not `<`) so a future change to either
-  // number is a deliberate, reviewed edit to this test, not a silent drift
-  // in either direction.
+  // previously-silent compile hazard, not a weakened guard.
+  //
+  // 234 is the count after the 2026-09-06 final-review pass's PKT-DOM fix
+  // (task-7-report.md, "FINAL REVIEW FIX WAVE"): PKT-DOM used to emit `true`
+  // for EVERY `∈ dom(F)` clause on the reasoning "a chunk always carries all
+  // its fields", which only holds when F is a TOTAL function (`PKT → ...`).
+  // MintRoute M4's 16 `if (!(true))` guards were hand-audited and every one
+  // traces to a PARTIAL field (`PKT ⇸ ...` -- pktSeqNo/pktSrc/pktFwdr/
+  // pktData/pktNbHops/pktDestAddr/vPktDestAddr, all initialised to ∅); none
+  // trace to the one total field, initialSrcAddr. So PKT-DOM now refuses
+  // `∈ dom(F)` for a partial field exactly like PKT-DOM-NOT already refused
+  // `∉ dom(F)`, and all 16 of those guards move from `if (!(true))` (silently
+  // dropping the precondition) to a genuine UNTRANSLATED GUARD -- +16 here.
+  // This is a real increase in the honestly-reported gap, not a regression:
+  // the old, lower number was wrong, same as the 168->218 move above. Pinned
+  // exactly (not `<`) so a future change to either number is a deliberate,
+  // reviewed edit to this test, not a silent drift in either direction.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(218);
+    expect(after).toBe(234);
   });
 
   it("keeps the flooding events translatable", () => {
@@ -108,16 +136,58 @@ describe("generateNet for MintRoute M4", () => {
     // emitter did.
     expect(sawNotDomClause).toBe(true);
 
-    // The inverse is expected and fine: an `∈ dom(F)` guard correctly and
-    // vacuously translates to `true` under ENC7 (a chunk always carries all
-    // its fields), producing dead-but-correct code (e.g. send_down's own
-    // `pkt ∈ dom(pktSeqNo)` read-back guard, right before the DEL rule wipes
-    // it). 16 is the exact, hand-audited count for MintRoute M4 as of this
-    // fix (task-6-report.md) -- every occurrence traces to a genuine `∈
-    // dom(pktFwdr|pktNbHops|pktSeqNo|pktSrc|pktData|pktDestAddr)` clause in
-    // start_tx_*/send_down/receive_*/sink_recv_*. Pinned exactly so a rule
-    // change that starts (or stops) matching ∈ differently is caught.
+    // UPDATED 2026-09-06 (final-review pass, "FINAL REVIEW FIX WAVE" in
+    // task-7-report.md): an `∈ dom(F)` guard only vacuously translates to
+    // `true` under ENC7 when F is a TOTAL function (`PKT → ...`) -- "a chunk
+    // always carries all its fields" is a fact about total functions, not
+    // partial ones. It used to be pinned at 16 (task-6-report.md), on the
+    // belief that ALL `∈ dom(F)` guards were vacuous; a hand audit for THIS
+    // fix found the opposite: every one of those 16 traces to a PARTIAL field
+    // (`PKT ⇸ ...` -- pktFwdr/pktNbHops/pktSeqNo/pktSrc/pktData/pktDestAddr,
+    // all initialised to ∅) and 0 trace to the one total field,
+    // initialSrcAddr (which MintRoute never guards `dom(...)` on at all --
+    // see packetRules.ts's EVIDENCE comment). So PKT-DOM now refuses `∈
+    // dom(F)` for a partial field the same way PKT-DOM-NOT already refused
+    // `∉ dom(F)`, and MintRoute M4 -- having no genuine total-field `∈
+    // dom(F)` clause to begin with -- now emits ZERO `if (!(true))` guards.
+    // 0 is therefore the honestly-correct count, not a weakened test: `true`
+    // remains reachable in principle (see the next test) for a project whose
+    // model actually guards `dom()` on a total packet field.
     const trueGuards = (cc.match(/if \(!\(true\)\)/g) ?? []).length;
-    expect(trueGuards).toBe(16);
+    expect(trueGuards).toBe(0);
+  });
+
+  // Mirror-image regression for the Important finding fixed 2026-09-06 (the
+  // same final-review pass): PKT-DOM used to emit `true` for every `∈
+  // dom(F)` clause regardless of whether F is total or partial. This test
+  // re-derives the flattened model directly (independent of generate-net.ts,
+  // same technique as the ∉ test above), finds every top-level `x ∈ dom(F)`
+  // guard conjunct on one of the packet model's own PARTIAL fields, and
+  // asserts that EXACT clause text survives into the .cc as an
+  // `// UNTRANSLATED GUARD` comment -- the honest outcome -- rather than
+  // having silently become `if (!(true))`.
+  it("never collapses a ∈ dom(packetField) guard to if (!(true)) when the field is PARTIAL", () => {
+    const cc = byExt(".cc");
+    const dir = resolve(ROOT, MINT);
+    const raw = parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))
+      .map((f) => ({ name: f, xml: readFileSync(resolve(dir, f), "utf8") })));
+    const lattice = packetTypeLattice(raw.contexts)!;
+    const model = resolveEncodings(flatten(raw, "M4"));
+    const pm = packetModel(raw, model, lattice);
+    const partialFieldNames = new Set(pm.fields.filter((f) => !f.total).map((f) => f.ebName));
+
+    let sawDomClause = false;
+    for (const ev of model.events)
+      for (const g of ev.guards)
+        for (const clause of splitConjuncts(g)) {
+          const m = /^\w+\s*∈\s*dom\(\s*(\w+)\s*\)$/.exec(clause);
+          if (!m || !partialFieldNames.has(m[1])) continue;
+          sawDomClause = true;
+          expect(cc).toContain(clause);   // must show up verbatim as an UNTRANSLATED GUARD comment
+        }
+    // Sanity: M4 really does contain this shape (send_down's own read-back
+    // guard et al.) -- otherwise the loop above would vacuously pass no
+    // matter what the emitter did.
+    expect(sawDomClause).toBe(true);
   });
 });

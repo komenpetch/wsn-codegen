@@ -210,14 +210,26 @@ export function packetRules(fields: PacketField[]): NetRule[] {
         `^${F}\\s*≔\\s*${F}\\s*(?:[\\uE103⊕⊴∪]\\s*)?\\{\\s*(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*\\}$`)),
       emit: () => "",
     });
-    // `x ∈ dom(F)`: vacuously true under ENC7 -- a chunk always carries all
-    // its fields. Matches ONLY the ∈ spelling (the non-capturing-group bug
-    // that also matched ∉ here, silently emitting `true` for it too, is the
-    // Critical finding task-6-report.md fixes).
+    // `x ∈ dom(F)`: for a TOTAL function (F.total, e.g. initialSrcAddr,
+    // netSeqNo -- `PKT → ...`) this is vacuously true under ENC7, since a
+    // chunk always carries all its fields. For a PARTIAL function
+    // (`PKT ⇸ ...`, the shape most packet fields actually have --
+    // pktSeqNo/pktSrc/pktFwdr/pktData/pktNbHops and friends, all initialised
+    // to ∅) it is NOT vacuous: it is the real "has this attribute been set
+    // yet" precondition (send_down's own read-back guard, right before the
+    // field is wiped), and emitting `true` for it silently drops that
+    // precondition -- the mirror image of the ∉ bug fixed below, and the
+    // Important finding the 2026-09-06 final-review pass fixes. So DOM only
+    // ever emits `true` for a total field; for a partial one it refuses the
+    // clause exactly like PKT-DOM-NOT does (same "intercept ahead of the
+    // generic app-layer DOM rule, emit ''" technique, same UNTRANSLATED
+    // outcome). Matches ONLY the ∈ spelling (the non-capturing-group bug that
+    // also matched ∉ here, silently emitting `true` for it too, was a
+    // separate Critical finding, task-6-report.md).
     if (ev.DOM) out.push({
       id: `PKT-DOM-${f.ebName}`, tier: 1, evidence: ev.DOM,
       match: re(new RegExp(`^\\w+\\s*∈\\s*dom\\(\\s*${F}\\s*\\)$`)),
-      emit: () => `true`,
+      emit: () => f.total ? `true` : "",
     });
     // `x ∉ dom(F)` is NOT translatable under ENC7: it asks whether the
     // packet/chunk exists at all, and once F's value lives on the chunk that

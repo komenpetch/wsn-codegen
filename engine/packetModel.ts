@@ -1,7 +1,7 @@
 import type { RawModel, EncodedMachine, FlatEvent } from "../../wsn-codegen/src/engine/types";
 import type { TypeLattice } from "./packetTypes";
 
-export interface PacketField { name: string; ebName: string; cppType: "int" | "Node"; source: "context" | "variable"; }
+export interface PacketField { name: string; ebName: string; cppType: "int" | "Node"; source: "context" | "variable"; total: boolean; }
 export interface PacketLeaf { typeName: string; tag: string; event: string; }
 export interface PacketModel { fields: PacketField[]; leaves: PacketLeaf[]; lattice: TypeLattice; }
 
@@ -14,7 +14,12 @@ export interface PacketModel { fields: PacketField[]; leaves: PacketLeaf[]; latt
 // The family is exactly the functions whose DOMAIN is the packet carrier.
 // Rodin's own spacing is inconsistent ("initialSrcAddr ∈PKT → ND",
 // "pktSrc ∈  PKT⇸ ND"), so whitespace around ∈ and the arrow is optional.
-const PKT_DOMAIN = /^\s*\w+\s*∈\s*PKT\s*(?:→|⇸)/;
+// The arrow itself is now CAPTURED -- → (total) vs ⇸ (partial) is not
+// cosmetic: see PacketField.total and PKT-DOM in packetRules.ts. A total
+// function's domain is the whole carrier (`pkt ∈ dom(F)` is vacuously true
+// once the chunk exists); a partial one's is not (`∈ dom(F)` is a real
+// "has this attribute been set yet" precondition).
+const PKT_DOMAIN = /^\s*\w+\s*∈\s*PKT\s*(→|⇸)/;
 
 // A field's C++ type: a node-valued attribute is a Node, everything else an int.
 const nodeValued = (inv: string) => /(?:→|⇸)\s*ND\b/.test(inv);
@@ -30,18 +35,22 @@ const FIELD_NAME: Record<string, string> = {
 export function packetModel(raw: RawModel, machine: EncodedMachine, lattice: TypeLattice): PacketModel {
   const fields: PacketField[] = [];
   const seen = new Set<string>();
-  const add = (ebName: string, inv: string, source: "context" | "variable") => {
+  const add = (ebName: string, inv: string, source: "context" | "variable", total: boolean) => {
     if (ebName === "type" || seen.has(ebName)) return;   // `type` is the discriminator
     seen.add(ebName);
-    fields.push({ name: FIELD_NAME[ebName] ?? ebName, ebName, cppType: nodeValued(inv) ? "Node" : "int", source });
+    fields.push({ name: FIELD_NAME[ebName] ?? ebName, ebName, cppType: nodeValued(inv) ? "Node" : "int", source, total });
   };
 
   for (const c of raw.contexts)
-    for (const a of c.axioms)
-      if (PKT_DOMAIN.test(a.text)) add(a.text.split(/\s*∈\s*/)[0].trim(), a.text, "context");
+    for (const a of c.axioms) {
+      const m = PKT_DOMAIN.exec(a.text);
+      if (m) add(a.text.split(/\s*∈\s*/)[0].trim(), a.text, "context", m[1] === "→");
+    }
 
-  for (const [id, inv] of machine.variableTypes)
-    if (PKT_DOMAIN.test(inv)) add(id, inv, "variable");
+  for (const [id, inv] of machine.variableTypes) {
+    const m = PKT_DOMAIN.exec(inv);
+    if (m) add(id, inv, "variable", m[1] === "→");
+  }
 
   const leaves: PacketLeaf[] = [];
   for (const tag of lattice.leaves) {

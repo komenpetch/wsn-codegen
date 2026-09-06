@@ -10,8 +10,8 @@ const pm: PacketModel = {
     tagOf: new Map([["DATA", 0], ["ROUTE", 1], ["BEACON", 2]]),
   },
   fields: [
-    { name: "seqNum", ebName: "pktSeqNo", cppType: "int", source: "variable" },
-    { name: "srcAddr", ebName: "pktSrc", cppType: "Node", source: "variable" },
+    { name: "seqNum", ebName: "pktSeqNo", cppType: "int", source: "variable", total: false },
+    { name: "srcAddr", ebName: "pktSrc", cppType: "Node", source: "variable", total: false },
   ],
   leaves: [
     { typeName: "DataPkt", tag: "DATA", event: "create_dataPkt" },

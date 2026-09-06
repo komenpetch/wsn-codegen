@@ -2,12 +2,27 @@ import { describe, it, expect } from "vitest";
 import { packetRules } from "../engine/packetRules";
 import type { PacketField } from "../engine/packetModel";
 
+// Both real fields here are PARTIAL (`PKT ⇸ ...`) -- pktSeqNo/pktNbHops's
+// actual shape in both MintRoute and RTMCS (verified against the raw .bum
+// invariants; neither model ever declares them `PKT → ...`). A separate
+// TOTAL fixture field (initialSrcAddr's real shape, `PKT → ND`) is added
+// below to exercise the other half of PKT-DOM.
 const fields: PacketField[] = [
-  { name: "seqNum", ebName: "pktSeqNo", cppType: "int", source: "variable" },
-  { name: "nbHops", ebName: "pktNbHops", cppType: "int", source: "variable" },
+  { name: "seqNum", ebName: "pktSeqNo", cppType: "int", source: "variable", total: false },
+  { name: "nbHops", ebName: "pktNbHops", cppType: "int", source: "variable", total: false },
+];
+const totalFields: PacketField[] = [
+  { name: "initialSrcAddr", ebName: "initialSrcAddr", cppType: "Node", source: "context", total: true },
 ];
 const apply = (expr: string) => {
   for (const r of packetRules(fields)) {
+    const hit = r.match(expr);
+    if (hit) return r.emit(hit, () => undefined);
+  }
+  return null;
+};
+const applyTotal = (expr: string) => {
+  for (const r of packetRules(totalFields)) {
     const hit = r.match(expr);
     if (hit) return r.emit(hit, () => undefined);
   }
@@ -41,8 +56,26 @@ describe("packet-access rules", () => {
     expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}")).toBeFalsy();
   });
 
-  it("treats ∈-domain membership as always-true for a chunk field", () => {
-    expect(apply("pkt ∈ dom(pktSeqNo)")).toBe("true");
+  // Important finding fixed 2026-09-06 (final-review pass): the mirror image
+  // of the ∉ bug just below. PKT-DOM used to emit `true` for EVERY `∈
+  // dom(F)` clause on the reasoning "a chunk always carries all its fields"
+  // -- which only holds when F is a TOTAL function. pktSeqNo is PARTIAL
+  // (`PKT ⇸ ℕ`, initialised to ∅) in both real corpora, so `pkt ∈
+  // dom(pktSeqNo)` is a genuine "has this attribute been set yet"
+  // precondition (send_down's own read-back guard), and emitting `true` for
+  // it silently dropped that precondition. It now matches (so the generic
+  // app-layer DOM rule never gets a turn) but refuses, same as PKT-DOM-NOT.
+  it("refuses ∈-domain membership on a PARTIAL chunk field rather than assuming it vacuous", () => {
+    expect(apply("pkt ∈ dom(pktSeqNo)")).toBeFalsy();
+  });
+
+  // The other half: a TOTAL field (initialSrcAddr, `PKT → ND` in both real
+  // models) really is vacuously true under ENC7 -- every packet has always
+  // had this attribute, by the model's own totality axiom -- so PKT-DOM still
+  // emits `true` here, the one case the "chunk always carries all its
+  // fields" reasoning actually holds for.
+  it("still treats ∈-domain membership as vacuously true for a TOTAL chunk field", () => {
+    expect(applyTotal("pkt ∈ dom(initialSrcAddr)")).toBe("true");
   });
 
   // Regression for the Critical finding fixed 2026-09-06 (task-6-report.md):
