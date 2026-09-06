@@ -28,6 +28,52 @@ const num = (s: string) => s.replace(/−/g, "-");
 
 export function scalarRules(): NetRule[] {
   return [
+    // ── Domain-checked function application ──────────────────────────────
+    //
+    // In Event-B a guard is an unordered CONJUNCTION, so `f(k) = v` sits
+    // happily beside `k ∈ dom(f)` in either order. The emitter turns guards
+    // into a SEQUENCE of early returns, and `std::map::at` on an absent key
+    // throws -- so whenever the domain check is written second, the emitted
+    // code throws std::out_of_range before ever reaching it.
+    //
+    // This is not hypothetical: it is what stopped the first flood run, at
+    // sensor3, event #9. It is also the hazard this project's notes have
+    // carried since the app layer without a reproduction.
+    //
+    // These supersede the app-layer catalog's FN1 / FN1-cmp / FN1-SET1 in
+    // place, adding the domain test the Event-B well-definedness proof
+    // obligation already guarantees. For a partial function an application
+    // outside the domain has no value, so a guard mentioning it cannot hold --
+    // `false` is the faithful answer, and it is what `count(k) > 0 && …` gives.
+    {
+      id: "FN1-SET1-SAFE", tier: 1, supersedes: "FN1-SET1",
+      evidence: ["MintRoute.create_bconPkt", "MintRoute.create_routePkt"],
+      match: re(new RegExp(`^(?<f>\\w+)\\(\\s*(?<k>\\w+)\\s*\\)\\s*(?<op>∈|∉)\\s*(?<S>\\w+)$`)),
+      emit: (m) => {
+        const { f, k, op, S } = m.captures;
+        return op === "∈"
+          ? `(${f}.count(${k}) > 0 && ${S}.count(${f}.at(${k})) > 0)`
+          : `(${f}.count(${k}) == 0 || ${S}.count(${f}.at(${k})) == 0)`;
+      },
+    },
+    {
+      id: "FN1-CMP-SAFE", tier: 1, supersedes: "FN1-cmp",
+      evidence: ["MintRoute.create_bconPkt", "MintRoute.start_flooding"],
+      match: re(new RegExp(`^(?<f>\\w+)\\(\\s*(?<k>\\w+)\\s*\\)\\s*=\\s*(?<v>\\w+)$`)),
+      emit: (m) => {
+        const { f, k, v } = m.captures;
+        return `(${f}.count(${k}) > 0 && ${f}.at(${k}) == ${v})`;
+      },
+    },
+    {
+      id: "FN1-SAFE", tier: 1, supersedes: "FN1",
+      evidence: ["MintRoute.send_down", "MintRoute.create_bconPkt"],
+      match: re(new RegExp(`^(?<y>\\w+)\\s*=\\s*(?<f>\\w+)\\(\\s*(?<x>\\w+)\\s*\\)$`)),
+      emit: (m) => {
+        const { y, f, x } = m.captures;
+        return `(${f}.count(${x}) > 0 && ${y} == ${f}.at(${x}))`;
+      },
+    },
     // `y = f(x) + n` -- an event parameter BOUND to a computed value. In
     // Event-B this constrains the parameter; in C++ the parameter arrives from
     // the caller, so the faithful emission is the check that it holds.
@@ -38,7 +84,7 @@ export function scalarRules(): NetRule[] {
         `^(?<y>\\w+)\\s*=\\s*(?<f>\\w+)\\(\\s*(?<x>\\w+)\\s*\\)\\s*(?<op>\\+|−|-)\\s*(?<n>\\d+)$`)),
       emit: (m) => {
         const { y, f, x, op, n } = m.captures;
-        return `${y} == ${f}.at(${x}) ${op === "+" ? "+" : "-"} ${n}`;
+        return `(${f}.count(${x}) > 0 && ${y} == ${f}.at(${x}) ${op === "+" ? "+" : "-"} ${n})`;
       },
     },
     // `y = <literal>` -- e.g. `nbh = −1`, the "no hop count yet" sentinel every
@@ -59,7 +105,7 @@ export function scalarRules(): NetRule[] {
       emit: (m) => {
         const { f, x, op, n } = m.captures;
         const cpp = op === "≥" ? ">=" : op === "≤" ? "<=" : op;
-        return `${f}.at(${x}) ${cpp} ${num(n)}`;
+        return `(${f}.count(${x}) > 0 && ${f}.at(${x}) ${cpp} ${num(n)})`;
       },
     },
     // `f(x) ≔ f(x) + n` -- increment in place.
@@ -79,7 +125,7 @@ export function scalarRules(): NetRule[] {
       id: "NEQ-FN", tier: 3,
       evidence: ["MintRoute.create_dataPkt", "MintRoute.start_tx_dataPkt"],
       match: re(new RegExp(`^(?<f>\\w+)\\(\\s*(?<x>\\w+)\\s*\\)\\s*≠\\s*(?<v>\\w+)$`)),
-      emit: (m) => `${m.captures.f}.at(${m.captures.x}) != ${m.captures.v}`,
+      emit: (m) => `(${m.captures.f}.count(${m.captures.x}) > 0 && ${m.captures.f}.at(${m.captures.x}) != ${m.captures.v})`,
     },
     // `a ≠ b` -- EQ's missing dual. Deliberately last of the scalar rules and
     // narrowly anchored, so it cannot swallow `S ≠ ∅` (the app-layer SET4

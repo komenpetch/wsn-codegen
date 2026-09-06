@@ -131,8 +131,13 @@ describe("generateNet for MintRoute M4", () => {
     const fieldNames = ["pktSeqNo", "pktSrc", "pktFwdr", "pktData", "pktNbHops"];
 
     // Every dom() guard on a packet field became a real store lookup...
-    const notIn = (cc.match(/pktStore\.count\(\w+\) == 0/g) ?? []).length;
-    const isIn = (cc.match(/pktStore\.count\(\w+\) > 0/g) ?? []).length;
+    // pktLive, not pktStore: the domain of the PARTIAL packet functions is
+    // distinct from chunk existence (a chunk can be built before the model
+    // considers the packet created). Conflating them made every creating
+    // event's freshness guard unsatisfiable and was why the flood would not
+    // start.
+    const notIn = (cc.match(/pktLive\.count\(\w+\) == 0/g) ?? []).length;
+    const isIn = (cc.match(/pktLive\.count\(\w+\) > 0/g) ?? []).length;
     expect(notIn).toBeGreaterThan(0);
     expect(isIn).toBeGreaterThan(0);
 

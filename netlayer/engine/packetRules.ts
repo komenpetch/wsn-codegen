@@ -212,7 +212,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-SET-${f.ebName}`, tier: 1, evidence: ev.SET,
       match: re(new RegExp(
         `^${F}\\s*≔\\s*${F}\\s*(?:[\\uE103⊕⊴∪]\\s*)?\\{\\s*(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*\\}$`)),
-      emit: (m) => `ensurePkt(${m.captures.p})->${S}(${m.captures.v});`,
+      emit: (m) => `ensurePkt(${m.captures.p})->${S}(${m.captures.v}); pktLive.insert(${m.captures.p});`,
     });
     // `x ∈ dom(F)`: for a TOTAL function (F.total, e.g. initialSrcAddr,
     // netSeqNo -- `PKT → ...`) this is vacuously true under ENC7, since a
@@ -239,7 +239,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       // exactly the set of packets this node holds -- and that is what
       // pktStore is. One lookup answers both. Before the registry existed
       // there was nothing to look in, so a partial field had to be refused.
-      emit: (m) => `pktStore.count(${m.captures.p}) > 0`,
+      emit: (m) => f.total ? "true" : `pktLive.count(${m.captures.p}) > 0`,
     });
     // `x ∉ dom(F)` is NOT translatable under ENC7: it asks whether the
     // packet/chunk exists at all, and once F's value lives on the chunk that
@@ -266,7 +266,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       // The freshness precondition of every creating event ("this packet does
       // not exist yet"), and the registry is precisely what makes it
       // answerable again.
-      emit: (m) => `pktStore.count(${m.captures.p}) == 0`,
+      emit: (m) => f.total ? "false" : `pktLive.count(${m.captures.p}) == 0`,
     });
     // Domain anti-restriction on a chunk field is a no-op: the packet is being
     // discarded, and the field goes with it.

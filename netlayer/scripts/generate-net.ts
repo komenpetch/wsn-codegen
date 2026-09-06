@@ -23,6 +23,7 @@ import { scalarRules } from "../engine/scalarRules";
 import { composedRules } from "../engine/composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "../engine/nestedMap";
 import { installScheduler } from "../engine/scheduler";
+import { bindNodeIdentity } from "../engine/nodeIdentity";
 import { composeRules } from "../engine/compose";
 import { fixAliasedEncodings, fixBooleanEncodings } from "../engine/aliasEncoding";
 
@@ -75,7 +76,8 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = fixNestedMapDeclarations(tree, nested);
   tree = insertPacketRegistry(tree);
   // Last: the scheduler reads the FINAL emitted signatures.
-  tree = installScheduler(tree, model, defaultName(machine));
+  tree = bindNodeIdentity(tree, model, defaultName(machine));
+  tree = installScheduler(tree, model, defaultName(machine), pm.fields);
   return tree;
 }
 
@@ -138,6 +140,12 @@ function insertPacketRegistry(tree: GeneratedTree): GeneratedTree {
       "    // Identity binding: the model's PktId to the chunk carrying its fields.",
       "    // This map is also dom(pktSeqNo), dom(pktSrc), ... -- see PKT-DOM.",
       "    std::map<PktId, inet::Ptr<PPkt>> pktStore;",
+      "    // dom() of the PARTIAL packet-attribute functions. Distinct from",
+      "    // pktStore: a chunk may exist before the model considers the packet",
+      "    // created, and a TOTAL context function (initialSrcAddr) is defined",
+      "    // for every packet regardless. Conflating the two made every",
+      "    // creating event's freshness guard unsatisfiable.",
+      "    std::set<PktId> pktLive;",
       "    PktId nextPktId = 1;",
       "    PPkt *pktOf(PktId id) {",
       "        auto it = pktStore.find(id);",

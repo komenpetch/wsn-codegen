@@ -56,11 +56,13 @@ describe("packet-access rules", () => {
   });
 
   it("writes a field through the identity binding (override spelling)", () => {
-    expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}")).toBe("ensurePkt(pkt)->setSeqNum(sno);");
+    expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}"))
+      .toBe("ensurePkt(pkt)->setSeqNum(sno); pktLive.insert(pkt);");
   });
 
   it("writes a field through the identity binding (union spelling)", () => {
-    expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}")).toBe("ensurePkt(pkt)->setNbHops(nbh);");
+    expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}"))
+      .toBe("ensurePkt(pkt)->setNbHops(nbh); pktLive.insert(pkt);");
   });
 
   // The precondition this guards is the one PKT-DOM used to drop by emitting
@@ -70,12 +72,12 @@ describe("packet-access rules", () => {
   // that a real test is emitted, and specifically NOT the constant `true`.
   it("tests ∈-domain membership on a PARTIAL field for real, never as a constant", () => {
     const out = apply("pkt ∈ dom(pktSeqNo)");
-    expect(out).toBe("pktStore.count(pkt) > 0");
+    expect(out).toBe("pktLive.count(pkt) > 0");
     expect(out).not.toBe("true");
   });
 
   it("answers ∈-domain membership for a TOTAL field from the same store", () => {
-    expect(applyTotal("pkt ∈ dom(initialSrcAddr)")).toBe("pktStore.count(pkt) > 0");
+    expect(applyTotal("pkt ∈ dom(initialSrcAddr)")).toBe("true");
   });
 
   // Regression for the Critical ∈/∉ conflation (task-6-report.md): PKT-DOM once
@@ -86,7 +88,7 @@ describe("packet-access rules", () => {
   it("does not conflate pkt ∉ dom(f) with pkt ∈ dom(f)", () => {
     const notIn = apply("pkt ∉ dom(pktSeqNo)");
     const isIn  = apply("pkt ∈ dom(pktSeqNo)");
-    expect(notIn).toBe("pktStore.count(pkt) == 0");
+    expect(notIn).toBe("pktLive.count(pkt) == 0");
     expect(notIn).not.toBe(isIn);
   });
   it("leaves non-packet variables alone", () => {

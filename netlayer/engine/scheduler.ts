@@ -1,5 +1,6 @@
 import type { EncodedMachine, GeneratedTree } from "../../src/engine/types";
 import { splitConjuncts } from "../../src/engine/ruleEngine";
+import type { PacketField } from "./packetModel";
 
 // A generic event scheduler.
 //
@@ -66,7 +67,7 @@ function signatures(cc: string, cls: string): Map<string, Param[]> {
 }
 
 function planFor(label: string, params: Param[], guards: string[], carriers: Set<string>,
-  enc: (id: string) => string | undefined, nestedVars: Set<string>): Plan {
+  enc: (id: string) => string | undefined, nestedVars: Set<string>, pktField: Map<string, string>): Plan {
   const clauses = guards.flatMap((g) => splitConjuncts(g));
   const lines: string[] = [];
   const rollback: string[] = [];
@@ -133,8 +134,17 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         for (const c of clauses) {
           const m = new RegExp(`^(\\w+)\\s*=\\s*(\\w+)\\(\\s*${p}\\s*\\)$`).exec(c.trim());
           if (m && resolved.has(m[1])) {
-            lines.push(`    ${m[2]}[${p}] = ${m[1]};`);
-            rollback.push(`    ${m[2]}.erase(${p});`);
+            // ENC7 may have MOVED this attribute onto the chunk. Writing the old
+            // context map would then satisfy nothing: the guard reads the chunk.
+            // Getting this wrong is why the first instrumented run fired
+            // start_flooding but never create_bconPkt.
+            const acc = pktField.get(m[2]);
+            if (acc) {
+              lines.push(`    ensurePkt(${p})->set${acc}(${m[1]});`);
+            } else {
+              lines.push(`    ${m[2]}[${p}] = ${m[1]};`);
+              rollback.push(`    ${m[2]}.erase(${p});`);
+            }
           }
         }
         resolved.add(p); progress = true; continue;
@@ -198,7 +208,8 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
     : { label, params, lines, rollback, ok: false, why: `no binding for ${missing.join(", ")}` };
 }
 
-export function emitScheduler(model: EncodedMachine, cls: string, cc: string): { decls: string; defs: string } {
+export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: PacketField[]): { decls: string; defs: string } {
+  const pktField = new Map(fields.map((f) => [f.ebName, f.name.charAt(0).toUpperCase() + f.name.slice(1)]));
   // Two-level tables, recognised the same way nestedMap.ts does.
   const nestedVars = new Set<string>();
   for (const [n, inv] of model.variableTypes)
@@ -210,7 +221,7 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string): {
     if (ev.label === "INITIALISATION") continue;
     const params = sigs.get(ev.label);
     if (!params) continue;                       // not emitted as a bool method
-    plans.push(planFor(ev.label, params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars));
+    plans.push(planFor(ev.label, params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField));
   }
 
   const firable = plans.filter((p) => p.ok);
@@ -220,7 +231,7 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string): {
     const call = `${p.label}(${p.params.map((x) => x.name).join(", ")})`;
     const body = [
       ...p.lines,
-      `    if (${call}) return true;`,
+      `    if (${call}) { firedCount["${p.label}"]++; return true; }`,
       ...(p.rollback.length ? p.rollback : []),
       ...Array(loops).fill("    }"),
       "    return false;",
@@ -239,6 +250,10 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string): {
 
   const decls = [
     "    // ── Event scheduler (Event-B operational semantics) ──",
+    "    // How many times each event actually fired. Without this the run is",
+    "    // unmeasurable: a green 60s and a plausible packet count say nothing",
+    "    // about whether the MODEL executed, which is the only thing under test.",
+    "    std::map<std::string, long> firedCount;",
     ...firable.map((p) => `    bool try_${p.label}();`),
     ...skipped.map((p) => `    // not schedulable: ${p.label} -- ${p.why}`),
     `    bool runEnabledEvents();`,
@@ -248,10 +263,10 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string): {
 }
 
 // Splice the scheduler in, and call it from the sensing timer.
-export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls: string): GeneratedTree {
+export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls: string, fields: PacketField[]): GeneratedTree {
   const ccFile = tree.find((f) => f.path.endsWith(".cc"));
   if (!ccFile) return tree;
-  const { decls, defs } = emitScheduler(model, cls, ccFile.content);
+  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {
@@ -262,6 +277,17 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
     }
     if (f.path.endsWith(".cc")) {
       let content = f.content;
+      // Record what fired. Without this the run is unmeasurable: a green 60s
+      // and a plausible packet count say nothing about whether the MODEL
+      // executed, which is the only thing under test.
+      const FIN = `void ${cls}::finish() {`;
+      if (content.includes(FIN))
+        content = content.replace(
+          FIN,
+          FIN +
+            '\n    for (auto& _fc : firedCount)' +
+            '\n        recordScalar(("fired:" + _fc.first).c_str(), _fc.second);',
+        );
       const at = content.indexOf("\nDefine_Module(");
       content = at < 0 ? content + "\n" + defs : content.slice(0, at + 1) + defs + "\n\n" + content.slice(at + 1);
       // Drive it from the timer that already exists in the shell.
