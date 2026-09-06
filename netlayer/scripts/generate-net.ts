@@ -66,6 +66,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = addMissingPacketTypeConstants(tree, pm.lattice.tagOf);
   tree = fixNonLeafSetConstants(tree, pm.lattice);
   tree = fixSetTypedParameters(tree, defaultName(machine));
+  tree = insertPacketRegistry(tree);
   return tree;
 }
 
@@ -105,6 +106,45 @@ export function generateNet(project: string, machine: string): GeneratedTree {
 // can only mean the class name is wrong, not that the machine legitimately
 // has no guarded-bool-method events (every machine this project generates
 // has at least one).
+// The identity binding: PktId <-> PPkt.
+//
+// The model addresses a packet by an integer id and keeps its attributes in
+// PKT-keyed functions. ENC7 moved those attributes onto a chunk, which left the
+// generated code holding an `int` with no way to reach the chunk -- so every
+// read, write and domain test on a packet field had to be refused, and every
+// creating event refused to fire with it. This map is that missing link, and it
+// is also literally the DOMAIN of those functions: a packet is in
+// dom(pktSeqNo) exactly when this node holds it. That is why PKT-DOM and
+// PKT-DOM-NOT translate to a lookup here rather than to `true`.
+//
+// Emitted as a MEMBER, not file scope: the packet-keyed functions are machine
+// variables, so each node owns its own: a shared store would let one node see
+// another's packets.
+function insertPacketRegistry(tree: GeneratedTree): GeneratedTree {
+  const ANCHOR = "    // ── Event-B machine state ──";
+  return tree.map((f) => {
+    if (!f.path.endsWith(".h") || !f.content.includes(ANCHOR)) return f;
+    const registry = [
+      ANCHOR,
+      "    // Identity binding: the model's PktId to the chunk carrying its fields.",
+      "    // This map is also dom(pktSeqNo), dom(pktSrc), ... -- see PKT-DOM.",
+      "    std::map<PktId, inet::Ptr<PPkt>> pktStore;",
+      "    PktId nextPktId = 1;",
+      "    PPkt *pktOf(PktId id) {",
+      "        auto it = pktStore.find(id);",
+      "        return it == pktStore.end() ? nullptr : it->second.get();",
+      "    }",
+      "    PPkt *ensurePkt(PktId id) {",
+      "        auto& p = pktStore[id];",
+      "        if (!p) p = inet::makeShared<PPkt>();",
+      "        return p.get();",
+      "    }",
+      "    PktId newPktId() { PktId id = nextPktId++; ensurePkt(id); return id; }",
+    ].join("\n");
+    return { ...f, content: f.content.replace(ANCHOR, registry) };
+  });
+}
+
 export function fixSetTypedParameters(tree: GeneratedTree, className: string): GeneratedTree {
   const hFile = tree.find((f) => f.path.endsWith(".h"));
   const ccFile = tree.find((f) => f.path.endsWith(".cc"));

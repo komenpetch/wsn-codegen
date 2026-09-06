@@ -3,6 +3,7 @@ import type { PacketField } from "./packetModel";
 
 export interface NetRule extends Rule { tier: 1 | 2 | 3; evidence: string[]; supersedes?: string; }
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const re = (p: RegExp) => (expr: string): RuleMatch | null => {
   const g = p.exec(expr.trim());
@@ -176,6 +177,9 @@ export function packetRules(fields: PacketField[]): NetRule[] {
   const out: NetRule[] = [];
   for (const f of fields) {
     const F = esc(f.ebName);
+    // Accessor names on the emitted chunk, reachable now that the identity
+    // binding gives the generated code a PPkt to call them on.
+    const G = `get${cap(f.name)}`, S = `set${cap(f.name)}`;
     const ev = EVIDENCE[f.ebName] ?? {};
 
     // `y = F(p)`: reads back the chunk field of "the packet identified by
@@ -195,7 +199,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     if (ev.GET) out.push({
       id: `PKT-GET-${f.ebName}`, tier: 1, evidence: ev.GET,
       match: re(new RegExp(`^(?<y>\\w+)\\s*=\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)$`)),
-      emit: () => "",
+      emit: (m) => `${m.captures.y} == pktOf(${m.captures.p})->${G}()`,
     });
     // Both write spellings the models use: relational override (U+E103 / U+2295
     // / U+22B4) and union with a maplet. No `u` flag: in unicode mode `\{` is an
@@ -208,7 +212,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-SET-${f.ebName}`, tier: 1, evidence: ev.SET,
       match: re(new RegExp(
         `^${F}\\s*≔\\s*${F}\\s*(?:[\\uE103⊕⊴∪]\\s*)?\\{\\s*(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*\\}$`)),
-      emit: () => "",
+      emit: (m) => `ensurePkt(${m.captures.p})->${S}(${m.captures.v});`,
     });
     // `x ∈ dom(F)`: for a TOTAL function (F.total, e.g. initialSrcAddr,
     // netSeqNo -- `PKT → ...`) this is vacuously true under ENC7, since a
@@ -228,8 +232,14 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     // separate Critical finding, task-6-report.md).
     if (ev.DOM) out.push({
       id: `PKT-DOM-${f.ebName}`, tier: 1, evidence: ev.DOM,
-      match: re(new RegExp(`^\\w+\\s*∈\\s*dom\\(\\s*${F}\\s*\\)$`)),
-      emit: () => f.total ? `true` : "",
+      match: re(new RegExp(`^(?<p>\\w+)\\s*∈\\s*dom\\(\\s*${F}\\s*\\)$`)),
+      // Now answerable for BOTH kinds of field, because the identity binding
+      // gives the domain a home. A total field is carried by every chunk, so
+      // membership is the chunk's own existence; a partial field's domain is
+      // exactly the set of packets this node holds -- and that is what
+      // pktStore is. One lookup answers both. Before the registry existed
+      // there was nothing to look in, so a partial field had to be refused.
+      emit: (m) => `pktStore.count(${m.captures.p}) > 0`,
     });
     // `x ∉ dom(F)` is NOT translatable under ENC7: it asks whether the
     // packet/chunk exists at all, and once F's value lives on the chunk that
@@ -252,8 +262,11 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     // this rule replaces.
     if (ev.DOM_NOT) out.push({
       id: `PKT-DOM-NOT-${f.ebName}`, tier: 1, evidence: ev.DOM_NOT,
-      match: re(new RegExp(`^\\w+\\s*∉\\s*dom\\(\\s*${F}\\s*\\)$`)),
-      emit: () => "",
+      match: re(new RegExp(`^(?<p>\\w+)\\s*∉\\s*dom\\(\\s*${F}\\s*\\)$`)),
+      // The freshness precondition of every creating event ("this packet does
+      // not exist yet"), and the registry is precisely what makes it
+      // answerable again.
+      emit: (m) => `pktStore.count(${m.captures.p}) == 0`,
     });
     // Domain anti-restriction on a chunk field is a no-op: the packet is being
     // discarded, and the field goes with it.

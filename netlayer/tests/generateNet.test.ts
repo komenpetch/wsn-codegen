@@ -88,7 +88,7 @@ describe("generateNet for MintRoute M4", () => {
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(234);
+    expect(after).toBe(153);
   });
 
   it("keeps the flooding events translatable", () => {
@@ -112,83 +112,37 @@ describe("generateNet for MintRoute M4", () => {
   // model's own fields, and asserts that EXACT clause text survives into
   // the .cc as an `// UNTRANSLATED GUARD` comment -- the honest outcome --
   // rather than having silently become `if (!(true))`.
-  it("never collapses a ∉ dom(packetField) guard to if (!(true))", () => {
+  // The ∈/∉ pair must stay OPPOSITE, and neither may become a constant.
+  //
+  // History, because the assertion has moved twice and each move was a real
+  // finding. First PKT-DOM emitted `true` for BOTH operators (a non-capturing
+  // `(?:∈|∉)` group), silently inverting the creating events' "this packet does
+  // not exist yet" precondition -- Critical, task-6-report.md. Then the
+  // surviving ∈ half was found to be justified only for TOTAL fields, while all
+  // 16 real sites were PARTIAL, so both operators were refused outright and the
+  // clauses surfaced as UNTRANSLATED. The identity binding removes the reason
+  // for refusing: pktStore IS dom(pktSeqNo), so both operators are answerable
+  // and answerable DIFFERENTLY.
+  //
+  // What must never come back is a dom guard collapsing to a constant, in
+  // either direction -- so `if (!(true))` staying at zero is still asserted.
+  it("translates both dom() operators against the identity binding, oppositely", () => {
     const cc = byExt(".cc");
-    const dir = resolve(ROOT, MINT);
-    const raw = parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))
-      .map((f) => ({ name: f, xml: readFileSync(resolve(dir, f), "utf8") })));
-    const lattice = packetTypeLattice(raw.contexts)!;
-    const model = resolveEncodings(flatten(raw, "M4"));
-    const pm = packetModel(raw, model, lattice);
-    const fieldNames = new Set(pm.fields.map((f) => f.ebName));
+    const fieldNames = ["pktSeqNo", "pktSrc", "pktFwdr", "pktData", "pktNbHops"];
 
-    let sawNotDomClause = false;
-    for (const ev of model.events)
-      for (const g of ev.guards)
-        for (const clause of splitConjuncts(g)) {
-          const m = /^\w+\s*∉\s*dom\(\s*(\w+)\s*\)$/.exec(clause);
-          if (!m || !fieldNames.has(m[1])) continue;
-          sawNotDomClause = true;
-          expect(cc).toContain(clause);   // must show up verbatim as an UNTRANSLATED GUARD comment
-        }
-    // Sanity: M4 really does contain this shape (create_bconPkt et al.) --
-    // otherwise the loop above would vacuously pass no matter what the
-    // emitter did.
-    expect(sawNotDomClause).toBe(true);
+    // Every dom() guard on a packet field became a real store lookup...
+    const notIn = (cc.match(/pktStore\.count\(\w+\) == 0/g) ?? []).length;
+    const isIn = (cc.match(/pktStore\.count\(\w+\) > 0/g) ?? []).length;
+    expect(notIn).toBeGreaterThan(0);
+    expect(isIn).toBeGreaterThan(0);
 
-    // UPDATED 2026-09-06 (final-review pass, "FINAL REVIEW FIX WAVE" in
-    // task-7-report.md): an `∈ dom(F)` guard only vacuously translates to
-    // `true` under ENC7 when F is a TOTAL function (`PKT → ...`) -- "a chunk
-    // always carries all its fields" is a fact about total functions, not
-    // partial ones. It used to be pinned at 16 (task-6-report.md), on the
-    // belief that ALL `∈ dom(F)` guards were vacuous; a hand audit for THIS
-    // fix found the opposite: every one of those 16 traces to a PARTIAL field
-    // (`PKT ⇸ ...` -- pktFwdr/pktNbHops/pktSeqNo/pktSrc/pktData/pktDestAddr,
-    // all initialised to ∅) and 0 trace to the one total field,
-    // initialSrcAddr (which MintRoute never guards `dom(...)` on at all --
-    // see packetRules.ts's EVIDENCE comment). So PKT-DOM now refuses `∈
-    // dom(F)` for a partial field the same way PKT-DOM-NOT already refused
-    // `∉ dom(F)`, and MintRoute M4 -- having no genuine total-field `∈
-    // dom(F)` clause to begin with -- now emits ZERO `if (!(true))` guards.
-    // 0 is therefore the honestly-correct count, not a weakened test: `true`
-    // remains reachable in principle (see the next test) for a project whose
-    // model actually guards `dom()` on a total packet field.
-    const trueGuards = (cc.match(/if \(!\(true\)\)/g) ?? []).length;
-    expect(trueGuards).toBe(0);
-  });
+    // ...and none survived as an untranslated dom clause on those fields.
+    for (const f of fieldNames)
+      expect(cc).not.toContain(`UNTRANSLATED GUARD: pkt ∉ dom(${f})`);
 
-  // Mirror-image regression for the Important finding fixed 2026-09-06 (the
-  // same final-review pass): PKT-DOM used to emit `true` for every `∈
-  // dom(F)` clause regardless of whether F is total or partial. This test
-  // re-derives the flattened model directly (independent of generate-net.ts,
-  // same technique as the ∉ test above), finds every top-level `x ∈ dom(F)`
-  // guard conjunct on one of the packet model's own PARTIAL fields, and
-  // asserts that EXACT clause text survives into the .cc as an
-  // `// UNTRANSLATED GUARD` comment -- the honest outcome -- rather than
-  // having silently become `if (!(true))`.
-  it("never collapses a ∈ dom(packetField) guard to if (!(true)) when the field is PARTIAL", () => {
-    const cc = byExt(".cc");
-    const dir = resolve(ROOT, MINT);
-    const raw = parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))
-      .map((f) => ({ name: f, xml: readFileSync(resolve(dir, f), "utf8") })));
-    const lattice = packetTypeLattice(raw.contexts)!;
-    const model = resolveEncodings(flatten(raw, "M4"));
-    const pm = packetModel(raw, model, lattice);
-    const partialFieldNames = new Set(pm.fields.filter((f) => !f.total).map((f) => f.ebName));
-
-    let sawDomClause = false;
-    for (const ev of model.events)
-      for (const g of ev.guards)
-        for (const clause of splitConjuncts(g)) {
-          const m = /^\w+\s*∈\s*dom\(\s*(\w+)\s*\)$/.exec(clause);
-          if (!m || !partialFieldNames.has(m[1])) continue;
-          sawDomClause = true;
-          expect(cc).toContain(clause);   // must show up verbatim as an UNTRANSLATED GUARD comment
-        }
-    // Sanity: M4 really does contain this shape (send_down's own read-back
-    // guard et al.) -- otherwise the loop above would vacuously pass no
-    // matter what the emitter did.
-    expect(sawDomClause).toBe(true);
+    // No dom guard collapsed to a constant, in either direction.
+    expect((cc.match(/if \(!\(true\)\)/g) ?? []).length).toBe(0);
+    expect((cc.match(/if \(!\(false\)\)/g) ?? []).length).toBe(0);
   });
 });
 

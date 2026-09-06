@@ -44,64 +44,51 @@ const applyTotal = (expr: string) => {
 // `toBeFalsy()` accepts either "no rule matched" (null) or "matched but
 // refused" ("") -- both are the safe, honest outcome this test guards.
 describe("packet-access rules", () => {
-  it("does not fabricate a pointer read for f(pkt) -- pkt is never a pointer here", () => {
-    expect(apply("sno = pktSeqNo(pkt)")).toBeFalsy();
+  // These rules USED to refuse every clause, because the generated code held a
+  // bare `PktId` and had no way to reach the chunk carrying the field. The
+  // identity binding (a per-module `pktStore` mapping PktId to its PPkt, and the
+  // `pktOf`/`ensurePkt` accessors emitted beside it) removed that obstacle, so
+  // they now translate. What must NOT come back is the thing the refusals were
+  // protecting against: a clause that compiles but means something else.
+
+  it("reads a field through the identity binding, not off a bare id", () => {
+    expect(apply("sno = pktSeqNo(pkt)")).toBe("sno == pktOf(pkt)->getSeqNum()");
   });
 
-  it("does not fabricate a pointer write (override spelling) -- pkt is never a pointer here", () => {
-    expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}")).toBeFalsy();
+  it("writes a field through the identity binding (override spelling)", () => {
+    expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}")).toBe("ensurePkt(pkt)->setSeqNum(sno);");
   });
 
-  it("does not fabricate a pointer write (union spelling) -- pkt is never a pointer here", () => {
-    expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}")).toBeFalsy();
+  it("writes a field through the identity binding (union spelling)", () => {
+    expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}")).toBe("ensurePkt(pkt)->setNbHops(nbh);");
   });
 
-  // Important finding fixed 2026-09-06 (final-review pass): the mirror image
-  // of the ∉ bug just below. PKT-DOM used to emit `true` for EVERY `∈
-  // dom(F)` clause on the reasoning "a chunk always carries all its fields"
-  // -- which only holds when F is a TOTAL function. pktSeqNo is PARTIAL
-  // (`PKT ⇸ ℕ`, initialised to ∅) in both real corpora, so `pkt ∈
-  // dom(pktSeqNo)` is a genuine "has this attribute been set yet"
-  // precondition (send_down's own read-back guard), and emitting `true` for
-  // it silently dropped that precondition. It now matches (so the generic
-  // app-layer DOM rule never gets a turn) but refuses, same as PKT-DOM-NOT.
-  it("refuses ∈-domain membership on a PARTIAL chunk field rather than assuming it vacuous", () => {
-    expect(apply("pkt ∈ dom(pktSeqNo)")).toBeFalsy();
+  // The precondition this guards is the one PKT-DOM used to drop by emitting
+  // `true`: for a PARTIAL field (`PKT ⇸ ℕ`, initialised to ∅) membership is a
+  // real "has this packet been created yet" test, not a tautology. It is
+  // answerable again because pktStore IS that domain -- so the assertion is
+  // that a real test is emitted, and specifically NOT the constant `true`.
+  it("tests ∈-domain membership on a PARTIAL field for real, never as a constant", () => {
+    const out = apply("pkt ∈ dom(pktSeqNo)");
+    expect(out).toBe("pktStore.count(pkt) > 0");
+    expect(out).not.toBe("true");
   });
 
-  // The other half: a TOTAL field (initialSrcAddr, `PKT → ND` in both real
-  // models) really is vacuously true under ENC7 -- every packet has always
-  // had this attribute, by the model's own totality axiom -- so PKT-DOM still
-  // emits `true` here, the one case the "chunk always carries all its
-  // fields" reasoning actually holds for.
-  it("still treats ∈-domain membership as vacuously true for a TOTAL chunk field", () => {
-    expect(applyTotal("pkt ∈ dom(initialSrcAddr)")).toBe("true");
+  it("answers ∈-domain membership for a TOTAL field from the same store", () => {
+    expect(applyTotal("pkt ∈ dom(initialSrcAddr)")).toBe("pktStore.count(pkt) > 0");
   });
 
-  // Regression for the Critical finding fixed 2026-09-06 (task-6-report.md):
-  // PKT-DOM's match regex used a non-capturing group for the operator
-  // (`(?:∈|∉)`), so it could not tell `∈` from `∉` and emitted `true` for
-  // both. `pkt ∉ dom(pktSeqNo)` is create_bconPkt/create_routePkt's "this
-  // packet does not exist yet" precondition -- collapsing it to `true`
-  // silently discarded it. The fix splits PKT-DOM (∈ only, "true") from a
-  // new PKT-DOM-NOT rule that MATCHES the ∉ spelling -- so the generic
-  // app-layer DOM rule (which would emit `pktSeqNo.count(pkt) == 0` against a
-  // std::map ENC7 no longer declares) never gets a turn -- but explicitly
-  // REFUSES it by emitting "" (falsy). The real engine's translateEvent
-  // (`if (cpp) guards.push(cpp); else untranslatedGuards.push(clause)`)
-  // treats that falsy emit exactly like no rule matching: the clause becomes
-  // an UNTRANSLATED GUARD and the event refuses to fire. This file's `apply()`
-  // helper does not replicate that fallback -- it returns whatever the first
-  // matching rule's emit() produces, verbatim -- so the assertion is
-  // `toBeFalsy()` (matches both `null`, "no rule matched", and `""`, "matched
-  // but refused") rather than a specific value: either result is safe, and
-  // both are what this test exists to guarantee. What would fail this test is
-  // PKT-DOM-NOT (or the generic DOM rule reached in its absence) emitting a
-  // truthy, compiling string for the ∉ spelling -- the original bug.
-  it("does not accept pkt ∉ dom(f) as pkt ∈ dom(f) -- matches (if at all) only to refuse", () => {
-    expect(apply("pkt ∉ dom(pktSeqNo)")).toBeFalsy();
+  // Regression for the Critical ∈/∉ conflation (task-6-report.md): PKT-DOM once
+  // used a non-capturing `(?:∈|∉)` group, could not tell the operators apart,
+  // and emitted the same thing for both -- silently inverting the creating
+  // events' "this packet does not exist yet" precondition. The two spellings
+  // must still produce OPPOSITE tests, which is what this asserts.
+  it("does not conflate pkt ∉ dom(f) with pkt ∈ dom(f)", () => {
+    const notIn = apply("pkt ∉ dom(pktSeqNo)");
+    const isIn  = apply("pkt ∈ dom(pktSeqNo)");
+    expect(notIn).toBe("pktStore.count(pkt) == 0");
+    expect(notIn).not.toBe(isIn);
   });
-
   it("leaves non-packet variables alone", () => {
     expect(apply("s ∈ dom(floodTbl)")).toBeNull();
   });
