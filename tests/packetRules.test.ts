@@ -14,17 +14,31 @@ const apply = (expr: string) => {
   return null;
 };
 
+// task-7 finding (task-7-report.md): every guarded-bool-method event mirror
+// declares its Event-B PKT-domain parameters as scalar `PktId`/int
+// (wsn-codegen codeEmitter.ts's `ALIAS.PKT = "PktId"`, applied uniformly --
+// off-limits to this project). `pkt->getSeqNum()`/`pkt->setSeqNum(...)`
+// therefore does not compile at any of GET/SET's evidenced call sites: `pkt`
+// is never actually a pointer there, and there is no PktId -> PPkt* registry
+// anywhere in the generated module to make it one. GET/SET now REFUSE these
+// clauses (match but emit "") the same way PKT-DOM-NOT refuses `∉ dom(F)`
+// below -- intercepting ahead of the generic app-layer FN1/FN3-override
+// rules, which would otherwise emit a compiling-but-wrong map lookup against
+// a member ENC7 no longer maintains. `apply()` does not replicate the real
+// engine's untranslated-clause fallback (see the DOM_NOT comment below), so
+// `toBeFalsy()` accepts either "no rule matched" (null) or "matched but
+// refused" ("") -- both are the safe, honest outcome this test guards.
 describe("packet-access rules", () => {
-  it("reads an attribute as a field", () => {
-    expect(apply("sno = pktSeqNo(pkt)")).toBe("sno == pkt->getSeqNum()");
+  it("does not fabricate a pointer read for f(pkt) -- pkt is never a pointer here", () => {
+    expect(apply("sno = pktSeqNo(pkt)")).toBeFalsy();
   });
 
-  it("writes an attribute through the setter (override spelling)", () => {
-    expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}")).toBe("pkt->setSeqNum(sno);");
+  it("does not fabricate a pointer write (override spelling) -- pkt is never a pointer here", () => {
+    expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}")).toBeFalsy();
   });
 
-  it("writes an attribute through the setter (union spelling)", () => {
-    expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}")).toBe("pkt->setNbHops(nbh);");
+  it("does not fabricate a pointer write (union spelling) -- pkt is never a pointer here", () => {
+    expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}")).toBeFalsy();
   });
 
   it("treats ∈-domain membership as always-true for a chunk field", () => {

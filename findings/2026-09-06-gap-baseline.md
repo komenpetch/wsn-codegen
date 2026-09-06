@@ -205,3 +205,54 @@ Pair whatever lands with an execution run against `MintRoute.cc` as the
 reference of the same scope. The app layer's V1 compiled, loaded, ran a full
 60 s and exited 0 while transmitting zero packets; compiling is not evidence of
 behaviour.
+
+---
+
+## 5. Update 2026-09-06 (task 7) — PPkt is now in the composed catalog
+
+The numbers in sections 1–4 above are the **app-layer-only baseline**
+(`npm run scan` / `npm run shapes`, which call wsn-codegen's own pipeline
+directly and are unaffected by anything netlayer composes in) — they are
+unchanged by this update and still measure MintRoute M4 at 153
+emitted-UNTRANSLATED / 109 distinct, same as before.
+
+Task 7 ran `netlayer/scripts/generate-net.ts` (the COMPOSED pipeline: PPkt's
+packet-model rules + a handful of task-7 fixes, layered over the same
+app-layer catalog) through a real C++ compile gate for the first time, and
+that surfaced several real, previously-silent defects (see
+`task-7-report.md` for the full account — an `inet::FieldsChunk` include
+gap, a context-constant/macro collision, two instances of wsn-codegen's own
+rule catalog dispatching on clause SHAPE without checking the variable's
+resolved ENCODING, an encodingResolver default that never fires for a
+type alias or for a subset-of-a-relation invariant, a builtin-`BOOL`
+invariant shape encodingResolver's `infer()` never returns, and a
+set-typed event parameter wsn-codegen's parameter-typer declares as scalar
+`int`). Fixing what was fixable from `netlayer/` (nothing under
+`wsn-codegen/src/` was touched) moved the COMPOSED count for MintRoute M4
+from 168 (measured right after the 2026-09-06 PKT-DOM fix, task-6-report.md)
+to a new, honest count that reflects PKT-GET/PKT-SET/PKT-MEM correctly
+refusing clauses the app-layer catalog would otherwise have mistranslated
+into code that doesn't compile:
+
+| pipeline | machine | events | vars | clauses | translated | untranslated | distinct |
+|---|---|---|---|---|---|---|---|
+| app-layer only (§1 baseline, unchanged) | M4 | 40 | 53 | 606 | 453 | 153 | 109 |
+| **composed, with PPkt (task 7)** | M4 | 40 | 53 | 606 | 388 | **218** | **138** |
+
+Same clause total (606) — nothing was added or removed from the model, and
+`emitted` (from the generated `.h`/`.cc`/`.ned` text) again agrees exactly
+with `engine` (translateEvent's own bookkeeping) at 218, the same
+no-clause-silently-dropped check §1 relies on. `translated` fell from 453 to
+388 and `untranslated` rose from 153 to 218 (+65) — entirely because the
+composed catalog now REFUSES clauses the app-layer catalog alone used to
+mistranslate (fabricating `p->getX()` against a scalar `PktId`, or a
+pair-lookup against a function/map-of-sets-encoded container) rather than
+because anything got harder to translate. A bigger gap number here is the
+point of running the gate, not a regression to explain away — see
+`task-7-report.md`'s framing note.
+
+The gate itself (a real `g++ -fsyntax-only`, clang unavailable in this
+environment) went from failing outright to a clean exit 0 on the composed
+output. Execution (build + run in OMNeT++) was attempted and is BLOCKED in
+this environment — no clang/clang++ toolchain is installed anywhere on this
+machine (`task-7-report.md`, `Simulation/inet4.5/codegen_results/FLOOD_LOG.md`).

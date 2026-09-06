@@ -36,14 +36,31 @@ describe("generateNet for MintRoute M4", () => {
   // "not yet re-populated" precondition of send_up -- fall through to
   // UNTRANSLATED instead of silently emitting `true`. That is a real
   // increase in the honestly-reported gap, not a regression: the old, lower
-  // number was wrong. 168 is the measured count after the fix (`npm run
-  // gen:net -- MintRoute M4 out-net`, then `grep -c UNTRANSLATED`); pinned
-  // exactly (not `<`) so a future change to either number is a deliberate,
-  // reviewed edit to this test, not a silent drift in either direction.
+  // number was wrong. 168 was the count after that fix.
+  //
+  // 218 is the count after task 7's compile-gate fixes (task-7-report.md):
+  // running the generated MintRoute M4 module through a real C++ compiler
+  // for the first time surfaced PKT-GET/PKT-SET fabricating `p->getX()`/
+  // `p->setX(v)` calls against event parameters that are always plain
+  // `PktId`/int (wsn-codegen's own uniform PKT-domain parameter typing,
+  // off-limits) -- code that does not compile because no PktId -> PPkt*
+  // registry exists anywhere to make `p` a pointer. GET/SET now refuse those
+  // clauses (see packetRules.ts, 215), and a new PKT-MEM rule refuses the
+  // matching `p ↦ v ∈ pktFwdr` maplet-membership shape for the same reason.
+  // 3 more (218) come from miscRules.ts's MISC-ESTNBRS-NEIGHBOURTBL-EQ:
+  // `estNbrs = neighbourTbl` / `≠` in update_est/update_est_nothing/
+  // bcastRou_due compares a "pair-set"-encoded variable against a
+  // "map-of-sets"-encoded one (both individually correct encodings for how
+  // each variable is used elsewhere), which the generic app-layer "EQ" rule
+  // cannot compile. Every one of these newly-refused clauses is a real,
+  // previously-silent compile hazard, not a weakened guard -- this is the
+  // honest number. Pinned exactly (not `<`) so a future change to either
+  // number is a deliberate, reviewed edit to this test, not a silent drift
+  // in either direction.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(168);
+    expect(after).toBe(218);
   });
 
   it("keeps the flooding events translatable", () => {

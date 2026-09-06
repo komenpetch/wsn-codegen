@@ -3,7 +3,6 @@ import type { PacketField } from "./packetModel";
 
 export interface NetRule extends Rule { tier: 1 | 2 | 3; evidence: string[]; supersedes?: string; }
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const re = (p: RegExp) => (expr: string): RuleMatch | null => {
   const g = p.exec(expr.trim());
@@ -48,7 +47,7 @@ const re = (p: RegExp) => (expr: string): RuleMatch | null => {
 // rule -- e.g. initialSrcAddr is guarded `∈ dom(...)` four times across both
 // corpora and `∉` never; envDestAddr and pktErrND are guarded `∉ dom(...)`
 // exactly once each (their own creation site) and `∈` never.
-type Kind = "GET" | "SET" | "DOM" | "DOM_NOT" | "DEL";
+type Kind = "GET" | "SET" | "DOM" | "DOM_NOT" | "DEL" | "MEM";
 const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
   // Context-sourced: a fixed per-packet identity, never written or removed.
   initialSrcAddr: {
@@ -82,6 +81,15 @@ const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
     DOM: ["MintRoute.send_down", "RTMCS.send_down"],
     DOM_NOT: ["MintRoute.create_bconPkt", "MintRoute.create_routePkt"],
     DEL: ["MintRoute.send_down", "RTMCS.send_down", "RTMCS.clear_pkt"],
+    // `pkt ↦ x ∈ pktFwdr` -- a function's graph tested via maplet membership
+    // (valid Event-B for a `PKT ⇸ ND` variable, since a function IS its
+    // graph) -- in MintRoute M3's update_nbr/update_nbr2 (the latter carried
+    // into M4 as update_route). Real, task-7-discovered: the app-layer
+    // catalog's generic "PS1" rule (rules.ts) matches ANY `a ↦ b ∈ R` clause
+    // unconditionally and emits a pair-lookup `R.count({a, b})` regardless of
+    // R's actual resolved encoding; pktFwdr is function-encoded
+    // (`std::map<PktId, Node>`), so that does not compile. See MEM below.
+    MEM: ["MintRoute.update_nbr", "MintRoute.update_route"],
   },
   pktData: {
     GET: ["MintRoute.send_down", "RTMCS.send_down"],
@@ -167,23 +175,40 @@ const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
 export function packetRules(fields: PacketField[]): NetRule[] {
   const out: NetRule[] = [];
   for (const f of fields) {
-    const F = esc(f.ebName), G = `get${cap(f.name)}`, S = `set${cap(f.name)}`;
+    const F = esc(f.ebName);
     const ev = EVIDENCE[f.ebName] ?? {};
 
+    // `y = F(p)`: reads back the chunk field of "the packet identified by
+    // p". Correct ONLY where `p` is bound to a live PPkt* in scope. Every
+    // guarded-bool-method event mirror declares its Event-B PKT-domain
+    // parameters as scalar `PktId` (wsn-codegen's own generic parameter
+    // typing, `ALIAS.PKT = "PktId"` in codeEmitter.ts -- off-limits, and
+    // applied uniformly with no per-field exception), so `p` is never a
+    // pointer at any evidenced call site (task-7 finding: emitting
+    // `p->getX()` here does not compile -- `p` is `int`). There is no
+    // PktId -> PPkt* registry anywhere in the generated module (the
+    // project's own documented "identity binding" gap), so this clause is
+    // genuinely not translatable yet -- same "intercept ahead of the
+    // generic rule, emit ''" technique as PKT-DOM-NOT below (the generic
+    // app-layer FN1 rule would otherwise emit a map lookup against a member
+    // ENC7 no longer maintains).
     if (ev.GET) out.push({
       id: `PKT-GET-${f.ebName}`, tier: 1, evidence: ev.GET,
       match: re(new RegExp(`^(?<y>\\w+)\\s*=\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)$`)),
-      emit: (m) => `${m.captures.y} == ${m.captures.p}->${G}()`,
+      emit: () => "",
     });
     // Both write spellings the models use: relational override (U+E103 / U+2295
     // / U+22B4) and union with a maplet. No `u` flag: in unicode mode `\{` is an
     // invalid identity escape and the RegExp constructor throws. U+E103 is in
     // the BMP, so the plain `` escape reaches it without that flag.
+    // `F ≔ F <+ {p↦v}` / `F ≔ F ∪ {p↦v}`: same scalar-`p` limitation as GET
+    // just above -- `p` is never a pointer at any evidenced call site, so
+    // this is not translatable yet either.
     if (ev.SET) out.push({
       id: `PKT-SET-${f.ebName}`, tier: 1, evidence: ev.SET,
       match: re(new RegExp(
         `^${F}\\s*≔\\s*${F}\\s*(?:[\\uE103⊕⊴∪]\\s*)?\\{\\s*(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*\\}$`)),
-      emit: (m) => `${m.captures.p}->${S}(${m.captures.v});`,
+      emit: () => "",
     });
     // `x ∈ dom(F)`: vacuously true under ENC7 -- a chunk always carries all
     // its fields. Matches ONLY the ∈ spelling (the non-capturing-group bug
@@ -224,6 +249,24 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-DEL-${f.ebName}`, tier: 3, evidence: ev.DEL,
       match: re(new RegExp(`^${F}\\s*≔\\s*\\{\\s*\\w+\\s*\\}\\s*⩤\\s*${F}$`)),
       emit: () => `/* packet discarded; field travels with it */`,
+    });
+    // `p ↦ v ∈ F` / `∉` -- a function's graph tested via maplet membership
+    // (valid Event-B for a `PKT ⇸ T` variable, since a function IS its
+    // graph; MintRoute's update_nbr/update_route test `pkt ↦ x ∈ pktFwdr`
+    // this way, task-7 finding). The app-layer catalog's generic "PS1" rule
+    // (rules.ts) matches ANY `a ↦ b ∈ R` clause unconditionally and emits a
+    // pair-lookup `R.count({a, b})` regardless of R's actual resolved
+    // encoding -- correct when R really is a pair-set (this project's own
+    // relation fields, e.g. wsnLinks), wrong for a packet field, which is
+    // function-encoded (`std::map<PktId, T>`) and, per the GET/SET rules
+    // just above, not otherwise reachable from a bare PktId anyway. So this
+    // rule exists purely to intercept the clause ahead of PS1 (composeRules
+    // puts every PKT-* rule before the app-layer catalog) and refuse it
+    // explicitly, same as PKT-DOM-NOT.
+    if (ev.MEM) out.push({
+      id: `PKT-MEM-${f.ebName}`, tier: 1, evidence: ev.MEM,
+      match: re(new RegExp(`^\\w+\\s*↦\\s*\\w+\\s*(?:∈|∉)\\s*${F}$`)),
+      emit: () => "",
     });
   }
   return out;

@@ -23,7 +23,16 @@ export function emitPacketClasses(pm: PacketModel): { header: string; impl: stri
   ).join("\n");
 
   const header =
-`// ---- PPkt: the packet pattern class -------------------------------------
+`// PPkt derives from inet::FieldsChunk (Chunk.h's base for a chunk that
+// carries data as C++ fields rather than a raw byte buffer), which none of
+// wsn-codegen's own fixed include list pulls in: ApplicationBase.h's chain
+// reaches BitsChunk/BytesChunk/EmptyChunk/SequenceChunk via Packet.h, but not
+// FieldsChunk (task-7 finding -- without this, "class PPkt : public
+// inet::FieldsChunk" fails to parse, an incomplete-type error, and every
+// declaration inside PPkt cascades from it).
+#include "inet/common/packet/chunk/FieldsChunk.h"
+
+// ---- PPkt: the packet pattern class -------------------------------------
 // The Event-B model keeps packet attributes as functions keyed by packet id
 // (${pm.fields.map((f) => f.ebName).join(", ")}). Here they are fields on one
 // chunk, because in a simulator the attributes travel with the packet.
