@@ -65,7 +65,27 @@ export function packetModel(raw: RawModel, machine: EncodedMachine, lattice: Typ
 // guard `type(pkt) = DATA` and both write `pktFwdr`/`pktNbHops`, but
 // start_tx_dataPkt's guard is the positive `pkt ∈ dom(pktFwdr)` (the packet
 // already has a forwarder; this event is overwriting it, not creating it).
-function isCreatingEvent(event: FlatEvent, fields: PacketField[]): boolean {
+//
+// ⚠ NECESSARY, NOT SUFFICIENT. This predicate is over-inclusive on its own --
+// verified against both real corpora with a probe reimplementing this exact
+// function (see git history of this file / the 2026-09-06 fix-report in
+// task-3-report.md): `send_up` (MintRoute M4 AND RTMCS M6) and `send_down`
+// (RTMCS M6) also satisfy BOTH halves. `send_down` domain-subtracts the
+// packet-field family off the wire copy while restoring it onto the buffer
+// copy (`vPktData ≔ vPktData ∪ {pkt ↦ data}` alongside `pkt ∉ dom(vPktData)`),
+// and `send_up` does the reverse (`pkt ∉ dom(pktData)` guard +
+// `pktData ≔ pktData ∪ {pkt ↦ data}` action) -- both are legitimate
+// establishing assignments by this test's letter, but neither event CREATES
+// a packet; they move an existing one between the buffer and the wire.
+// The only reason `packetModel`'s leaf-mapping loop below still gets the
+// right answer is that `send_up`/`send_down` carry no `type(pkt)` guard at
+// all, so `resolveTag` returns `null` for them and the `&&` in the caller
+// excludes them. Correctness here rests on the CONJUNCTION of
+// `isCreatingEvent` and `resolveTag`, not on `isCreatingEvent` being sound by
+// itself -- do not reuse this predicate alone to answer "does this event
+// create a packet?" for anything else without re-deriving `resolveTag`'s
+// exclusion alongside it. `tests/packetModel.test.ts` pins this dependency.
+export function isCreatingEvent(event: FlatEvent, fields: PacketField[]): boolean {
   return fields.some((f) => {
     const notYetInDomain = new RegExp(`∉\\s*dom\\(\\s*${f.ebName}\\s*\\)`);
     const assignsWholeFunction = new RegExp(`^\\s*${f.ebName}\\s*≔`);
@@ -85,7 +105,7 @@ function isCreatingEvent(event: FlatEvent, fields: PacketField[]): boolean {
 //      lattice's own `children` map supplies CONTROL's full child list, so
 //      nothing here is hardcoded to RTMCS). Ambiguous elimination (more than
 //      one child left) resolves to nothing rather than guessing.
-function resolveTag(event: FlatEvent, lattice: TypeLattice): string | null {
+export function resolveTag(event: FlatEvent, lattice: TypeLattice): string | null {
   for (const tag of lattice.leaves) {
     const pin = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*=\\s*${tag}\\b`);
     if (event.guards.some((g) => pin.test(g))) return tag;
