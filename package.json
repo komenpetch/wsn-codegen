@@ -9,6 +9,7 @@
     "shapes": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/shapes.ts",
     "selftest": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/shapes.ts --selftest",
     "event": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/event.ts",
+    "gen:net": "cd ../wsn-codegen && npx vite-node ../netlayer/scripts/generate-net.ts",
     "test": "cd ../wsn-codegen && npx vitest run --config ../netlayer/vitest.config.ts",
     "typecheck": "cd ../wsn-codegen && npx tsc --project ../netlayer/tsconfig.json --skipLibCheck --noEmit"
   }
