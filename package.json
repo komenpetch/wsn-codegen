@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "typecheck:netlayer": "tsc --project netlayer/tsconfig.json --skipLibCheck --noEmit",
     "test:watch": "vitest",
     "generate": "vite-node scripts/generate.ts"
   },

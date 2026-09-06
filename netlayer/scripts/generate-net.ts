@@ -61,7 +61,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
     : f.path.endsWith(".cc") ? { ...f, content: spliceImpl(f.content, impl) }
     : f);
 
-  tree = undefReservedMacros(tree);
+  tree = renameReservedIdentifiers(tree);
   tree = stripDeadPacketFieldMaps(tree, pm.fields);
   tree = addMissingPacketTypeConstants(tree, pm.lattice.tagOf);
   tree = fixNonLeafSetConstants(tree, pm.lattice);
@@ -105,7 +105,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
 // can only mean the class name is wrong, not that the machine legitimately
 // has no guarded-bool-method events (every machine this project generates
 // has at least one).
-function fixSetTypedParameters(tree: GeneratedTree, className: string): GeneratedTree {
+export function fixSetTypedParameters(tree: GeneratedTree, className: string): GeneratedTree {
   const hFile = tree.find((f) => f.path.endsWith(".h"));
   const ccFile = tree.find((f) => f.path.endsWith(".cc"));
   if (!hFile || !ccFile) return tree;
@@ -124,10 +124,22 @@ function fixSetTypedParameters(tree: GeneratedTree, className: string): Generate
         `emitter actually used, defaultName(machine)), not that this machine has zero events.`
     );
 
+  // Body windows are sliced from THIS snapshot, never from the running `cc`.
+  // Slicing from a string that the loop is also rewriting was a real bug: each
+  // applied fix grows the text by 18 characters (`int ` -> `const
+  // std::set<Node>& `), so from the second fix onward every `defs[i].start`
+  // offset pointed 18n characters too early. The window then straddled the
+  // previous method's tail and truncated its own -- a parameter used as a
+  // container only in a method's last statement would fall outside it, stay
+  // `int`, and emit code that does not compile. Edits are collected here and
+  // applied in one pass afterwards, so no offset is ever read from mutated text.
+  const source = cc;
+  const edits: { ccFrom: RegExp; ccTo: string; hFrom: RegExp; hTo: string }[] = [];
+
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
-    const bodyEnd = i + 1 < defs.length ? defs[i + 1].start : cc.length;
-    const body = cc.slice(def.start, bodyEnd);
+    const bodyEnd = i + 1 < defs.length ? defs[i + 1].start : source.length;
+    const body = source.slice(def.start, bodyEnd);
     let changed = false;
     const newParamList = def.params.split(",").map((raw) => {
       const p = raw.trim();
@@ -144,10 +156,16 @@ function fixSetTypedParameters(tree: GeneratedTree, className: string): Generate
     if (!changed) continue;
     const newParams = newParamList.join(", ");
     const escParams = def.params.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    cc = cc.replace(new RegExp(`bool ${escClass}::${def.method}\\(${escParams}\\) \\{`),
-      `bool ${className}::${def.method}(${newParams}) {`);
-    h = h.replace(new RegExp(`bool ${def.method}\\(${escParams}\\);`),
-      `bool ${def.method}(${newParams});`);
+    edits.push({
+      ccFrom: new RegExp(`bool ${escClass}::${def.method}\\(${escParams}\\) \\{`),
+      ccTo: `bool ${className}::${def.method}(${newParams}) {`,
+      hFrom: new RegExp(`bool ${def.method}\\(${escParams}\\);`),
+      hTo: `bool ${def.method}(${newParams});`,
+    });
+  }
+  for (const e of edits) {
+    cc = cc.replace(e.ccFrom, e.ccTo);
+    h = h.replace(e.hFrom, e.hTo);
   }
   return tree.map((f) =>
     f.path.endsWith(".h") ? { ...f, content: h }
@@ -237,19 +255,54 @@ function fixNonLeafSetConstants(tree: GeneratedTree, lattice: TypeLattice): Gene
 // to `inline const int __builtin_inff() = 9999;` -- a bogus function
 // declaration that collides with the real compiler builtin of the same name,
 // and every declaration after it in the header fails to parse as a knock-on
-// effect (task-7 finding). `#undef`-ing right before the declaration is the
-// standard, harmless fix (a no-op if the name was never a macro to begin
-// with) and needs no knowledge of which axiom produced the name.
+// effect (task-7 finding).
+//
+// The first fix here was `#undef INFINITY` just above the declaration. It
+// compiles, but it is not contained: the undef and the int constant then stand
+// for the REST of every translation unit including this header, so anything
+// downstream that expects `INFINITY` to be the float macro silently gets 9999
+// instead, with no diagnostic (audit finding). Renaming the generated symbol
+// avoids that entirely -- no macro is disturbed, nothing downstream changes
+// meaning, and the Event-B name survives in the trailing provenance comment
+// the emitter already writes on each constant.
 const RESERVED_MACRO_NAMES = ["INFINITY", "NAN"];
-function undefReservedMacros(tree: GeneratedTree): GeneratedTree {
-  return tree.map((f) => {
-    if (!f.path.endsWith(".h")) return f;
-    let content = f.content;
-    for (const name of RESERVED_MACRO_NAMES) {
-      const declRe = new RegExp(`^([ \\t]*inline const \\w+ ${name}\\b.*)$`, "m");
-      content = content.replace(declRe, `#undef ${name}\n$1`);
+const RENAME_PREFIX = "EB_";
+function renameReservedIdentifiers(tree: GeneratedTree): GeneratedTree {
+  // Only rename a name this module actually DECLARES. If the generated code
+  // merely mentions `INFINITY` without declaring it, the reference belongs to
+  // <cmath> and renaming it would break a correct use.
+  const declaresIt = (name: string) =>
+    tree.some((f) => f.path.endsWith(".h") &&
+      new RegExp(`^[ \\t]*inline const \\w+ ${name}\\b`, "m").test(f.content));
+
+  const targets = RESERVED_MACRO_NAMES.filter(declaresIt);
+  if (targets.length === 0) return tree;
+
+  // Renames CODE only, never a trailing `// ...` comment. The emitter writes
+  // each constant's originating axiom there verbatim ("C4 axm2_9: INFINITY =
+  // 9999"), and that provenance is the audit trail back to the Event-B source
+  // -- rewriting it would make the comment quote an axiom that does not exist.
+  // A `//` is treated as starting a comment only when the text before it has
+  // balanced double quotes, so a `//` inside a string literal is left alone.
+  const renameCode = (line: string): string => {
+    let cut = -1;
+    for (let i = 0; i + 1 < line.length; i++) {
+      if (line[i] === "/" && line[i + 1] === "/") {
+        const quotes = (line.slice(0, i).match(/(?<!\\)"/g) ?? []).length;
+        if (quotes % 2 === 0) { cut = i; break; }
+      }
     }
-    return { ...f, content };
+    const code = cut < 0 ? line : line.slice(0, cut);
+    const rest = cut < 0 ? "" : line.slice(cut);
+    let out = code;
+    for (const name of targets)
+      out = out.replace(new RegExp(`\\b${name}\\b`, "g"), `${RENAME_PREFIX}${name}`);
+    return out + rest;
+  };
+
+  return tree.map((f) => {
+    if (f.path.endsWith(".ned")) return f;   // NED has no C preprocessor
+    return { ...f, content: f.content.split("\n").map(renameCode).join("\n") };
   });
 }
 
@@ -282,6 +335,15 @@ function stripDeadPacketFieldMaps(tree: GeneratedTree, fields: PacketField[]): G
     if (!clearLineRe.test(cc)) continue;                 // no clear() call to remove alongside it
     const occurrences = ccNoComments.match(new RegExp(`\\b${id}\\b`, "g")) ?? [];
     if (occurrences.length !== 1) continue;               // referenced somewhere besides the clear() call -- leave it
+    // The header must be checked too. Counting only the .cc was enough to
+    // prove the member unused there, but the declaration being REMOVED lives
+    // in the .h -- an inline accessor, in-class initializer or default
+    // argument mentioning the field would have been deleted out from under
+    // (audit finding). Strip comments, then require the single remaining
+    // mention to be the declaration itself.
+    const hNoComments = h.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    const hOccurrences = hNoComments.match(new RegExp(`\\b${id}\\b`, "g")) ?? [];
+    if (hOccurrences.length !== 1) continue;              // used elsewhere in the header -- leave it
     h = h.replace(declRe, "");
     cc = cc.replace(clearLineRe, "");
   }
@@ -315,7 +377,17 @@ function spliceHeader(h: string, block: string): string {
 
 function spliceImpl(cc: string, block: string): string {
   const at = cc.indexOf("\nDefine_Module(");
-  return at < 0 ? cc + "\n" + block : cc.slice(0, at + 1) + block + "\n" + cc.slice(at + 1);
+  // Throws rather than appending at EOF, matching spliceHeader. The silent
+  // fallback still compiled, so a future emitter change that moved or renamed
+  // Define_Module would have quietly relocated the packet constructors with
+  // nothing to show for it (audit finding). A missing anchor means the
+  // emitter's output shape changed and this splice needs revisiting.
+  if (at < 0)
+    throw new Error(
+      "Generated .cc has no Define_Module( to splice the packet classes before. " +
+        "The emitter's output shape changed; update spliceImpl.",
+    );
+  return cc.slice(0, at + 1) + block + "\n" + cc.slice(at + 1);
 }
 
 // Run directly (not when imported by a test).

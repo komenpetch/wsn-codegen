@@ -191,3 +191,72 @@ describe("generateNet for MintRoute M4", () => {
     expect(sawDomClause).toBe(true);
   });
 });
+
+// RTMCS M6 is the multi-fix case: several event methods take a set-typed
+// parameter, so several signature rewrites happen in one generation.
+//
+// These are PROPERTY guards on real output, not regression tests for the
+// stale-offset bug -- measured, not assumed: reintroducing that bug leaves
+// both of them passing, because RTMCS's bodies are long relative to the
+// ~18-characters-per-fix drift, so no rewrite is actually missed. The
+// discriminating test for that bug is a constructed case in
+// fixSetTypedParameters.test.ts. What these two add is coverage of the real
+// corpus: they fail the moment any genuine model does lose a rewrite.
+describe("generateNet for RTMCS M6 (multiple set-typed parameter rewrites)", () => {
+  const tree = generateNet("RTMCS", "M6");
+  const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
+  const h = tree.find((f) => f.path.endsWith(".h"))!.content;
+
+  // Split the .cc into (signature, body) pairs, computed from the FINAL text --
+  // independent of however generate-net arrived at it.
+  const defRe = /^bool M6App::(\w+)\(([^)]*)\) \{$/gm;
+  const defs: { method: string; params: string; start: number }[] = [];
+  for (let m = defRe.exec(cc); m; m = defRe.exec(cc))
+    defs.push({ method: m[1], params: m[2], start: m.index });
+  const bodyOf = (i: number) => cc.slice(defs[i].start, i + 1 < defs.length ? defs[i + 1].start : cc.length);
+
+  it("rewrites every set-typed parameter, not just the first few", () => {
+    const missed: string[] = [];
+    defs.forEach((d, i) => {
+      const body = bodyOf(i);
+      for (const raw of d.params.split(",")) {
+        const pm = /^int (\w+)$/.exec(raw.trim());
+        if (!pm) continue;
+        // Double backslashes: this is a template literal, so `\b` would be a
+        // backspace character and `\s` a literal "s" before the RegExp ever
+        // sees them.
+        const used = new RegExp(
+          `\\b${pm[1]}\\.(?:count|empty|at)\\(|for\\s*\\(\\s*auto\\s+\\w+\\s*:\\s*${pm[1]}\\s*\\)`,
+        );
+        if (used.test(body)) missed.push(`${d.method}(${pm[1]})`);
+      }
+    });
+    expect(missed).toEqual([]);
+  });
+
+  it("keeps each rewritten signature identical in the header and the .cc", () => {
+    const rewritten = defs.filter((d) => d.params.includes("const std::set<Node>&"));
+    expect(rewritten.length).toBeGreaterThan(1);   // the multi-fix case is real
+    for (const d of rewritten)
+      expect(h).toContain(`bool ${d.method}(${d.params});`);
+  });
+});
+
+describe("reserved-identifier handling", () => {
+  const h = generateNet("MintRoute", "M4").find((f) => f.path.endsWith(".h"))!.content;
+
+  it("renames a constant that collides with a library macro, rather than #undef-ing the macro", () => {
+    // MintRoute C4 axm2_9 declares INFINITY = 9999, colliding with <cmath>'s
+    // `#define INFINITY __builtin_inff()`. #undef fixed the compile but left
+    // the macro dead for the rest of every translation unit including this
+    // header. Renaming contains the change to the generated symbol.
+    expect(h).toContain("inline const int EB_INFINITY = 9999;");
+    expect(h).not.toMatch(/^\s*#undef\b/m);
+  });
+
+  it("leaves the axiom's provenance comment quoting the real Event-B name", () => {
+    // The trailing comment is the audit trail back to the source axiom; if the
+    // rename rewrote it too, it would quote an axiom that does not exist.
+    expect(h).toMatch(/inline const int EB_INFINITY = 9999;\s*\/\/.*\bINFINITY = 9999\b/);
+  });
+});

@@ -11,6 +11,10 @@ jobs:
         with: { node-version: 20 }
       - run: npm ci
       - run: npm test
+      # netlayer/ is not in tsconfig.app.json's "src" include, so `npm run
+      # build`'s tsc -b never type-checks it. Without this step its TypeScript
+      # reaches CI unchecked.
+      - run: npm run typecheck:netlayer
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }

@@ -76,7 +76,16 @@ export function packetTypeLattice(contexts: RawContext[]): TypeLattice | null {
   // only the flat partition encodes identically before and after. `leaves` uses
   // this same order, so leaves[i] and tag i never disagree -- a depth-first
   // order would put ROUTE and BEACON before DATA and silently renumber it.
-  const leaves = [...found].sort((a, b) => (a === "DATA" ? -1 : b === "DATA" ? 1 : 0));
+  // Rank, not a hand-written comparator. The earlier form
+  // `a === "DATA" ? -1 : b === "DATA" ? 1 : 0` returned -1 for
+  // compare(DATA, DATA), so it was not a consistent ordering; V8's insertion
+  // sort tolerates that below 22 elements, but a protocol with enough control
+  // subtypes to reach TimSort could get an arbitrary permutation -- and
+  // `tagOf` is built from this array's indices, so `leaves[i]` and tag `i`
+  // would silently disagree (audit finding). Subtracting ranks is antisymmetric
+  // and transitive, and the sort's stability preserves discovery order.
+  const rank = (t: string) => (t === "DATA" ? 0 : 1);
+  const leaves = [...found].sort((a, b) => rank(a) - rank(b));
   const tagOf = new Map(leaves.map((l, i) => [l, i]));
   return { root, children, leaves, tagOf };
 }
