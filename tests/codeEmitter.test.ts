@@ -291,3 +291,30 @@ describe("context-named types", () => {
     expect(vh).toContain("inline const int CTL_VAL = 0;");
   });
 });
+
+// A set-typed parameter's element type may itself be a Cartesian product.
+// MintRoute M5's report_routeCompletion takes `r ∈ ℙ(ℤ × ℤ)`; reading only the
+// first token after ℙ( produced `std::set<Data>` -- a set of scalars where the
+// model means a set of pairs.
+describe("set-typed parameters over a product", () => {
+  const ev = (guard: string) => ({
+    name: "m0", chain: ["m0"], variables: [], variableTypes: new Map(),
+    events: [
+      { label: "INITIALISATION", parameters: [], guards: [], actions: [] },
+      { label: "takes_r", parameters: ["r"], guards: [guard], actions: [] },
+    ],
+    encodings: new Map(),
+  }) as EncodedMachine;
+  const ccFor = (guard: string) =>
+    emit(ev(guard), "ProdApp", 4, []).find((f) => f.path === "ProdApp.cc")!.content;
+
+  it("types a set over a product as a set of pairs", () => {
+    expect(ccFor("r ∈ ℙ(ℤ × ℤ)"))
+      .toContain("bool ProdApp::takes_r(const std::set<std::pair<Data, Data>>& r) {");
+  });
+
+  it("still types a set over a single carrier exactly as before", () => {
+    expect(ccFor("r ∈ ℙ(ND)")).toContain("bool ProdApp::takes_r(const std::set<Node>& r) {");
+    expect(ccFor("r ∈ ℙ(ℤ)")).toContain("bool ProdApp::takes_r(const std::set<Data>& r) {");
+  });
+});

@@ -35,9 +35,21 @@ function containerFor(expr: string): string | undefined {
     return rel[2] === "↔"
       ? `std::set<std::pair<${alias(rel[1])}, ${alias(rel[3])}>>`
       : `std::map<${alias(rel[1])}, ${alias(rel[3])}>`;
-  const pow = /^\s*ℙ\(\s*(\w+|ℤ)\s*\)\s*$/.exec(expr);
-  if (pow) return `std::set<${alias(pow[1])}>`;
+  const pow = /^\s*ℙ\(\s*(.+?)\s*\)\s*$/.exec(expr);
+  if (pow) return `std::set<${elementType(pow[1])}>`;
   return undefined;
+}
+
+// The C++ element type of a set. A Cartesian product is a set of PAIRS:
+// MintRoute M5's `report_routeCompletion` takes `r ∈ ℙ(ℤ × ℤ)`, and reading
+// only the first token gave `std::set<Data>` -- a set of scalars where the
+// model means a set of pairs, so the emitted `r == cRouteTree` compared the
+// wrong shape. Anything that is not a product keeps the previous behaviour.
+function elementType(expr: string): string {
+  const prod = /^\s*(\w+|ℤ)\s*×\s*(\w+|ℤ)\s*$/.exec(expr);
+  if (prod) return `std::pair<${alias(prod[1])}, ${alias(prod[2])}>`;
+  const one = /^\s*(\w+|ℤ)\s*$/.exec(expr);
+  return one ? alias(one[1]) : "int";
 }
 
 // Pull domain/range carrier tokens out of an invariant, unwrapping ℙ(…).
@@ -76,9 +88,12 @@ function params(
   const typeOf = (p: string): string => {
     for (const g of ev.guards) {
       // Set-typed param: `p ∈ ℙ(T)` or the set-builder `p ∈ {n∣ … ℙ(T) …}`.
-      // Capture T and alias it, so a set over PKT/ℤ isn't mis-typed as Node.
-      const setM = new RegExp(`\\b${p}\\s*∈\\s*(?:ℙ\\(|\\{[^}]*ℙ\\()\\s*(\\w+|ℤ)`).exec(g);
-      if (setM) return `const std::set<${alias(setM[1])}>&`;
+      // Capture the WHOLE element type, not just its first token, so a set over
+      // a Cartesian product (`ℙ(ℤ × ℤ)`) comes out as a set of pairs rather
+      // than a set of scalars. `[^)]*` stops at the closing paren, so a single
+      // token still resolves exactly as before.
+      const setM = new RegExp(`\\b${p}\\s*∈\\s*(?:ℙ\\(|\\{[^}]*ℙ\\()\\s*([^)]*)\\)`).exec(g);
+      if (setM) return `const std::set<${elementType(setM[1])}>&`;
       const m = new RegExp(`\\b${p}\\s*∈\\s*(\\w+|ℤ)`).exec(g);
       if (m) {
         // A context-named type (`l ∈ WSN` with `WSN = ND ↔ ND`) is a container,
