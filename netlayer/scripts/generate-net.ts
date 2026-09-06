@@ -24,6 +24,7 @@ import { composedRules } from "../engine/composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "../engine/nestedMap";
 import { installScheduler } from "../engine/scheduler";
 import { bindNodeIdentity } from "../engine/nodeIdentity";
+import { imageRules, insertImageHelper } from "../engine/imageRules";
 import { composeRules } from "../engine/compose";
 import { fixAliasedEncodings, fixBooleanEncodings } from "../engine/aliasEncoding";
 
@@ -58,7 +59,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   // app-layer catalog module is never mutated for other callers.
   const nested = nestedMapVars(model);
   const composed = composeRules([...packetRules(pm.fields), ...miscRules(), ...scalarRules(),
-    ...composedRules(), ...nestedMapRules(nested)]);
+    ...composedRules(), ...nestedMapRules(nested), ...imageRules()]);
   let tree = withRules(composed, () => emit(model, defaultName(machine), 4, raw.contexts));
 
   // Splice the packet classes into the header, above the module class.
@@ -76,6 +77,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = fixNestedMapDeclarations(tree, nested);
   tree = insertPacketRegistry(tree);
   // Last: the scheduler reads the FINAL emitted signatures.
+  tree = insertImageHelper(tree);
   tree = bindNodeIdentity(tree, model, defaultName(machine));
   tree = installScheduler(tree, model, defaultName(machine), pm.fields);
   return tree;

@@ -44,6 +44,7 @@ interface Plan {
   rollback: string[];   // undo of anything synthesised
   ok: boolean;
   why?: string;         // when !ok
+  method?: string;      // emitted name, when the CommPattern merge renamed it
 }
 
 const NUM = String.raw`(?:−|-)?\d+`;
@@ -52,8 +53,26 @@ const num = (s: string) => s.replace(/−/g, "-");
 // Parse `bool <Class>::<event>(<params>) {` out of the emitted .cc, so the
 // scheduler uses the signature the emitter actually produced (already corrected
 // by fixSetTypedParameters) rather than re-deriving it.
-function signatures(cc: string, cls: string): Map<string, Param[]> {
-  const out = new Map<string, Param[]>();
+// Also keyed by Event-B LABEL, not just by method name. The CommPattern merge
+// emits send_down as sendSensorPacket and send_up as socketDataArrived, so a
+// lookup by label alone silently misses them -- and send_down is the event that
+// moves a packet from the medium onto the channel, i.e. the one that makes a
+// flood propagate rather than just leave the sink. The emitter writes a
+// provenance comment above each renamed method; that is what is read here,
+// rather than hardcoding the two names.
+function signatures(cc: string, cls: string): Map<string, { params: Param[]; method: string }> {
+  const out = new Map<string, { params: Param[]; method: string }>();
+  const prov = new RegExp(
+    `^// Event-B: (\\w+)[^\\n]*\\nbool ${cls}::(\\w+)\\(([^)]*)\\) \\{$`, "gm");
+  const parse = (raw: string): Param[] =>
+    raw.trim() === "" ? [] : raw.split(",").map((r) => {
+      const p = r.trim();
+      const i = p.lastIndexOf(" ");
+      return { cppType: p.slice(0, i).trim(), name: p.slice(i + 1).trim() };
+    });
+  for (let m = prov.exec(cc); m; m = prov.exec(cc))
+    out.set(m[1], { params: parse(m[3]), method: m[2] });
+
   const re = new RegExp(`^bool ${cls}::(\\w+)\\(([^)]*)\\) \\{$`, "gm");
   for (let m = re.exec(cc); m; m = re.exec(cc)) {
     const params = m[2].trim() === "" ? [] : m[2].split(",").map((raw) => {
@@ -61,7 +80,7 @@ function signatures(cc: string, cls: string): Map<string, Param[]> {
       const i = p.lastIndexOf(" ");
       return { cppType: p.slice(0, i).trim(), name: p.slice(i + 1).trim() };
     });
-    out.set(m[1], params);
+    if (!out.has(m[1])) out.set(m[1], { params, method: m[1] });
   }
   return out;
 }
@@ -109,8 +128,30 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
       ).find(Boolean);
       if (fn && known(fn[2])) {
         const [, f, x, op, n] = fn;
-        lines.push(`    if (${f}.count(${x}) == 0) ${bail()}`);
-        lines.push(`    ${par.cppType} ${p} = ${f}.at(${x})${op ? ` ${op === "+" ? "+" : "-"} ${n}` : ""};`);
+        const arith = op ? ` ${op === "+" ? "+" : "-"} ${n}` : "";
+        // ENC7 may have moved this attribute onto the chunk, in which case the
+        // context map is empty and reading it would skip every candidate. This
+        // is the same trap as in the construction branch below, and it is what
+        // stopped find_neighbours firing even once it became schedulable.
+        const acc = pktField.get(f);
+        if (acc) {
+          lines.push(`    if (pktStore.count(${x}) == 0) ${bail()}`);
+          lines.push(`    ${par.cppType} ${p} = pktOf(${x})->get${acc}()${arith};`);
+        } else {
+          lines.push(`    if (${f}.count(${x}) == 0) ${bail()}`);
+          lines.push(`    ${par.cppType} ${p} = ${f}.at(${x})${arith};`);
+        }
+        resolved.add(p); progress = true; continue;
+      }
+      // determined: p = R[{x}] -- a relational image. Set-valued, but still
+      // COMPUTED rather than searched: once x is known the image is a lookup,
+      // which is what makes a set-typed parameter bindable at all.
+      const img = clauses.map((c) =>
+        new RegExp(`^${p}\\s*=\\s*(\\w+)\\s*\\[\\s*\\{\\s*(\\w+)\\s*\\}\\s*\\]$`).exec(c.trim())
+      ).find(Boolean);
+      if (img && known(img[2])) {
+        const [, R, x] = img;
+        lines.push(`    std::set<Node> ${p} = relImage(${R}, ${x});`);
         resolved.add(p); progress = true; continue;
       }
       // determined: p = <bare name already known, or a context constant>
@@ -190,6 +231,16 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         lines.push(`    for (${par.cppType} ${p} : ${inSet[1]}) {`); depth++;
         resolved.add(p); progress = true; continue;
       }
+      // `p ∈ S` where S is an already-bound SET parameter or a set-encoded
+      // variable: the candidates are its elements. `nb ∈ nbs` -- pick one
+      // neighbour out of the neighbour set find_neighbours just computed -- is
+      // the shape, and without it the delivery chain stalls after one hop.
+      if (inSet && (
+        params.some((q) => q.name === inSet[1] && resolved.has(q.name)) ||
+        enc(inSet[1]) === "set")) {
+        lines.push(`    for (${par.cppType} ${p} : ${inSet[1]}) {`); depth++;
+        resolved.add(p); progress = true; continue;
+      }
       // An EXISTING packet -- the transmit and receive events take one the node
       // already holds, so the candidates are exactly the registry's keys. This
       // is the other half of the fresh case: dom of the packet-keyed functions
@@ -219,16 +270,18 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
   const plans: Plan[] = [];
   for (const ev of model.events) {
     if (ev.label === "INITIALISATION") continue;
-    const params = sigs.get(ev.label);
-    if (!params) continue;                       // not emitted as a bool method
-    plans.push(planFor(ev.label, params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField));
+    const sig = sigs.get(ev.label);
+    if (!sig) continue;                          // not emitted as a bool method
+    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField);
+    plan.method = sig.method;
+    plans.push(plan);
   }
 
   const firable = plans.filter((p) => p.ok);
   const defs: string[] = [];
   for (const p of firable) {
     const loops = p.lines.filter((l) => l.trim().startsWith("for (")).length;
-    const call = `${p.label}(${p.params.map((x) => x.name).join(", ")})`;
+    const call = `${p.method ?? p.label}(${p.params.map((x) => x.name).join(", ")})`;
     const body = [
       ...p.lines,
       `    if (${call}) { firedCount["${p.label}"]++; return true; }`,
