@@ -240,3 +240,54 @@ describe("base-class name collisions (v4)", () => {
     for (const v of [1, 2, 3] as const) expect(h(v)).not.toContain("using omnetpp::cSimpleModule");
   });
 });
+
+// A context may NAME a type and then use the bare name to type both a constant
+// and an event parameter -- RTMCS C3 declares `WSN = ND ↔ ND`, `wsnTopology ∈
+// WSN`, and `set_link` takes `l ∈ WSN`. Neither the constant emitter nor the
+// parameter typer looked through such a name, so `wsnTopology` was emitted
+// nowhere and `l` came out `int`: the generated module referenced an undeclared
+// identifier and compared an int to it. g++ reported only the undeclared name,
+// which made the second half easy to miss.
+describe("context-named types", () => {
+  const ctx = [{
+    name: "C3",
+    sets: [],
+    constants: ["WSN", "wsnTopology"],
+    axioms: [
+      { label: "axm3_1", text: "WSN = ND ↔ ND" },
+      { label: "axm3_2", text: "wsnTopology ∈ WSN" },
+    ],
+  }];
+  const machine = (): EncodedMachine => ({
+    name: "m0", chain: ["m0"], variables: [], variableTypes: new Map(),
+    events: [
+      { label: "INITIALISATION", parameters: [], guards: [], actions: [] },
+      { label: "set_link", parameters: ["l"], guards: ["l ∈ WSN"], actions: [] },
+    ],
+    encodings: new Map(),
+  });
+  const out = emit(machine(), "AliasApp", 4, ctx);
+  const h = out.find((f) => f.path === "AliasApp.h")!.content;
+  const cc = out.find((f) => f.path === "AliasApp.cc")!.content;
+
+  it("declares a constant typed by a named relation as a set of pairs", () => {
+    // A relation may map one domain value to several range values, so a
+    // std::map cannot hold it -- and a set of pairs is also what gives the
+    // emitted `l == wsnTopology` a working operator==.
+    expect(h).toContain("inline std::set<std::pair<Node, Node>> wsnTopology;");
+  });
+
+  it("types a parameter declared with that name as the same container", () => {
+    expect(cc).toContain("bool AliasApp::set_link(const std::set<std::pair<Node, Node>>& l) {");
+  });
+
+  it("does not mistake a value equation for a type alias", () => {
+    // `CTL_VAL = 0` and `BROADCAST = −1` must keep reaching the scalar path.
+    const valueCtx = [{
+      name: "C1", sets: [], constants: ["CTL_VAL"],
+      axioms: [{ label: "axm1_1", text: "CTL_VAL = 0" }],
+    }];
+    const vh = emit(machine(), "ValApp", 4, valueCtx).find((f) => f.path === "ValApp.h")!.content;
+    expect(vh).toContain("inline const int CTL_VAL = 0;");
+  });
+});

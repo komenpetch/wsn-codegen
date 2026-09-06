@@ -5,6 +5,41 @@ import { translateEvent } from "./ruleEngine";
 const ALIAS: Record<string, string> = { ND: "Node", PKT: "PktId", Dests: "Node", "ℤ": "Data", BOOL: "bool" };
 const alias = (token: string): string => ALIAS[token] ?? "int";
 
+// A context can NAME a type: RTMCS C3 declares `WSN = ND ↔ ND`, then types a
+// constant and an event parameter with the bare name (`wsnTopology ∈ WSN`,
+// `l ∈ WSN`). Neither the constant emitter nor the parameter typer looked
+// through such a name, so both fell back to `int`: `wsnTopology` was never
+// declared at all, and `set_link`'s guard came out as `l == wsnTopology`
+// comparing an int to nothing. Collecting the definitions lets both resolve it.
+//
+// Only TYPE-valued equations qualify. `CTL_VAL = 0` and `BROADCAST = −1` are
+// value equations and must keep flowing to the scalar-constant path.
+export type TypeAliases = Map<string, string>;
+export function typeAliases(contexts: RawContext[]): TypeAliases {
+  const out: TypeAliases = new Map();
+  for (const c of contexts)
+    for (const a of c.axioms) {
+      const m = /^\s*(\w+)\s*=\s*(.+?)\s*$/.exec(a.text);
+      if (m && /[↔→⇸]|ℙ\(/.test(m[2])) out.set(m[1], m[2]);
+    }
+  return out;
+}
+
+// The C++ container for an Event-B type expression. A relation is a SET OF
+// PAIRS, not a map: `A ↔ B` may relate one `a` to several `b`, which a
+// std::map cannot hold. It also gives the emitted code a working `==`, which
+// is what `l = wsnTopology` needs.
+function containerFor(expr: string): string | undefined {
+  const rel = /^\s*(\w+)\s*(↔|→|⇸)\s*(\w+)\s*$/.exec(expr);
+  if (rel)
+    return rel[2] === "↔"
+      ? `std::set<std::pair<${alias(rel[1])}, ${alias(rel[3])}>>`
+      : `std::map<${alias(rel[1])}, ${alias(rel[3])}>`;
+  const pow = /^\s*ℙ\(\s*(\w+|ℤ)\s*\)\s*$/.exec(expr);
+  if (pow) return `std::set<${alias(pow[1])}>`;
+  return undefined;
+}
+
 // Pull domain/range carrier tokens out of an invariant, unwrapping ℙ(…).
 function domRan(inv: string | undefined): { dom?: string; ran?: string } {
   if (!inv) return {};
@@ -34,7 +69,10 @@ function cppType(form: EncodingForm, inv: string | undefined): string {
 }
 
 // Parameter list, typed from the event's typing guards (then those guards drop).
-function params(ev: { parameters: string[]; guards: string[] }): string {
+function params(
+  ev: { parameters: string[]; guards: string[] },
+  aliases: TypeAliases = new Map(),
+): string {
   const typeOf = (p: string): string => {
     for (const g of ev.guards) {
       // Set-typed param: `p ∈ ℙ(T)` or the set-builder `p ∈ {n∣ … ℙ(T) …}`.
@@ -42,7 +80,15 @@ function params(ev: { parameters: string[]; guards: string[] }): string {
       const setM = new RegExp(`\\b${p}\\s*∈\\s*(?:ℙ\\(|\\{[^}]*ℙ\\()\\s*(\\w+|ℤ)`).exec(g);
       if (setM) return `const std::set<${alias(setM[1])}>&`;
       const m = new RegExp(`\\b${p}\\s*∈\\s*(\\w+|ℤ)`).exec(g);
-      if (m) return alias(m[1]);
+      if (m) {
+        // A context-named type (`l ∈ WSN` with `WSN = ND ↔ ND`) is a container,
+        // taken by const reference like any other; without this it aliased to
+        // a bare `int` and the emitted comparison would not compile.
+        const named = aliases.get(m[1]);
+        const container = named ? containerFor(named) : undefined;
+        if (container) return `const ${container}&`;
+        return alias(m[1]);
+      }
     }
     return "int";
   };
@@ -90,6 +136,7 @@ const RECEIVE_BLOCK = [
 // symbol is declared and left for the simulation harness to populate. Defaults
 // cover the standard WSN constants when a project ships a partial context.
 function contextBlock(contexts: RawContext[]): string {
+  const aliases = typeAliases(contexts);
   const axioms = contexts.flatMap((c) => c.axioms.map((a) => ({ ctx: c.name, ...a })));
   const constants = new Set(contexts.flatMap((c) => c.constants));
   const fixed = new Map<string, string>();     // concrete values from axioms
@@ -121,8 +168,19 @@ function contextBlock(contexts: RawContext[]): string {
       continue;
     }
     const s = /^\s*(\w+)\s*⊆\s*(.+?)\s*$/.exec(a.text);
-    if (s && constants.has(s[1]) && !fixed.has(s[1]))
+    if (s && constants.has(s[1]) && !fixed.has(s[1])) {
       opaque.set(s[1], `inline std::set<int> ${s[1]};${note(a)}`);
+      continue;
+    }
+    // `NAME ∈ <a type this context named>` — e.g. RTMCS's `wsnTopology ∈ WSN`
+    // with `WSN = ND ↔ ND`. Without this the constant matched no branch above
+    // and was emitted nowhere, so the generated module referenced an
+    // identifier it never declared.
+    const n = /^\s*(\w+)\s*∈\s*(\w+)\s*$/.exec(a.text);
+    if (n && constants.has(n[1]) && !fixed.has(n[1]) && !opaque.has(n[1])) {
+      const container = containerFor(aliases.get(n[2]) ?? "");
+      if (container) opaque.set(n[1], `inline ${container} ${n[1]};${note(a)}`);
+    }
   }
 
   // Fall back for anything a partial context leaves undefined, so the emitted
@@ -185,6 +243,9 @@ export function emit(
   version: EmitVersion = 3,
   contexts: RawContext[] = [],
 ): GeneratedTree {
+  // Types the contexts NAME (`WSN = ND ↔ ND`), so a parameter declared with the
+  // bare name resolves to its container rather than falling back to `int`.
+  const aliases = typeAliases(contexts);
   const fields = [...model.encodings.entries()]
     .map(([id, form]) => `    ${cppType(form, model.variableTypes.get(id))} ${id};`).join("\n");
 
@@ -221,8 +282,8 @@ export function emit(
     if (BASE_METHODS.has(cppName)) hidesBase.add(cppName);
     decls.push(
       inetName
-        ? `    bool ${cppName}(${params(raw)});   // Event-B: ${raw.label}`
-        : `    bool ${cppName}(${params(raw)});`,
+        ? `    bool ${cppName}(${params(raw, aliases)});   // Event-B: ${raw.label}`
+        : `    bool ${cppName}(${params(raw, aliases)});`,
     );
     const prov = inetName
       ? `// Event-B: ${raw.label} — emitted under its SensorApp name (thesis ${raw.label === "send_down" ? "S4, transmit" : "S5, receive"}).\n`
@@ -262,7 +323,7 @@ export function emit(
       const body = incomplete
         ? [...noteG, ...refuse].join("\n")
         : [...noteG, `    return ${pred};`].join("\n");
-      defs.push(`${prov}bool ${name}::${cppName}(${params(raw)}) {\n${body}\n}`);
+      defs.push(`${prov}bool ${name}::${cppName}(${params(raw, aliases)}) {\n${body}\n}`);
     } else {
       const body = [
         // Each guard early-return on its own indented line for readability.
@@ -273,7 +334,7 @@ export function emit(
         ...noteA,
         ...refuse,
       ].join("\n");
-      defs.push(`${prov}bool ${name}::${cppName}(${params(raw)}) {\n${body}\n}`);
+      defs.push(`${prov}bool ${name}::${cppName}(${params(raw, aliases)}) {\n${body}\n}`);
     }
   }
 
