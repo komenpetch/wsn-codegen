@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
-import { resolveEncodings } from "../../wsn-codegen/src/engine/encodingResolver";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
+import { resolveEncodings } from "../../src/engine/encodingResolver";
 import { packetTypeLattice } from "../engine/packetTypes";
 import { packetModel, isCreatingEvent, resolveTag } from "../engine/packetModel";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const MINT = "EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck";
 const dir = resolve(ROOT, MINT);
 const raw = parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))

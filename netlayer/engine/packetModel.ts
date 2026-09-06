@@ -1,4 +1,4 @@
-import type { RawModel, EncodedMachine, FlatEvent } from "../../wsn-codegen/src/engine/types";
+import type { RawModel, EncodedMachine, FlatEvent } from "../../src/engine/types";
 import type { TypeLattice } from "./packetTypes";
 
 export interface PacketField { name: string; ebName: string; cppType: "int" | "Node"; source: "context" | "variable"; total: boolean; }

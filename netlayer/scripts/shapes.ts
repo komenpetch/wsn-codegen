@@ -15,15 +15,15 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
-import { resolveEncodings } from "../../wsn-codegen/src/engine/encodingResolver";
-import { translateEvent, isTypingPredicate } from "../../wsn-codegen/src/engine/ruleEngine";
-import { RULES } from "../../wsn-codegen/src/engine/rules";
-import type { EncodedMachine } from "../../wsn-codegen/src/engine/types";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
+import { resolveEncodings } from "../../src/engine/encodingResolver";
+import { translateEvent, isTypingPredicate } from "../../src/engine/ruleEngine";
+import { RULES } from "../../src/engine/rules";
+import type { EncodedMachine } from "../../src/engine/types";
 
 // See the note in scan.ts: paths resolve from this file, not the cwd.
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const PROJECTS: [string, string, string][] = [
   ["RTMCS", resolve(ROOT, "EventB_model/RTMCS_7_4_proof"), "M6"],

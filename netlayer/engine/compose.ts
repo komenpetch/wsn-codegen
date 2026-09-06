@@ -1,5 +1,5 @@
-import { RULES } from "../../wsn-codegen/src/engine/rules";
-import type { Rule } from "../../wsn-codegen/src/engine/rules";
+import { RULES } from "../../src/engine/rules";
+import type { Rule } from "../../src/engine/rules";
 import type { NetRule } from "./packetRules";
 
 // The engine takes the FIRST matching rule, so order is behaviour. This

@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateMerged } from "../../wsn-codegen/src/engine/pipeline";
+import { generateMerged } from "../../src/engine/pipeline";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(HERE, "../..");
+const ROOT = resolve(HERE, "../../..");
 const BASELINE = resolve(HERE, "__baseline__/applayer-v4.json");
 
 // The finished app layer is published evidence: its emitted bytes back the

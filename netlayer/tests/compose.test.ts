@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { composeRules } from "../engine/compose";
-import { RULES } from "../../wsn-codegen/src/engine/rules";
+import { RULES } from "../../src/engine/rules";
 import type { NetRule } from "../engine/packetRules";
 
 const stub = (id: string, extra: Partial<NetRule> = {}): NetRule => ({

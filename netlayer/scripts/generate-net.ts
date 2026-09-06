@@ -4,14 +4,14 @@
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
-import { resolveEncodings } from "../../wsn-codegen/src/engine/encodingResolver";
-import { emit } from "../../wsn-codegen/src/engine/codeEmitter";
-import { defaultName } from "../../wsn-codegen/src/engine/pipeline";
-import { RULES } from "../../wsn-codegen/src/engine/rules";
-import type { Rule } from "../../wsn-codegen/src/engine/rules";
-import type { GeneratedTree } from "../../wsn-codegen/src/engine/types";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
+import { resolveEncodings } from "../../src/engine/encodingResolver";
+import { emit } from "../../src/engine/codeEmitter";
+import { defaultName } from "../../src/engine/pipeline";
+import { RULES } from "../../src/engine/rules";
+import type { Rule } from "../../src/engine/rules";
+import type { GeneratedTree } from "../../src/engine/types";
 import { packetTypeLattice } from "../engine/packetTypes";
 import type { TypeLattice } from "../engine/packetTypes";
 import { packetModel } from "../engine/packetModel";
@@ -22,7 +22,7 @@ import { miscRules } from "../engine/miscRules";
 import { composeRules } from "../engine/compose";
 import { fixAliasedEncodings, fixBooleanEncodings } from "../engine/aliasEncoding";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const PROJECTS: Record<string, string> = {
   MintRoute: "EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck",
   RTMCS: "EventB_model/RTMCS_7_4_proof",
@@ -333,7 +333,10 @@ function spliceImpl(cc: string, block: string): string {
 // layout at all.
 if (process.env.VITEST !== "true") {
   const [project = "MintRoute", machine = "M4", outDir = "out-net"] = process.argv.slice(2);
-  const out = resolve(ROOT, "netlayer", outDir);
+  // Relative to THIS package, not to ROOT joined with a hardcoded "netlayer".
+  // The hardcoded form kept writing to the old sibling path after this package
+  // moved inside wsn-codegen, silently generating into a directory nobody reads.
+  const out = resolve(dirname(fileURLToPath(import.meta.url)), "..", outDir);
   mkdirSync(out, { recursive: true });
   const tree = generateNet(project, machine);
   for (const f of tree) writeFileSync(resolve(out, f.path), f.content, "utf8");

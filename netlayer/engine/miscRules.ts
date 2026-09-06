@@ -1,7 +1,7 @@
 // Non-packet compile-blockers found by task 7's compile gate (task-7-report.md)
 // that don't fit packetRules.ts's per-packet-field shape. Kept separate so
 // packetRules.ts stays about PPkt specifically.
-import type { Rule, RuleMatch } from "../../wsn-codegen/src/engine/rules";
+import type { Rule, RuleMatch } from "../../src/engine/rules";
 import type { NetRule } from "./packetRules";
 
 const re = (p: RegExp) => (expr: string): RuleMatch | null => {

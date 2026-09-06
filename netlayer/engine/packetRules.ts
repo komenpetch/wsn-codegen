@@ -1,4 +1,4 @@
-import type { Rule, RuleMatch } from "../../wsn-codegen/src/engine/rules";
+import type { Rule, RuleMatch } from "../../src/engine/rules";
 import type { PacketField } from "./packetModel";
 
 export interface NetRule extends Rule { tier: 1 | 2 | 3; evidence: string[]; supersedes?: string; }

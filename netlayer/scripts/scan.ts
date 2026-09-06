@@ -20,16 +20,16 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
-import { resolveEncodings } from "../../wsn-codegen/src/engine/encodingResolver";
-import { translateEvent } from "../../wsn-codegen/src/engine/ruleEngine";
-import { generate, defaultName } from "../../wsn-codegen/src/engine/pipeline";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
+import { resolveEncodings } from "../../src/engine/encodingResolver";
+import { translateEvent } from "../../src/engine/ruleEngine";
+import { generate, defaultName } from "../../src/engine/pipeline";
 
 // Model paths resolve from THIS FILE, not the working directory: the runner
 // invokes vite-node from ../wsn-codegen (that is where the deps live), so a
 // cwd-relative path would silently read the wrong tree — or nothing.
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const DEFAULTS: Record<string, string> = {
   RTMCS: resolve(ROOT, "EventB_model/RTMCS_7_4_proof"),

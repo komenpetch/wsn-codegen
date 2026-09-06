@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import type { RawContext } from "../../wsn-codegen/src/engine/types";
+import { parseModel } from "../../src/engine/parser";
+import type { RawContext } from "../../src/engine/types";
 import { packetTypeLattice } from "../engine/packetTypes";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const load = (rel: string) => {
   const dir = resolve(ROOT, rel);
   return parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))

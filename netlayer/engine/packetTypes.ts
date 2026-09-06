@@ -1,4 +1,4 @@
-import type { RawContext } from "../../wsn-codegen/src/engine/types";
+import type { RawContext } from "../../src/engine/types";
 
 export interface TypeLattice {
   root: string;

@@ -11,16 +11,16 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
-import { resolveEncodings } from "../../wsn-codegen/src/engine/encodingResolver";
-import { splitConjuncts } from "../../wsn-codegen/src/engine/ruleEngine";
-import type { EncodedMachine } from "../../wsn-codegen/src/engine/types";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
+import { resolveEncodings } from "../../src/engine/encodingResolver";
+import { splitConjuncts } from "../../src/engine/ruleEngine";
+import type { EncodedMachine } from "../../src/engine/types";
 import { packetTypeLattice } from "../engine/packetTypes";
 import { packetModel } from "../engine/packetModel";
 import { packetRules } from "../engine/packetRules";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 // Evidence is a "Project.eventLabel" string, and a rule built from ONE
 // project's fields may legitimately cite an event from the OTHER project --

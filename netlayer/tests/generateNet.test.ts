@@ -3,14 +3,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateNet } from "../scripts/generate-net";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
-import { resolveEncodings } from "../../wsn-codegen/src/engine/encodingResolver";
-import { splitConjuncts } from "../../wsn-codegen/src/engine/ruleEngine";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
+import { resolveEncodings } from "../../src/engine/encodingResolver";
+import { splitConjuncts } from "../../src/engine/ruleEngine";
 import { packetTypeLattice } from "../engine/packetTypes";
 import { packetModel } from "../engine/packetModel";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const MINT = "EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck";
 
 describe("generateNet for MintRoute M4", () => {

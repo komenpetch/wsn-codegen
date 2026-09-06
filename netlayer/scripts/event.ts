@@ -10,10 +10,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseModel } from "../../wsn-codegen/src/engine/parser";
-import { flatten } from "../../wsn-codegen/src/engine/flattener";
+import { parseModel } from "../../src/engine/parser";
+import { flatten } from "../../src/engine/flattener";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const PROJECTS: Record<string, string> = {
   RTMCS: "EventB_model/RTMCS_7_4_proof",

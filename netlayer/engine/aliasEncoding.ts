@@ -35,7 +35,7 @@
 // classification logic below duplicates encodingResolver's
 // infer()/usesKeyAccess() (neither is exported) -- kept in lockstep by hand;
 // if wsn-codegen's version changes, this one needs the same change made here.
-import type { EncodedMachine, EncodingForm, FlatMachine, RawModel } from "../../wsn-codegen/src/engine/types";
+import type { EncodedMachine, EncodingForm, FlatMachine, RawModel } from "../../src/engine/types";
 
 export function fixAliasedEncodings(raw: RawModel, model: EncodedMachine): void {
   const contextAliases = collectTypeAliases(raw);
