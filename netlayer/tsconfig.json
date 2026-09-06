@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["ES2023"],
+    "module": "esnext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting - relaxed for this project since it borrows wsn-codegen's infrastructure */
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitAny": false,
+
+    /* netlayer/ has no node_modules of its own, and TS resolves ambient
+       types (and the bare "vitest" import tests use) by walking up
+       ancestors of the IMPORTING file -- tests/ never reaches the sibling
+       wsn-codegen/node_modules that way. Point typeRoots at it explicitly
+       so the tests directory type-checks instead of silently being
+       excluded. */
+    "types": ["node", "vitest/globals"],
+    "typeRoots": ["../wsn-codegen/node_modules/@types", "../wsn-codegen/node_modules"]
+  },
+  "include": ["engine/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}
