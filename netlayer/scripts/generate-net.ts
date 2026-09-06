@@ -22,6 +22,7 @@ import { miscRules } from "../engine/miscRules";
 import { scalarRules } from "../engine/scalarRules";
 import { composedRules } from "../engine/composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "../engine/nestedMap";
+import { installScheduler } from "../engine/scheduler";
 import { composeRules } from "../engine/compose";
 import { fixAliasedEncodings, fixBooleanEncodings } from "../engine/aliasEncoding";
 
@@ -73,6 +74,8 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = fixSetTypedParameters(tree, defaultName(machine));
   tree = fixNestedMapDeclarations(tree, nested);
   tree = insertPacketRegistry(tree);
+  // Last: the scheduler reads the FINAL emitted signatures.
+  tree = installScheduler(tree, model, defaultName(machine));
   return tree;
 }
 
