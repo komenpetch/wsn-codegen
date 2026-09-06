@@ -1,4 +1,4 @@
-import type { RawModel, EncodedMachine } from "../../wsn-codegen/src/engine/types";
+import type { RawModel, EncodedMachine, FlatEvent } from "../../wsn-codegen/src/engine/types";
 import type { TypeLattice } from "./packetTypes";
 
 export interface PacketField { name: string; ebName: string; cppType: "int" | "Node"; source: "context" | "variable"; }
@@ -43,21 +43,63 @@ export function packetModel(raw: RawModel, machine: EncodedMachine, lattice: Typ
   for (const [id, inv] of machine.variableTypes)
     if (PKT_DOMAIN.test(inv)) add(id, inv, "variable");
 
-  // A leaf type's creating event is the one whose guards pin `type(pkt)` to
-  // that tag. Reading the discriminator from the guard, rather than from the
-  // event's name, is what makes this work for RTMCS's RREQ/RREP/RRER too.
-  // Verified against the real MintRoute M4 guards (npm run event -- MintRoute
-  // M4 create_dataPkt create_bconPkt create_routePkt --flat): all three
-  // creating events carry a literal `type(pkt) = <TAG>` guard alongside the
-  // broader `type(pkt) ∈ CONTROL` guard (create_bconPkt/create_routePkt), so
-  // the equality form alone is sufficient here -- no widening needed.
   const leaves: PacketLeaf[] = [];
   for (const tag of lattice.leaves) {
-    const pin = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*=\\s*${tag}\\b`);
-    const ev = machine.events.find((e) => e.guards.some((g) => pin.test(g)));
+    const ev = machine.events.find((e) => isCreatingEvent(e, fields) && resolveTag(e, lattice) === tag);
     if (ev) leaves.push({ typeName: leafClassName(tag), tag, event: ev.label });
   }
   return { fields, leaves, lattice };
+}
+
+// A packet-typed event that merely CONSUMES a packet (receive_*, update_*,
+// finish_tx_*, ...) can carry the very same `type(pkt) = TAG` guard as the
+// event that CREATED it -- MintRoute has 14 such events, not 3, and one of
+// them (RTMCS's receive_rrerPkt) carries a literal `type(pkt) = RRER` guard
+// while the real creator (create_rrer) does not (see resolveTag below). So
+// the discriminator guard alone cannot identify "creates" -- only the
+// packet's OWN attributes can: an event creates the packet when it
+// ESTABLISHES one of the attribute functions already discovered above, i.e.
+// some guard requires the packet is not yet in that function's domain
+// (`pkt ∉ dom(pktFwdr)`) and some action then assigns that function. This is
+// what actually distinguishes create_dataPkt from start_tx_dataPkt: both
+// guard `type(pkt) = DATA` and both write `pktFwdr`/`pktNbHops`, but
+// start_tx_dataPkt's guard is the positive `pkt ∈ dom(pktFwdr)` (the packet
+// already has a forwarder; this event is overwriting it, not creating it).
+function isCreatingEvent(event: FlatEvent, fields: PacketField[]): boolean {
+  return fields.some((f) => {
+    const notYetInDomain = new RegExp(`∉\\s*dom\\(\\s*${f.ebName}\\s*\\)`);
+    const assignsWholeFunction = new RegExp(`^\\s*${f.ebName}\\s*≔`);
+    return event.guards.some((g) => notYetInDomain.test(g)) &&
+      event.actions.some((a) => assignsWholeFunction.test(a));
+  });
+}
+
+// The discriminator tag, read off a (already-confirmed-creating) event's own
+// guards -- never off the event's label or file position. Two spellings:
+//   1. Positive: `type(pkt) = TAG` -- e.g. MintRoute's create_dataPkt,
+//      create_bconPkt, create_routePkt, and RTMCS's create_dataPkt,
+//      create_rreq, create_rrep.
+//   2. By elimination: `type(pkt) ∈ PARENT` plus `type(pkt) ≠ X` for every
+//      child of PARENT except one -- e.g. RTMCS's create_rrer, which pins
+//      `type(pkt) ∈ CONTROL` and excludes RREQ and RREP, leaving RRER (the
+//      lattice's own `children` map supplies CONTROL's full child list, so
+//      nothing here is hardcoded to RTMCS). Ambiguous elimination (more than
+//      one child left) resolves to nothing rather than guessing.
+function resolveTag(event: FlatEvent, lattice: TypeLattice): string | null {
+  for (const tag of lattice.leaves) {
+    const pin = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*=\\s*${tag}\\b`);
+    if (event.guards.some((g) => pin.test(g))) return tag;
+  }
+  for (const [parent, kids] of lattice.children) {
+    const pinsParent = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*∈\\s*${parent}\\b`);
+    if (!event.guards.some((g) => pinsParent.test(g))) continue;
+    const remaining = kids.filter((kid) => {
+      const excludes = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*≠\\s*${kid}\\b`);
+      return !event.guards.some((g) => excludes.test(g));
+    });
+    if (remaining.length === 1) return remaining[0];
+  }
+  return null;
 }
 
 // BEACON -> BeaconPkt, ROUTE -> RoutePkt, DATA -> DataPkt, RREQ -> RreqPkt.

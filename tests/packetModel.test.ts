@@ -40,3 +40,38 @@ describe("packetModel (ENC7)", () => {
     ]));
   });
 });
+
+// RTMCS: a second case study where the creating event for one tag (RRER)
+// asserts no literal `type(pkt) = RRER` guard at all -- only `type(pkt) ∈
+// CONTROL` plus `type(pkt) ≠ RREP`/`≠ RREQ` (elimination). Meanwhile a
+// genuinely CONSUMING event, receive_rrerPkt, DOES carry the literal
+// equality -- the exact shape that made the first-match-by-file-order
+// implementation pick the wrong (consuming) event. See
+// npm run event -- RTMCS M6 create_rrer receive_rrerPkt --flat.
+const RTMCS_DIR = resolve(ROOT, "EventB_model/RTMCS_7_4_proof");
+const rtmcsRaw = parseModel(readdirSync(RTMCS_DIR).filter((f) => /\.(bum|buc)$/.test(f))
+  .map((f) => ({ name: f, xml: readFileSync(resolve(RTMCS_DIR, f), "utf8") })));
+
+describe("packetModel (ENC7) -- RTMCS", () => {
+  const lat = packetTypeLattice(rtmcsRaw.contexts)!;
+  const pm = packetModel(rtmcsRaw, resolveEncodings(flatten(rtmcsRaw, "M6")), lat);
+  const rrer = pm.leaves.find((l) => l.tag === "RRER");
+  const rreq = pm.leaves.find((l) => l.tag === "RREQ");
+  const rrep = pm.leaves.find((l) => l.tag === "RREP");
+
+  it("maps RRER to its real creating event (create_rrer), resolved by elimination", () => {
+    expect(rrer).toEqual({ typeName: "RrerPkt", tag: "RRER", event: "create_rrer" });
+  });
+
+  it("maps RREQ and RREP to their real creating events", () => {
+    expect(rreq).toEqual({ typeName: "RreqPkt", tag: "RREQ", event: "create_rreq" });
+    expect(rrep).toEqual({ typeName: "RrepPkt", tag: "RREP", event: "create_rrep" });
+  });
+
+  it("never maps a consuming event -- receive_rrerPkt is not the RRER leaf's event", () => {
+    // Under the old first-match-by-guard rule this returned receive_rrerPkt,
+    // which carries a literal `type(pkt) = RRER` guard but only reads and
+    // forwards the packet; it never establishes pktSeqNo/pktSrc/pktFwdr/etc.
+    expect(rrer?.event).not.toBe("receive_rrerPkt");
+  });
+});
