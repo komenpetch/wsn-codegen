@@ -19,24 +19,41 @@ describe("medium binding: transmit", () => {
     expect(body.slice(0, body.indexOf("\n}"))).toContain("mediumSend(pkt);");
   });
 
-  it("no longer sends the app-layer shell's own sensing payload from that event", () => {
-    // The shell builds a ByteCountChunk addressed to sinkAddress -- application
-    // traffic, not the model's packet. Exactly one of those may remain: the
-    // shell's own no-argument sendSensorPacket(), which the timer still drives.
-    const occurrences = cc.match(/makeShared<ByteCountChunk>/g) ?? [];
-    expect(occurrences.length).toBe(1);
+  it("carries no application traffic at all", () => {
+    // The app layer's shell built a ByteCountChunk addressed to the sink. A
+    // network protocol has no such traffic of its own: every packet it sends is
+    // one the model made.
+    expect(cc).not.toContain("makeShared<ByteCountChunk>");
   });
 
-  it("broadcasts, because the model's medium names no destination", () => {
-    expect(cc).toContain("getBroadcastAddress()");
+  it("has one send method per packet type, named as MintRoute names its own", () => {
+    // The advisor's structure, and the type names come from the model's own
+    // partition lattice -- RTMCS generates sendRreqBroadcast/sendRrepBroadcast/
+    // sendRrerBroadcast from its own.
+    for (const m of ["sendBeaconBroadcast", "sendRouteBroadcast", "sendDataBroadcast"]) {
+      expect(cc).toContain(`void M4App::${m}(PktId pkt)`);
+      expect(h).toContain(`virtual void ${m}(PktId pkt);`);
+    }
+  });
+
+  it("dispatches to them on the packet's own type", () => {
     const send = cc.slice(cc.indexOf("void M4App::mediumSend"));
-    expect(send.slice(0, send.indexOf("\n}"))).toContain("mediumBroadcastAddress()");
+    const body = send.slice(0, send.indexOf("\n}"));
+    expect(body).toContain("switch (held->getType())");
+    expect(body).toContain("case PktType::BEACON: sendBeaconBroadcast(pkt); break;");
+  });
+
+  it("goes down to the MAC as a broadcast, not out through a socket", () => {
+    const send = cc.slice(cc.indexOf("void M4App::sendBeaconBroadcast"));
+    const body = send.slice(0, send.indexOf("\n}"));
+    expect(body).toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
+    expect(body).toContain("sendDown(packet);");
+    expect(body).not.toContain("socket");
   });
 });
 
 describe("medium binding: receive", () => {
-  const arrival = cc.slice(
-    cc.indexOf("void M4App::socketDataArrived(INetworkSocket *, Packet *packet) {"));
+  const arrival = cc.slice(cc.indexOf("void M4App::handleLowerPacket(Packet *packet) {"));
   const body = arrival.slice(0, arrival.indexOf("\n}"));
 
   it("runs the model's own delivery event rather than hand-coding its postcondition", () => {
@@ -189,5 +206,59 @@ describe("an event that refuses to fire changes nothing", () => {
 
   it("finds at least one incomplete event, or it is checking nothing", () => {
     expect(cc).toContain(REFUSAL);
+  });
+});
+
+// The base class, settled from INET source and confirmed by the advisor
+// (2026-09-08). INET's own two shapes disagree, and the disagreement is the
+// answer: MintRoute is a NetworkProtocolBase that carries packets, AODV is a
+// RoutingProtocolBase daemon over UDP that manipulates a routing table through
+// netfilter hooks and never carries one. The machines forward packets.
+describe("network-layer shell", () => {
+  it("is a network protocol, not an application", () => {
+    expect(h).toContain("class M4App : public NetworkProtocolBase, public INetworkProtocol {");
+    expect(h).not.toContain("ApplicationBase");
+    expect(h).not.toContain("INetworkSocket");
+  });
+
+  it("implements the base class's contract", () => {
+    // getProtocol() is NetworkProtocolBase's only pure virtual; the packet
+    // directions and the self-message are LayeredProtocolBase's.
+    expect(h).toContain("const Protocol& getProtocol() const override");
+    for (const m of ["handleUpperPacket", "handleLowerPacket", "handleSelfMessage"])
+      expect(h).toContain(`void ${m}(`);
+  });
+
+  it("keeps MintRoute's three init stages, for MintRoute's reasons", () => {
+    const init = cc.slice(cc.indexOf("void M4App::initialize(int stage) {"));
+    const body = init.slice(0, init.indexOf("\n}\n"));
+    expect(body).toContain("NetworkProtocolBase::initialize(stage);");
+    for (const s of ["INITSTAGE_LOCAL", "INITSTAGE_NETWORK_INTERFACE_CONFIGURATION", "INITSTAGE_NETWORK_LAYER"])
+      expect(body).toContain(s);
+  });
+
+  it("drives the model from a self-message timer, as MintRoute drives its floods", () => {
+    const fn = cc.slice(cc.indexOf("void M4App::handleSelfMessage"));
+    const body = fn.slice(0, fn.indexOf("\n}"));
+    expect(body).toContain("runEnabledEvents();");
+    expect(body).toContain("scheduleAfter(tickInterval, modelTimer);");
+  });
+
+  it("carries the send-side utilities verbatim in shape from MintRoute", () => {
+    const fn = cc.slice(cc.indexOf("void M4App::setDownControlInfo"));
+    const body = fn.slice(0, fn.indexOf("\n}"));
+    expect(body).toContain("addTagIfAbsent<MacAddressReq>()->setDestAddress(macAddr);");
+    expect(body).toContain("addTagIfAbsent<PacketProtocolTag>()->setProtocol(&getProtocol());");
+    expect(cc).toContain("return myNetwAddr.getAddressType()->getBroadcastAddress();");
+  });
+
+  it("ships the network-layer wrapper the protocol cannot run without", () => {
+    // MintRoute needs MintRouteNetworkLayer to have an ARP module and a
+    // dispatcher; so does this. Both live in the one .ned, because the output
+    // contract is three files.
+    const ned = tree.find((f) => f.path.endsWith(".ned"))!.content;
+    expect(ned).toContain("simple M4App extends NetworkProtocolBase like INetworkProtocol");
+    expect(ned).toContain("module M4AppNetworkLayer like INetworkLayer");
+    expect(ned).toContain("np: M4App {");
   });
 });

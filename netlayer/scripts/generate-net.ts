@@ -24,6 +24,7 @@ import { composedRules } from "../engine/composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "../engine/nestedMap";
 import { installScheduler } from "../engine/scheduler";
 import { bindNodeIdentity } from "../engine/nodeIdentity";
+import { installNetProtocolShell } from "../engine/netProtocolShell";
 import { imageRules, insertImageHelper } from "../engine/imageRules";
 import { composeRules } from "../engine/compose";
 import { mediumRules } from "../engine/mediumRules";
@@ -83,6 +84,10 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = insertPacketRegistry(tree);
   // Last: the scheduler reads the FINAL emitted signatures.
   tree = insertImageHelper(tree);
+  // The network-layer shell replaces the app layer's SensorApp shell BEFORE
+  // anything patches it: the identity binding, the medium binding and the
+  // scheduler all attach to methods this pass emits.
+  tree = installNetProtocolShell(tree, defaultName(machine), machine);
   tree = bindNodeIdentity(tree, model, defaultName(machine));
   // The medium binding is planned against the FINAL emitted signatures (the
   // CommPattern rename and fixSetTypedParameters have both run by now), and it

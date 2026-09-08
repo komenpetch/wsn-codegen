@@ -66,6 +66,7 @@ export interface MediumPlan {
   identity: { getter: string; cast: boolean }[];
   carried: { setter: string; getter: string }[];   // fields the model never restores
   args: string[];
+  tags: string[];                 // packet-type leaves, one transmit method each
   realisedByMedium: Set<string>;
 }
 
@@ -233,6 +234,17 @@ export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, c
     const staged = conj(rx).map((c) =>
       new RegExp(`^${p}\\s*=\\s*(\\w+)\\(\\s*${rxPkt}\\s*\\)$`).exec(c)).find(Boolean);
     if (staged && wire.some((w) => w.staging === staged[1])) { args.push(`${staged[1]}.at(_pkt)`); continue; }
+    // `pkt ↦ nxt ∈ F` with F a packet field -- a function's graph tested via
+    // maplet membership, which for a bound `pkt` is just a read of F. RTMCS's
+    // send_up binds its next-hop parameter this way and MintRoute's does not,
+    // so without this the binding worked for one case study and refused the
+    // other. Read from the ARRIVING chunk, not from this node's copy: the local
+    // chunk is fresh and carries only what localIdFor put on it, while the wire
+    // carries every field the sender stamped.
+    const graph = conj(rx).map((c) =>
+      new RegExp(`^${rxPkt}\\s*↦\\s*${p}\\s*∈\\s*(\\w+)$`).exec(c)).find(Boolean);
+    const asField = graph && fields.find((f) => f.ebName === graph[1]);
+    if (asField) { args.push(`wire->${getterOf(asField)}()`); continue; }
     return null;                                    // unbindable parameter: refuse
   }
 
@@ -253,10 +265,19 @@ export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, c
     txPacketParam: txPkt, rxPacketParam: rxPkt,
     senderParam, senderGetter, wire, requires, propagation,
     identity, carried, args, realisedByMedium,
+    // Ordered by tag value, the same order the PktType enum is emitted in.
+    tags: [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t),
   };
 }
 
 // ── emission ────────────────────────────────────────────────────────────────
+
+const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+// One transmit method per packet type, named as MintRoute names its own:
+// BEACON -> sendBeaconBroadcast, ROUTE -> sendRouteBroadcast. Every packet the
+// model transmits goes out as a broadcast, because the model's medium names no
+// destination -- it delivers to whoever is in range.
+const sendName = (tag: string) => `send${cap1(tag)}Broadcast`;
 
 function members(plan: MediumPlan): string {
   return [
@@ -267,38 +288,47 @@ function members(plan: MediumPlan): string {
     "    // is the fields no event ever overwrites -- see immutableFields().",
     "    std::map<std::vector<long>, PktId> pktIdByWire;",
     "    void mediumSend(PktId pkt);",
+    ...plan.tags.map((t) => `    virtual void ${sendName(t)}(PktId pkt);`),
     "    PktId localIdFor(const PPkt *w);",
   ].join("\n");
 }
 
 function transmitFn(plan: MediumPlan, cls: string): string {
-  return [
-    "// Hand the packet to the medium: one broadcast, carrying the model's own",
-    "// chunk. The model does not name a destination -- its medium delivers to",
-    "// whoever is in range, and that is what a broadcast is.",
-    `void ${cls}::mediumSend(PktId pkt) {`,
-    "    if (socket == nullptr) return;",
+  const one = (tag: string) => [
+    `// Event-B: ${plan.transmit} (the model's own hand-to-the-medium), for a`,
+    `// packet of type ${tag}. Shaped after MintRoute::${sendName(tag)}: build the`,
+    "// frame, address it to the MAC broadcast, send it down, count it.",
+    `void ${cls}::${sendName(tag)}(PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",
     "    if (held == nullptr) return;",
     "    auto chunk = makeShared<PPkt>(*held);",
-    "    Packet *frame = new Packet(\"eb-medium\", chunk);",
-    "    frame->addTag<PacketProtocolTag>()->setProtocol(&Protocol::manet);",
-    "    frame->addTag<L3AddressReq>()->setDestAddress(mediumBroadcastAddress());",
-    "    emit(packetSentSignal, frame);",
-    "    socket->send(frame);",
+    "    chunk->setChunkLength(B(headerLength));",
+    `    auto packet = new Packet("eb-${tag.toLowerCase()}", chunk);`,
+    "    setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);",
+    "    emit(packetSentSignal, packet);",
+    "    sendDown(packet);",
     "    sentCount++;",
     "}",
-    "",
-    "// The broadcast address of whatever network protocol is configured below",
-    "// us -- resolved from this node's own address, as INET's own protocols do",
-    "// (MintRoute::resolveBroadcast). A limited broadcast is delivered to every",
-    "// node in radio range and forwarded by none of them, which is exactly the",
-    "// one hop the model's medium describes.",
-    `L3Address ${cls}::mediumBroadcastAddress() {`,
-    "    L3Address self = L3AddressResolver().addressOf(getContainingNode(this));",
-    "    return self.isUnspecified() ? L3Address() : self.getAddressType()->getBroadcastAddress();",
-    "}",
   ].join("\n");
+
+  return [
+    "// Hand the packet to the medium. The model does not name a destination --",
+    "// its medium delivers to whoever is in range -- so every packet goes out as",
+    "// a broadcast, and which method builds it is decided by the packet's own",
+    "// type, exactly as MintRoute has one send method per packet type.",
+    `void ${cls}::mediumSend(PktId pkt) {`,
+    "    PPkt *held = pktOf(pkt);",
+    "    if (held == nullptr) return;",
+    "    switch (held->getType()) {",
+    ...plan.tags.map((t) => `        case PktType::${t}: ${sendName(t)}(pkt); break;`),
+    "        default:",
+    `            EV_WARN << "${cls}: packet " << pkt << " has no transmit method for its type" << endl;`,
+    "            break;",
+    "    }",
+    "}",
+    "",
+    ...plan.tags.map(one),
+  ].join("\n\n");
 }
 
 function identityFn(plan: MediumPlan, cls: string): string {
@@ -332,7 +362,10 @@ function arrivalFn(plan: MediumPlan, cls: string): string {
     "// variable, and this is the answer. So the arrival stages what the",
     "// transmission carried and then runs THE MODEL'S OWN delivery event; the",
     "// postcondition is not hand-written here, it is executed.",
-    `void ${cls}::socketDataArrived(INetworkSocket *, Packet *packet) {`,
+    "//",
+    "// This is MintRoute's handleLowerPacket position: a frame off the air,",
+    "// dispatched on what the model says it is.",
+    `void ${cls}::handleLowerPacket(Packet *packet) {`,
     "    // Peek the front chunk AS A CHUNK and cast. Peeking it as a PPkt asks",
     "    // INET to CONVERT whatever is there into one, which throws on any other",
     "    // chunk type -- and the shell's own sensing traffic (a ByteCountChunk",
@@ -382,20 +415,9 @@ export function bindMedium(tree: GeneratedTree, plan: MediumPlan, cls: string): 
       const anchor = "    // ── Event-B machine state ──";
       if (!f.content.includes(anchor)) return f;
       let h = f.content.replace(anchor, members(plan) + "\n" + anchor);
-      // The broadcast helper is declared alongside the shell's own helpers.
-      // The shell declares it `virtual void openSocket();`. Anchor on the name
-      // rather than on an assumed spelling, and fail loudly if it moves: a
-      // silently skipped declaration shows up as an "undeclared identifier" in
-      // the .cc, which is a worse place to learn about it.
-      const socketDecl = /^([ \t]*)((?:virtual\s+)?void openSocket\(\);)$/m;
-      if (!socketDecl.test(h))
-        throw new Error("mediumBinding: openSocket() declaration not found; the shell's header shape changed.");
-      h = h.replace(socketDecl, "$1$2\n$1L3Address mediumBroadcastAddress();");
-      // L3Address.h only forward-declares IL3AddressType, and asking an address
-      // for its broadcast form goes through it.
-      if (!h.includes("inet/networklayer/contract/IL3AddressType.h"))
-        h = h.replace('#include "inet/networklayer/common/L3Address.h"',
-          '#include "inet/networklayer/common/L3Address.h"\n#include "inet/networklayer/contract/IL3AddressType.h"');
+      // The broadcast address and the send-down helpers are the shell's own
+      // now (setDownControlInfo / resolveBroadcast, both from MintRoute), so
+      // nothing has to be declared here beyond the binding's own members.
       if (!h.includes("#include <vector>"))
         h = h.replace("#include <utility>", "#include <utility>\n#include <vector>");
       return { ...f, content: h };
@@ -403,27 +425,42 @@ export function bindMedium(tree: GeneratedTree, plan: MediumPlan, cls: string): 
     if (!f.path.endsWith(".cc")) return f;
     let cc = f.content;
 
-    // Transmit: the app-layer shell's own transmit structure builds a
-    // ByteCountChunk addressed to the sink -- the sensing traffic of an
-    // application, not the model's packet. Replace it, inside the model's
-    // transmit event only, with the medium send. Nothing else in the shell
-    // changes: the timer, the socket and the lifecycle are all still SensorApp.
+    // Transmit: the CommPattern merge injects the app layer's own transmit
+    // structure into the model's transmit event -- a ByteCountChunk addressed
+    // to the sink, which is an application's sensing traffic and not the
+    // model's packet. Replace it with the medium send, which dispatches on the
+    // packet's own type to one of MintRoute's per-type send methods.
+    const TX_MARKER = "// — SensorApp transmit structure";
+    if (!cc.includes(TX_MARKER))
+      throw new Error("mediumBinding: the emitted transmit structure was not found; the shell's shape changed.");
     const txBlock = new RegExp(
       String.raw`[ \t]*// — SensorApp transmit structure[\s\S]*?\n[ \t]*sentCount\+\+;\n`);
-    if (!txBlock.test(cc))
-      throw new Error("mediumBinding: the emitted transmit structure was not found; the shell's shape changed.");
-    cc = cc.replace(txBlock,
-      `    // — Medium binding: hand the model's own packet to the radio —\n` +
-      `    mediumSend(${plan.txPacketParam});\n`);
+    if (txBlock.test(cc))
+      cc = cc.replace(txBlock,
+        `    // — Medium binding: hand the model's own packet to the radio —\n` +
+        `    mediumSend(${plan.txPacketParam});\n`);
+    else
+      // The marker is there but not as executable code, which means the
+      // transmit event does not fully translate and refuses to fire -- the
+      // emitter comments its actions out. There is nothing to wire a transmit
+      // path to, and saying so beats throwing: the receive half and the send
+      // methods are still correct, and the event's own UNTRANSLATED markers
+      // already say why it cannot run. (RTMCS M6's send_down is in this state;
+      // MintRoute M4's is not.)
+      cc = cc.replace(TX_MARKER,
+        `// Not wired to the medium: this event refuses to fire (see its\n` +
+        `    //     UNTRANSLATED markers above), so it never reaches a transmission.\n` +
+        `    //     ${TX_MARKER.slice(3)}`);
 
-    // Receive: replace the shell's INET callback body wholesale.
-    const cbStart = cc.indexOf(`void ${cls}::socketDataArrived(INetworkSocket *, Packet *packet) {`);
+    // Receive: the network shell emits handleLowerPacket as a stub (a frame off
+    // the air with nowhere in the model to go); the binding is what gives it
+    // somewhere.
+    const cbStart = cc.indexOf(`void ${cls}::handleLowerPacket(Packet *packet) {`);
     if (cbStart < 0)
-      throw new Error("mediumBinding: the emitted socket callback was not found; the shell's shape changed.");
+      throw new Error("mediumBinding: handleLowerPacket not found; the shell's shape changed.");
     const cbEnd = cc.indexOf("\n}", cbStart);
-    // The comment block the emitter writes above the callback describes the
-    // unbound extension point that no longer exists; drop it with the body.
-    const lead = cc.lastIndexOf("// Send-up flow", cbStart);
+    // The stub's own comment says it is waiting for this; drop it with the body.
+    const lead = cc.lastIndexOf("// Filled in by the medium binding", cbStart);
     const from = lead >= 0 && lead < cbStart ? lead : cbStart;
     cc = cc.slice(0, from) + arrivalFn(plan, cls) + cc.slice(cbEnd + 2);
 

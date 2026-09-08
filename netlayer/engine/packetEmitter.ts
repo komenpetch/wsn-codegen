@@ -25,8 +25,8 @@ export function emitPacketClasses(pm: PacketModel): { header: string; impl: stri
   const header =
 `// PPkt derives from inet::FieldsChunk (Chunk.h's base for a chunk that
 // carries data as C++ fields rather than a raw byte buffer), which none of
-// wsn-codegen's own fixed include list pulls in: ApplicationBase.h's chain
-// reaches BitsChunk/BytesChunk/EmptyChunk/SequenceChunk via Packet.h, but not
+// wsn-codegen's own fixed include list does not pull it in: the chain from
+// Packet.h reaches BitsChunk/BytesChunk/EmptyChunk/SequenceChunk, but not
 // FieldsChunk (task-7 finding -- without this, "class PPkt : public
 // inet::FieldsChunk" fails to parse, an incomplete-type error, and every
 // declaration inside PPkt cascades from it).
