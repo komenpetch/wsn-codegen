@@ -8,7 +8,6 @@ import { parseModel } from "../../src/engine/parser";
 import { flatten } from "../../src/engine/flattener";
 import { resolveEncodings } from "../../src/engine/encodingResolver";
 import { emit } from "../../src/engine/codeEmitter";
-import { defaultName } from "../../src/engine/pipeline";
 import { RULES } from "../../src/engine/rules";
 import type { Rule } from "../../src/engine/rules";
 import type { GeneratedTree } from "../../src/engine/types";
@@ -24,7 +23,7 @@ import { composedRules } from "../engine/composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "../engine/nestedMap";
 import { installScheduler } from "../engine/scheduler";
 import { bindNodeIdentity } from "../engine/nodeIdentity";
-import { installNetProtocolShell } from "../engine/netProtocolShell";
+import { installNetProtocolShell, netName } from "../engine/netProtocolShell";
 import { imageRules, insertImageHelper } from "../engine/imageRules";
 import { composeRules } from "../engine/compose";
 import { mediumRules } from "../engine/mediumRules";
@@ -66,7 +65,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   const nested = nestedMapVars(model);
   const composed = composeRules([...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
     ...scalarRules(), ...composedRules(carriers), ...nestedMapRules(nested), ...imageRules()]);
-  let tree = withRules(composed, () => emit(model, defaultName(machine), 4, raw.contexts));
+  let tree = withRules(composed, () => emit(model, netName(machine), 4, raw.contexts));
 
   // Splice the packet classes into the header, above the module class.
   const { header, impl } = emitPacketClasses(pm);
@@ -79,7 +78,7 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   tree = stripDeadPacketFieldMaps(tree, pm.fields);
   tree = addMissingPacketTypeConstants(tree, pm.lattice.tagOf);
   tree = fixNonLeafSetConstants(tree, pm.lattice);
-  tree = fixSetTypedParameters(tree, defaultName(machine));
+  tree = fixSetTypedParameters(tree, netName(machine));
   tree = fixNestedMapDeclarations(tree, nested);
   tree = insertPacketRegistry(tree);
   // Last: the scheduler reads the FINAL emitted signatures.
@@ -87,15 +86,15 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   // The network-layer shell replaces the app layer's SensorApp shell BEFORE
   // anything patches it: the identity binding, the medium binding and the
   // scheduler all attach to methods this pass emits.
-  tree = installNetProtocolShell(tree, defaultName(machine), machine);
-  tree = bindNodeIdentity(tree, model, defaultName(machine));
+  tree = installNetProtocolShell(tree, netName(machine), machine);
+  tree = bindNodeIdentity(tree, model, netName(machine));
   // The medium binding is planned against the FINAL emitted signatures (the
   // CommPattern rename and fixSetTypedParameters have both run by now), and it
   // must precede the scheduler: which events the simulator realises decides
   // which events the scheduler may not fire on its own.
-  const plan = planMedium(model, pm, ccOf(tree), defaultName(machine));
-  if (plan) tree = bindMedium(tree, plan, defaultName(machine));
-  tree = installScheduler(tree, model, defaultName(machine), pm.fields, plan?.realisedByMedium, plan !== null);
+  const plan = planMedium(model, pm, ccOf(tree), netName(machine));
+  if (plan) tree = bindMedium(tree, plan, netName(machine));
+  tree = installScheduler(tree, model, netName(machine), pm.fields, plan?.realisedByMedium, plan !== null);
   return tree;
 }
 
@@ -120,11 +119,11 @@ export function generateNet(project: string, machine: string): GeneratedTree {
 // _v : name)`). Only a parameter the body itself proves needs retyping is
 // retyped, in both the `.cc` definition and the `.h` declaration.
 //
-// `className` MUST be the same name the emitter actually used (`defaultName
-// (machine)` -- "M4App"/"M6App"/whatever the machine label produces), not a
-// literal "M4App". Hardcoding "M4App" here (the bug this fixes, task-7
+// `className` MUST be the same name the emitter actually used (`netName
+// (machine)` -- "M4Net"/"M6Net"/whatever the machine label produces), not a
+// literal "M4Net". Hardcoding the class name here (the bug this fixes, task-7
 // finding surfaced against RTMCS M6) makes `defRe` match nothing for any
-// OTHER machine's class -- RTMCS M6 generates as "M6App" -- so the whole
+// OTHER machine's class -- RTMCS M6 generates as "M6Net" -- so the whole
 // pass silently no-ops and every `int nbs` parameter the body already uses
 // as a set (`nbs.empty()`, `nbs.count(...)`, `for (auto _v : nbs)`) stays
 // declared `int`, a real compile error (7 of `g++ -fsyntax-only`'s 9 errors
@@ -196,7 +195,7 @@ export function fixSetTypedParameters(tree: GeneratedTree, className: string): G
     throw new Error(
       `fixSetTypedParameters: found no "bool ${className}::method(...) {" definitions in the ` +
         `generated .cc -- className is almost certainly wrong (it must match the name the ` +
-        `emitter actually used, defaultName(machine)), not that this machine has zero events.`
+        `emitter actually used, netName(machine)), not that this machine has zero events.`
     );
 
   // Body windows are sliced from THIS snapshot, never from the running `cc`.

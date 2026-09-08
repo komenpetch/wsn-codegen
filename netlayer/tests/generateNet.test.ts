@@ -179,7 +179,13 @@ describe("generateNet for RTMCS M6 (multiple set-typed parameter rewrites)", () 
 
   // Split the .cc into (signature, body) pairs, computed from the FINAL text --
   // independent of however generate-net arrived at it.
-  const defRe = /^bool M6App::(\w+)\(([^)]*)\) \{$/gm;
+  // The class name is read off the emitted file, not written in. Hardcoding it
+  // was silently self-defeating: after the rename to M6Net this regex matched
+  // nothing, `defs` was empty, and the first of these two tests passed while
+  // checking zero methods. Only the second one -- which asserts it found
+  // something -- failed. Deriving it removes the trap.
+  const cls = tree.find((f) => f.path.endsWith(".cc"))!.path.replace(/\.cc$/, "");
+  const defRe = new RegExp(String.raw`^bool ${cls}::(\w+)\(([^)]*)\) \{$`, "gm");
   const defs: { method: string; params: string; start: number }[] = [];
   for (let m = defRe.exec(cc); m; m = defRe.exec(cc))
     defs.push({ method: m[1], params: m[2], start: m.index });

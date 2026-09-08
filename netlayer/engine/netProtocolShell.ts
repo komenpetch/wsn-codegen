@@ -43,6 +43,22 @@ import type { GeneratedTree } from "../../src/engine/types";
 // a v5 when the two layers merge. Until then it stays a netlayer pass, like
 // every other network-layer step.
 
+// The generated module's own name, and the name of the compound module that
+// holds it. The app layer's `defaultName` produces "M4App", which was a true
+// description of an ApplicationBase and a misleading one for a network
+// protocol -- a reader who sees `M4App : public NetworkProtocolBase` has to
+// stop and work out which of the two is stale.
+//
+// Both names come from the machine label, and the pair reads the way INET's own
+// do (MintRoute / MintRouteNetworkLayer): the protocol is `M4Net`, the wrapper
+// `M4NetworkLayer`. Deriving the wrapper from the machine rather than from the
+// class avoids the stutter of "M4NetNetworkLayer".
+export const netName = (machine: string): string =>
+  machine ? machine.charAt(0).toUpperCase() + machine.slice(1).toLowerCase() + "Net" : "Net";
+export const netLayerName = (machine: string): string =>
+  machine ? machine.charAt(0).toUpperCase() + machine.slice(1).toLowerCase() + "NetworkLayer"
+    : "NetworkLayer";
+
 const SHELL_MEMBERS_START = "    // ── SensorApp shell: parameters (read in initialize / openSocket) ──";
 const SHELL_MEMBERS_END = "    static simsignal_t packetReceivedSignal;";
 const SHELL_METHODS_START = "    void initialize(int stage) override;";
@@ -277,7 +293,7 @@ function ned(cls: string, machine: string): string {
     `        @class(${cls});`,
     "}",
     "",
-    `module ${cls}NetworkLayer like INetworkLayer`,
+    `module ${netLayerName(machine)} like INetworkLayer`,
     "{",
     "    parameters:",
     "        string interfaceTableModule;",

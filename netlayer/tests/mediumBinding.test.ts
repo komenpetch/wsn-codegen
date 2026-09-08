@@ -15,7 +15,7 @@ const h = tree.find((f) => f.path.endsWith(".h"))!.content;
 describe("medium binding: transmit", () => {
   it("hands the model's own packet to the radio from the model's own transmit event", () => {
     // The CommPattern rename puts send_down's body in sendSensorPacket(...).
-    const body = cc.slice(cc.indexOf("bool M4App::sendSensorPacket(int cn"));
+    const body = cc.slice(cc.indexOf("bool M4Net::sendSensorPacket(int cn"));
     expect(body.slice(0, body.indexOf("\n}"))).toContain("mediumSend(pkt);");
   });
 
@@ -31,20 +31,20 @@ describe("medium binding: transmit", () => {
     // partition lattice -- RTMCS generates sendRreqBroadcast/sendRrepBroadcast/
     // sendRrerBroadcast from its own.
     for (const m of ["sendBeaconBroadcast", "sendRouteBroadcast", "sendDataBroadcast"]) {
-      expect(cc).toContain(`void M4App::${m}(PktId pkt)`);
+      expect(cc).toContain(`void M4Net::${m}(PktId pkt)`);
       expect(h).toContain(`virtual void ${m}(PktId pkt);`);
     }
   });
 
   it("dispatches to them on the packet's own type", () => {
-    const send = cc.slice(cc.indexOf("void M4App::mediumSend"));
+    const send = cc.slice(cc.indexOf("void M4Net::mediumSend"));
     const body = send.slice(0, send.indexOf("\n}"));
     expect(body).toContain("switch (held->getType())");
     expect(body).toContain("case PktType::BEACON: sendBeaconBroadcast(pkt); break;");
   });
 
   it("goes down to the MAC as a broadcast, not out through a socket", () => {
-    const send = cc.slice(cc.indexOf("void M4App::sendBeaconBroadcast"));
+    const send = cc.slice(cc.indexOf("void M4Net::sendBeaconBroadcast"));
     const body = send.slice(0, send.indexOf("\n}"));
     expect(body).toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
     expect(body).toContain("sendDown(packet);");
@@ -53,7 +53,7 @@ describe("medium binding: transmit", () => {
 });
 
 describe("medium binding: receive", () => {
-  const arrival = cc.slice(cc.indexOf("void M4App::handleLowerPacket(Packet *packet) {"));
+  const arrival = cc.slice(cc.indexOf("void M4Net::handleLowerPacket(Packet *packet) {"));
   const body = arrival.slice(0, arrival.indexOf("\n}"));
 
   it("runs the model's own delivery event rather than hand-coding its postcondition", () => {
@@ -98,7 +98,7 @@ describe("medium binding: receive", () => {
 });
 
 describe("medium binding: packet identity across nodes", () => {
-  const fn = cc.slice(cc.indexOf("PktId M4App::localIdFor"));
+  const fn = cc.slice(cc.indexOf("PktId M4Net::localIdFor"));
   const key = fn.slice(fn.indexOf("std::vector<long> key"), fn.indexOf("auto it ="));
 
   it("keys on the fields no event overwrites", () => {
@@ -127,7 +127,7 @@ describe("medium binding: packet identity across nodes", () => {
 });
 
 describe("medium binding: what the scheduler may no longer fire", () => {
-  const run = cc.slice(cc.indexOf("bool M4App::runEnabledEvents()"));
+  const run = cc.slice(cc.indexOf("bool M4Net::runEnabledEvents()"));
   const body = run.slice(0, run.indexOf("\n}"));
 
   it("does not fire the delivery or propagation events on their own timetable", () => {
@@ -165,7 +165,7 @@ describe("medium binding: guards that used to look translated", () => {
     // `{pkt} ⩤ pktSeqNo` in send_down is the model saying the packet has left.
     // Emitting nothing there left it permanently held, so the same packet could
     // never be accepted again and the duplicate events could never run.
-    const tx = cc.slice(cc.indexOf("bool M4App::sendSensorPacket(int cn"));
+    const tx = cc.slice(cc.indexOf("bool M4Net::sendSensorPacket(int cn"));
     expect(tx.slice(0, tx.indexOf("\n}"))).toContain("pktLive.erase(pkt);");
   });
 });
@@ -181,7 +181,7 @@ describe("an event that refuses to fire changes nothing", () => {
 
   it("puts the refusal before the actions in every incomplete event", () => {
     const bad: string[] = [];
-    for (const m of cc.matchAll(/^bool M4App::(\w+)\([^)]*\) \{\n([\s\S]*?)\n\}/gm)) {
+    for (const m of cc.matchAll(/^bool M4Net::(\w+)\([^)]*\) \{\n([\s\S]*?)\n\}/gm)) {
       const [, method, body] = m;
       const at = body.indexOf(REFUSAL);
       if (at < 0) continue;                       // event translates fully
@@ -198,7 +198,7 @@ describe("an event that refuses to fire changes nothing", () => {
   it("still shows what the event would have done", () => {
     // The actions stay readable next to the markers that say why they cannot
     // run -- the shape of the model is part of what the output is for.
-    const fn = cc.slice(cc.indexOf("bool M4App::finish_tx_pkt"));
+    const fn = cc.slice(cc.indexOf("bool M4Net::finish_tx_pkt"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).toContain("// The actions this event would perform, for reference only:");
     expect(body).toContain("// WiMedium.erase({f, pkt});");
@@ -216,7 +216,7 @@ describe("an event that refuses to fire changes nothing", () => {
 // netfilter hooks and never carries one. The machines forward packets.
 describe("network-layer shell", () => {
   it("is a network protocol, not an application", () => {
-    expect(h).toContain("class M4App : public NetworkProtocolBase, public INetworkProtocol {");
+    expect(h).toContain("class M4Net : public NetworkProtocolBase, public INetworkProtocol {");
     expect(h).not.toContain("ApplicationBase");
     expect(h).not.toContain("INetworkSocket");
   });
@@ -230,7 +230,7 @@ describe("network-layer shell", () => {
   });
 
   it("keeps MintRoute's three init stages, for MintRoute's reasons", () => {
-    const init = cc.slice(cc.indexOf("void M4App::initialize(int stage) {"));
+    const init = cc.slice(cc.indexOf("void M4Net::initialize(int stage) {"));
     const body = init.slice(0, init.indexOf("\n}\n"));
     expect(body).toContain("NetworkProtocolBase::initialize(stage);");
     for (const s of ["INITSTAGE_LOCAL", "INITSTAGE_NETWORK_INTERFACE_CONFIGURATION", "INITSTAGE_NETWORK_LAYER"])
@@ -238,14 +238,14 @@ describe("network-layer shell", () => {
   });
 
   it("drives the model from a self-message timer, as MintRoute drives its floods", () => {
-    const fn = cc.slice(cc.indexOf("void M4App::handleSelfMessage"));
+    const fn = cc.slice(cc.indexOf("void M4Net::handleSelfMessage"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).toContain("runEnabledEvents();");
     expect(body).toContain("scheduleAfter(tickInterval, modelTimer);");
   });
 
   it("carries the send-side utilities verbatim in shape from MintRoute", () => {
-    const fn = cc.slice(cc.indexOf("void M4App::setDownControlInfo"));
+    const fn = cc.slice(cc.indexOf("void M4Net::setDownControlInfo"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).toContain("addTagIfAbsent<MacAddressReq>()->setDestAddress(macAddr);");
     expect(body).toContain("addTagIfAbsent<PacketProtocolTag>()->setProtocol(&getProtocol());");
@@ -257,8 +257,8 @@ describe("network-layer shell", () => {
     // dispatcher; so does this. Both live in the one .ned, because the output
     // contract is three files.
     const ned = tree.find((f) => f.path.endsWith(".ned"))!.content;
-    expect(ned).toContain("simple M4App extends NetworkProtocolBase like INetworkProtocol");
-    expect(ned).toContain("module M4AppNetworkLayer like INetworkLayer");
-    expect(ned).toContain("np: M4App {");
+    expect(ned).toContain("simple M4Net extends NetworkProtocolBase like INetworkProtocol");
+    expect(ned).toContain("module M4NetworkLayer like INetworkLayer");
+    expect(ned).toContain("np: M4Net {");
   });
 });

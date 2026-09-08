@@ -107,10 +107,23 @@ Both case studies compile at 0 errors under the new shell, and the ceiling is
 still the model's own `updateNbrs` handshake — PRouteTable's problem, not the
 shell's.
 
-## 6. One thing deliberately not done
+## 6. The name
 
-The emitted class is still called `M4App`, which is now a misleading name for a
-`NetworkProtocolBase`. The name comes from the app layer's `defaultName`, and
-changing it touches the frozen app-layer naming, the harness and every test at
-once. It is a rename, not a design question, and it belongs with the merge of
-the two layers rather than in the middle of a base-class pivot.
+The class is `M4Net`, not `M4App`. The app layer's `defaultName` produces
+"M4App", which was a true description of an `ApplicationBase` and a misleading
+one for a `NetworkProtocolBase`: a reader meeting `M4App : public
+NetworkProtocolBase` has to stop and work out which half is stale. The network
+layer has its own `netName` now, and the pair reads the way INET's own do --
+`M4Net` for the protocol and `M4NetworkLayer` for the compound module that holds
+it, both derived from the machine label. RTMCS generates `M6Net` /
+`M6NetworkLayer`. Files follow: `M4Net.{h,cc,ned}`.
+
+The app layer is untouched: `defaultName` still produces `Pm3App` for the
+application it names correctly, and its frozen output does not move.
+
+One thing the rename exposed, which is worth keeping in mind for any future
+one: a test in `generateNet.test.ts` split the emitted `.cc` with a hardcoded
+`^bool M6App::` regex. After the rename it matched nothing, so the test that
+walks every method passed while checking zero methods. Only its neighbour --
+which asserts it found something before looking at it -- failed. The regex now
+derives the class name from the emitted file.
