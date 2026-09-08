@@ -112,11 +112,22 @@ export function parseSetExpr(src: string): SetExpr | null {
 
 // ── Membership ───────────────────────────────────────────────────────────
 type Enc = (id: string) => EncodingForm | undefined;
+// The model's carrier sets, by name. Membership in one is a typing statement,
+// not a lookup -- see memberOfLeaf.
+export type Carriers = ReadonlySet<string>;
 
 // Membership of `elem` in a LEAF set, decided by how that leaf is stored.
 // Returns null when the pairing of element shape and container makes no sense,
 // so the caller refuses rather than emitting something that merely compiles.
-function memberOfLeaf(elem: Elem, name: string, enc: Enc): string | null {
+function memberOfLeaf(elem: Elem, name: string, enc: Enc, carriers: Carriers): string | null {
+  // A CARRIER SET is a type, not a container. `pkt ∈ PKT ∖ (xmittedPkts ∪
+  // middleware)` says "some packet not yet used", and its `∈ PKT` half is the
+  // typing half -- true of every PktId there is. C++ has no object to look in:
+  // a carrier is declared nowhere, so treating it as one emitted
+  // `PKT.count(pkt)` against an undeclared identifier (four compile errors in
+  // RTMCS M6's create_* events). The rest of the expression still carries the
+  // whole meaning.
+  if (carriers.has(name)) return elem.kind === "scalar" ? "true" : null;
   const form = enc(name);
   if (elem.kind === "pair") {
     if (form === "pair-set") return `${name}.count({${elem.a}, ${elem.b}}) > 0`;
@@ -132,10 +143,10 @@ function memberOfLeaf(elem: Elem, name: string, enc: Enc): string | null {
   return `${name}.count(${elem.x}) > 0`;
 }
 
-export function memberTest(elem: Elem, e: SetExpr, enc: Enc): string | null {
+export function memberTest(elem: Elem, e: SetExpr, enc: Enc, carriers: Carriers = new Set()): string | null {
   switch (e.k) {
     case "id":
-      return memberOfLeaf(elem, e.name, enc);
+      return memberOfLeaf(elem, e.name, enc, carriers);
 
     case "apply": {
       // `x ∈ f(k)` -- membership in the set stored under one key.
@@ -144,8 +155,8 @@ export function memberTest(elem: Elem, e: SetExpr, enc: Enc): string | null {
     }
 
     case "op": {
-      const l = memberTest(elem, e.l, enc);
-      const r = memberTest(elem, e.r, enc);
+      const l = memberTest(elem, e.l, enc, carriers);
+      const r = memberTest(elem, e.r, enc, carriers);
       if (l === null || r === null) return null;
       if (e.op === "∪") return `(${l} || ${r})`;
       if (e.op === "∩") return `(${l} && ${r})`;
@@ -157,8 +168,8 @@ export function memberTest(elem: Elem, e: SetExpr, enc: Enc): string | null {
       // Distributing over ∪ is sound; over ∖ and ∩ it is not (see the header).
       if (e.e.k === "op") {
         if (e.e.op !== "∪") return null;
-        const l = memberTest(elem, { k: "fn", fn: e.fn, e: e.e.l }, enc);
-        const r = memberTest(elem, { k: "fn", fn: e.fn, e: e.e.r }, enc);
+        const l = memberTest(elem, { k: "fn", fn: e.fn, e: e.e.l }, enc, carriers);
+        const r = memberTest(elem, { k: "fn", fn: e.fn, e: e.e.r }, enc, carriers);
         return l === null || r === null ? null : `(${l} || ${r})`;
       }
       if (e.e.k !== "id") return null;

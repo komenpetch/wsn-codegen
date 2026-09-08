@@ -26,6 +26,8 @@ import { installScheduler } from "../engine/scheduler";
 import { bindNodeIdentity } from "../engine/nodeIdentity";
 import { imageRules, insertImageHelper } from "../engine/imageRules";
 import { composeRules } from "../engine/compose";
+import { mediumRules } from "../engine/mediumRules";
+import { planMedium, bindMedium } from "../engine/mediumBinding";
 import { fixAliasedEncodings, fixBooleanEncodings } from "../engine/aliasEncoding";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -51,6 +53,9 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   // (MintRoute M4's `bcastRouTimer ∈ BOOL`) -- see aliasEncoding.ts.
   fixBooleanEncodings(model);
 
+  // The model's carrier sets: membership in one is a typing statement, not a
+  // container lookup (setExpr.ts memberOfLeaf).
+  const carriers = new Set(raw.contexts.flatMap((c) => c.sets));
   const lattice = packetTypeLattice(raw.contexts);
   if (!lattice) throw new Error(`${project} declares no packet-type partition; PPkt cannot be generated.`);
   const pm = packetModel(raw, model, lattice);
@@ -58,8 +63,8 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   // Composition is installed for the duration of this generation only, so the
   // app-layer catalog module is never mutated for other callers.
   const nested = nestedMapVars(model);
-  const composed = composeRules([...packetRules(pm.fields), ...miscRules(), ...scalarRules(),
-    ...composedRules(), ...nestedMapRules(nested), ...imageRules()]);
+  const composed = composeRules([...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
+    ...scalarRules(), ...composedRules(carriers), ...nestedMapRules(nested), ...imageRules()]);
   let tree = withRules(composed, () => emit(model, defaultName(machine), 4, raw.contexts));
 
   // Splice the packet classes into the header, above the module class.
@@ -79,7 +84,13 @@ export function generateNet(project: string, machine: string): GeneratedTree {
   // Last: the scheduler reads the FINAL emitted signatures.
   tree = insertImageHelper(tree);
   tree = bindNodeIdentity(tree, model, defaultName(machine));
-  tree = installScheduler(tree, model, defaultName(machine), pm.fields);
+  // The medium binding is planned against the FINAL emitted signatures (the
+  // CommPattern rename and fixSetTypedParameters have both run by now), and it
+  // must precede the scheduler: which events the simulator realises decides
+  // which events the scheduler may not fire on its own.
+  const plan = planMedium(model, pm, ccOf(tree), defaultName(machine));
+  if (plan) tree = bindMedium(tree, plan, defaultName(machine));
+  tree = installScheduler(tree, model, defaultName(machine), pm.fields, plan?.realisedByMedium, plan !== null);
   return tree;
 }
 
@@ -411,6 +422,9 @@ function stripDeadPacketFieldMaps(tree: GeneratedTree, fields: PacketField[]): G
     : f.path.endsWith(".cc") ? { ...f, content: cc }
     : f);
 }
+
+const ccOf = (tree: GeneratedTree): string =>
+  tree.find((f) => f.path.endsWith(".cc"))?.content ?? "";
 
 // RULES is a const array the engine reads directly, so swap its CONTENTS for
 // the duration of the call and restore them afterwards. Mutating a shared array

@@ -11,6 +11,19 @@ const BASELINE = resolve(HERE, "__baseline__/applayer-v4.json");
 // The finished app layer is published evidence: its emitted bytes back the
 // paper's similarity figures. Any network-layer change that moves them is a
 // defect in THIS work, not an improvement, and it must fail loudly here.
+//
+// DELIBERATE BASELINE CHANGE, 2026-09-07 -- the one time it has moved, and the
+// reason it is recorded here rather than quietly re-recorded. A partially
+// translated event used to run every action it could translate and THEN report
+// that it had not fired: the emitter appended its refusal after the actions.
+// The app layer has exactly one such event (`activate`, PActivate), whose
+// action `emergencyAlert[act] = TRUE;` therefore ran on every call while the
+// method returned false. Nothing in the app-layer module calls it, so nothing
+// there observed the difference -- the network layer did, catastrophically:
+// MintRoute's finish_tx_pkt erased from the very container its caller was
+// iterating and then returned false, and the run died with an access violation.
+// The refusal now precedes the actions, which are emitted as comments. The only
+// bytes that moved in the app layer are those of `activate`.
 function emitAppLayer(): Record<string, string> {
   const dir = resolve(ROOT, "Update_wsn/C0_project");
   const files = readdirSync(dir)

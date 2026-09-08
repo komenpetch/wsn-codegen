@@ -165,11 +165,13 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         lines.push(`    ${par.cppType} ${p} = newPktId();`);
         rollback.push(`    pktStore.erase(${p});`);
         const tag = typeOf(p);
-        if (tag) {
-          lines.push(`    type[${p}] = ${tag};`);
-          lines.push(`    ensurePkt(${p})->setType(PktType::${tag});`);
-          rollback.push(`    type.erase(${p});`);
-        }
+        // The chunk, and only the chunk. The context map `type` is the other
+        // storage ENC7 replaced; writing it too kept the creating node working
+        // and left every RECEIVING node's `type(pkt)` guard unsatisfiable,
+        // since a packet off the wire has a chunk and no map entry. TYPE-CMP /
+        // TYPE-MEM (mediumRules.ts) now read the chunk everywhere, so there is
+        // one storage again and nothing to keep in step.
+        if (tag) lines.push(`    ensurePkt(${p})->setType(PktType::${tag});`);
         // Any `q = g(p)` guard over an already-known q is satisfied by
         // construction too -- the model is describing the packet being made.
         for (const c of clauses) {
@@ -210,6 +212,48 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
           lines.push(`    ${ta} ${a} = _pr_${a}_${b}.first;`);
           lines.push(`    ${tb} ${b} = _pr_${a}_${b}.second;`);
           resolved.add(a); resolved.add(b); progress = true; continue;
+        }
+      }
+      // `a ↦ b ∈ M` with M a MAP-OF-SETS: the same maplet-membership shape as
+      // the pair-set case above, but the container nests, so the search does
+      // too. This is the binding the whole receive family hangs on --
+      // `pkt ↦ nb ∈ ctlNeighbours` is "for each packet pending delivery to
+      // nb" -- and without it receive_controlPkt, receive_dup_controlPkt and
+      // sink_recv_controlPkt were all reported as "no binding for pkt", i.e.
+      // a packet could arrive and no event could consume it.
+      //
+      // Which side is already bound decides the shape. With `nb` bound (its
+      // own `nb ∈ ND` carrier guard, which in a per-node module means "me"),
+      // only the outer map is searched and membership is a lookup; that is
+      // the case that matters, and it reads exactly like the model clause.
+      {
+        const mm = clauses.map((c) =>
+          new RegExp(`^(\\w+)\\s*↦\\s*(\\w+)\\s*∈\\s*(\\w+)$`).exec(c.trim())).find((m) => {
+            if (!m) return false;
+            const [, a, b, v] = m;
+            return enc(v) === "map-of-sets" && (a === p || b === p)
+              && !(resolved.has(a) && resolved.has(b));
+          });
+        if (mm) {
+          const [, a, b, v] = mm;
+          const ta = params.find((q) => q.name === a)?.cppType ?? "int";
+          const tb = params.find((q) => q.name === b)?.cppType ?? "int";
+          if (resolved.has(b)) {
+            lines.push(`    for (auto& _ms_${a} : ${v}) {`); depth++;
+            lines.push(`    if (_ms_${a}.second.count(${b}) == 0) continue;`);
+            lines.push(`    ${ta} ${a} = _ms_${a}.first;`);
+            resolved.add(a);
+          } else if (resolved.has(a)) {
+            lines.push(`    if (${v}.count(${a}) == 0) ${bail()}`);
+            lines.push(`    for (${tb} ${b} : ${v}.at(${a})) {`); depth++;
+            resolved.add(b);
+          } else {
+            lines.push(`    for (auto& _ms_${a}_${b} : ${v}) {`); depth++;
+            lines.push(`    ${ta} ${a} = _ms_${a}_${b}.first;`);
+            lines.push(`    for (${tb} ${b} : _ms_${a}_${b}.second) {`); depth++;
+            resolved.add(a); resolved.add(b);
+          }
+          progress = true; continue;
         }
       }
       // `o ↦ {i ↦ v} ∈ N` on a two-level table: once o and i are known, v is a
@@ -259,7 +303,8 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
     : { label, params, lines, rollback, ok: false, why: `no binding for ${missing.join(", ")}` };
 }
 
-export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: PacketField[]): { decls: string; defs: string } {
+export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: PacketField[],
+  realisedByMedium: ReadonlySet<string> = new Set()): { decls: string; defs: string } {
   const pktField = new Map(fields.map((f) => [f.ebName, f.name.charAt(0).toUpperCase() + f.name.slice(1)]));
   // Two-level tables, recognised the same way nestedMap.ts does.
   const nestedVars = new Set<string>();
@@ -270,6 +315,13 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
   const plans: Plan[] = [];
   for (const ev of model.events) {
     if (ev.label === "INITIALISATION") continue;
+    // An event the simulator's medium realises is NOT spontaneous: it happens
+    // when a transmission happens, and the medium binding calls it then. Left
+    // in this list it would fire on its own timetable and, worse, on the
+    // SENDING node -- the sender would compute its own neighbours from the
+    // model's topology variable and deliver the packet to itself. See
+    // mediumBinding.ts for how the set is derived (it is not a name list).
+    if (realisedByMedium.has(ev.label)) continue;
     const sig = sigs.get(ev.label);
     if (!sig) continue;                          // not emitted as a bool method
     const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField);
@@ -309,6 +361,8 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     "    std::map<std::string, long> firedCount;",
     ...firable.map((p) => `    bool try_${p.label}();`),
     ...skipped.map((p) => `    // not schedulable: ${p.label} -- ${p.why}`),
+    ...[...realisedByMedium].map((label) =>
+      `    // realised by the simulator's medium, not scheduled: ${label}`),
     `    bool runEnabledEvents();`,
   ].join("\n");
 
@@ -316,10 +370,11 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
 }
 
 // Splice the scheduler in, and call it from the sensing timer.
-export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls: string, fields: PacketField[]): GeneratedTree {
+export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls: string, fields: PacketField[],
+  realisedByMedium: ReadonlySet<string> = new Set(), mediumBound = false): GeneratedTree {
   const ccFile = tree.find((f) => f.path.endsWith(".cc"));
   if (!ccFile) return tree;
-  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields);
+  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, realisedByMedium);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {
@@ -344,9 +399,22 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
       const at = content.indexOf("\nDefine_Module(");
       content = at < 0 ? content + "\n" + defs : content.slice(0, at + 1) + defs + "\n\n" + content.slice(at + 1);
       // Drive it from the timer that already exists in the shell.
+      //
+      // Once the medium is bound, the timer drives the MODEL and nothing else.
+      // The shell's own sendSensorPacket() is app-layer demo traffic -- a
+      // ByteCountChunk addressed to the sink, which the network-layer machine
+      // does not describe -- and it now shares one radio with the model's own
+      // packets. Leaving it in does not just add noise to the counts: it
+      // contends for the same duty-cycled MAC, so the model's transmissions are
+      // the ones that get lost. The method stays emitted, like the shell's other
+      // helpers; nothing calls it.
       content = content.replace(
         /^(\s*)sendSensorPacket\(\);$/m,
-        `$1sendSensorPacket();\n$1runEnabledEvents();   // Event-B events enabled at this tick`,
+        mediumBound
+          ? `$1runEnabledEvents();   // Event-B events enabled at this tick\n` +
+            `$1// (the shell's own sendSensorPacket() is not called: the medium\n` +
+            `$1//  binding makes the model's transmit event the transmit path)`
+          : `$1sendSensorPacket();\n$1runEnabledEvents();   // Event-B events enabled at this tick`,
       );
       return { ...f, content };
     }

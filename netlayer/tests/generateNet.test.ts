@@ -85,10 +85,21 @@ describe("generateNet for MintRoute M4", () => {
   // the old, lower number was wrong, same as the 168->218 move above. Pinned
   // exactly (not `<`) so a future change to either number is a deliberate,
   // reviewed edit to this test, not a silent drift in either direction.
+  // 88 -> 82 with the medium binding (2026-09-07). Six clauses, all on the
+  // receiving side of a transmission and all invisible until something was
+  // actually received: send_up's five `{pkt} ⩤ vPkt*` domain subtractions
+  // (DOMSUB-SINGLETON) and its `ran({pkt} ◁ envNeighbours) ∈ (ℙ(ND) ∪
+  // {{FAILED_XMIT}})` well-typedness guard (IMG-NO-MIX). The other fixes of
+  // that round do not move this number because they replace a translation
+  // that was already there and already compiled -- and was always false
+  // (`type.count(pkt)` against the map ENC7 replaced, `pktNbHops.at(pkt)`
+  // against a map nothing writes). That is the point worth remembering here:
+  // this count measures what is VISIBLY missing, and the receive path's real
+  // problem was a guard that looked translated.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(88);
+    expect(after).toBe(82);
   });
 
   it("keeps the flooding events translatable", () => {

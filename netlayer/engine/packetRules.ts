@@ -48,7 +48,7 @@ const re = (p: RegExp) => (expr: string): RuleMatch | null => {
 // rule -- e.g. initialSrcAddr is guarded `∈ dom(...)` four times across both
 // corpora and `∉` never; envDestAddr and pktErrND are guarded `∉ dom(...)`
 // exactly once each (their own creation site) and `∈` never.
-type Kind = "GET" | "SET" | "DOM" | "DOM_NOT" | "DEL" | "MEM";
+type Kind = "GET" | "SET" | "DOM" | "DOM_NOT" | "DEL" | "MEM" | "ARITH";
 const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
   // Context-sourced: a fixed per-packet identity, never written or removed.
   initialSrcAddr: {
@@ -105,6 +105,12 @@ const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
     DOM: ["MintRoute.send_down", "RTMCS.send_down"],
     DOM_NOT: ["MintRoute.create_bconPkt", "MintRoute.create_routePkt"],
     DEL: ["MintRoute.send_down", "RTMCS.send_down", "RTMCS.clear_pkt"],
+    // The hop count is the one field a receiver derives rather than reads:
+    // `nbh = pktNbHops(pkt) + 1` is "one more hop than the packet has
+    // travelled". It is the shape GET does not cover, and the receive events
+    // are where it lives -- which is why it stayed invisible until something
+    // was actually received.
+    ARITH: ["MintRoute.receive_controlPkt", "MintRoute.receive_dataPkt"],
   },
   // Total from INITIALISATION (`netSeqNo := PKT x {0}`) in both projects, so
   // it is never guarded for domain membership, never chunk-set via the
@@ -201,6 +207,22 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       match: re(new RegExp(`^(?<y>\\w+)\\s*=\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)$`)),
       emit: (m) => `${m.captures.y} == pktOf(${m.captures.p})->${G}()`,
     });
+    // `y = F(p) ± n`: the same chunk read as GET, with arithmetic on it. Kept
+    // separate from GET because it is a different clause shape, and because
+    // the app-layer catalog already has a rule for it (scalarRules'
+    // ARITH-FN-CMP) that emits a domain-checked lookup into the machine map
+    // ENC7 no longer maintains -- correct-looking, always false. That is the
+    // silent form of the failure: not a compile error, not an UNTRANSLATED
+    // marker, just an event that never fires. Intercept ahead of it.
+    if (ev.ARITH) out.push({
+      id: `PKT-ARITH-${f.ebName}`, tier: 1, evidence: ev.ARITH,
+      match: re(new RegExp(
+        `^(?<y>\\w+)\\s*=\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)\\s*(?<op>\\+|−|-)\\s*(?<n>\\d+)$`)),
+      emit: (m) => {
+        const { y, p, op, n } = m.captures;
+        return `(pktOf(${p}) != nullptr && ${y} == pktOf(${p})->${G}() ${op === "+" ? "+" : "-"} ${n})`;
+      },
+    });
     // Both write spellings the models use: relational override (U+E103 / U+2295
     // / U+22B4) and union with a maplet. No `u` flag: in unicode mode `\{` is an
     // invalid identity escape and the RegExp constructor throws. U+E103 is in
@@ -268,12 +290,30 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       // answerable again.
       emit: (m) => f.total ? "false" : `pktLive.count(${m.captures.p}) == 0`,
     });
-    // Domain anti-restriction on a chunk field is a no-op: the packet is being
-    // discarded, and the field goes with it.
+    // Domain anti-restriction on a chunk field: this node no longer holds the
+    // packet's attributes. Under ENC7 the five attributes share one domain
+    // (pktLive -- see the registry's own comment), so the erase is the same
+    // erase whichever field names it, and repeating it per field is idempotent.
+    //
+    // This USED to emit a no-op comment ("the field travels with the packet"),
+    // which was true only while nothing was ever transmitted. Once the medium
+    // is bound, `{pkt} ⩤ pktSeqNo` in the transmit event is the model saying
+    // the packet has left, and the delivery event's own `pkt ∉ dom(pktSeqNo)`
+    // precondition is asked of a node that has since received it back. Emitting
+    // nothing there left the packet permanently "held", so a node could never
+    // accept the same packet twice and the duplicate-handling events could
+    // never run.
+    //
+    // Imprecision worth stating rather than hiding: one event in the corpus
+    // (RTMCS's clear_pkt) deletes a PROPER SUBSET of the family -- it never
+    // touches pktSrc -- and ENC7 cannot represent a partly-defined packet, so
+    // there the erase says slightly more than the model does. That collapse is
+    // ENC7's, made when the family became one chunk; PKT-SET has the mirror
+    // form of it (any field write marks the whole packet live).
     if (ev.DEL) out.push({
       id: `PKT-DEL-${f.ebName}`, tier: 3, evidence: ev.DEL,
-      match: re(new RegExp(`^${F}\\s*≔\\s*\\{\\s*\\w+\\s*\\}\\s*⩤\\s*${F}$`)),
-      emit: () => `/* packet discarded; field travels with it */`,
+      match: re(new RegExp(`^${F}\\s*≔\\s*\\{\\s*(?<p>\\w+)\\s*\\}\\s*⩤\\s*${F}$`)),
+      emit: (m) => `pktLive.erase(${m.captures.p});`,
     });
     // `p ↦ v ∈ F` / `∉` -- a function's graph tested via maplet membership
     // (valid Event-B for a `PKT ⇸ T` variable, since a function IS its

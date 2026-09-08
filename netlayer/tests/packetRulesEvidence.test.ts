@@ -19,6 +19,7 @@ import type { EncodedMachine } from "../../src/engine/types";
 import { packetTypeLattice } from "../engine/packetTypes";
 import { packetModel } from "../engine/packetModel";
 import { packetRules } from "../engine/packetRules";
+import { mediumRules } from "../engine/mediumRules";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -67,7 +68,7 @@ describe("packetRules evidence is real, not just non-empty", () => {
       const lattice = packetTypeLattice(raw.contexts)!;
       const machine = resolveEncodings(flatten(raw, leaf));
       const pm = packetModel(raw, machine, lattice);
-      const rules = packetRules(pm.fields);
+      const rules = [...packetRules(pm.fields), ...mediumRules(lattice)];
 
       // A vacuous pass (zero rules) would defeat the whole point of this
       // test -- packetModel must have found a non-trivial field set.

@@ -340,15 +340,41 @@ export function emit(
         : [...noteG, `    return ${pred};`].join("\n");
       defs.push(`${prov}bool ${name}::${cppName}(${params(raw, aliases)}) {\n${body}\n}`);
     } else {
-      const body = [
-        // Each guard early-return on its own indented line for readability.
-        ...t.guards.map((g) => `    if (!(${g}))\n        return false;`),
-        ...noteG,
-        ...inject,
-        ...t.actions.map((a) => `    ${a}`),
-        ...noteA,
-        ...refuse,
-      ].join("\n");
+      // An incomplete event refuses BEFORE its actions, not after them.
+      //
+      // The refusal used to be appended at the end, so a partially translated
+      // event ran every action it could translate and then reported that it had
+      // not fired. That is worse than either honest outcome: the model's state
+      // changed, and nothing above the event believed it had. MintRoute's
+      // finish_tx_pkt showed both halves of the damage in one run -- it erased
+      // from WiMedium and sentUp, returned false, and its caller (which was
+      // iterating WiMedium to find candidates) went on using an iterator the
+      // erase had invalidated. That is an access violation, not a wrong answer,
+      // and it only appeared once the medium binding made deliveries happen.
+      //
+      // The actions stay in the emitted text, commented, so the shape of the
+      // event is still readable next to the markers that say why it cannot run.
+      const body = (incomplete
+        ? [
+            ...t.guards.map((g) => `    if (!(${g}))\n        return false;`),
+            ...noteG,
+            ...noteA,
+            ...refuse,
+            ...(inject.length + t.actions.length > 0
+              ? ["    // The actions this event would perform, for reference only:",
+                 ...inject.map((a) => `    // ${a.trim()}`),
+                 ...t.actions.map((a) => `    // ${a}`)]
+              : []),
+          ]
+        : [
+            // Each guard early-return on its own indented line for readability.
+            ...t.guards.map((g) => `    if (!(${g}))\n        return false;`),
+            ...noteG,
+            ...inject,
+            ...t.actions.map((a) => `    ${a}`),
+            ...noteA,
+            ...refuse,
+          ]).join("\n");
       defs.push(`${prov}bool ${name}::${cppName}(${params(raw, aliases)}) {\n${body}\n}`);
     }
   }

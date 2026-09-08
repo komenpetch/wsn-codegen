@@ -1,7 +1,7 @@
 import type { RuleMatch } from "../../src/engine/rules";
 import type { NetRule } from "./packetRules";
 import { parseSetExpr, memberTest } from "./setExpr";
-import type { SetExpr } from "./setExpr";
+import type { SetExpr, Carriers } from "./setExpr";
 
 // Membership rules whose right-hand side is a full set EXPRESSION rather than a
 // bare identifier -- the composition the flat catalog could not do (gap-baseline
@@ -29,7 +29,7 @@ const re = (p: RegExp) => (expr: string): RuleMatch | null => {
 const isCompound = (rhs: string) =>
   /[∪∩∖]/.test(rhs) || /\b(ran|dom)\s*\(/.test(rhs);
 
-export function composedRules(): NetRule[] {
+export function composedRules(carriers: Carriers = new Set()): NetRule[] {
   return [
     // `x ∈ <set expression>` / `x ∉ <set expression>`
     {
@@ -43,7 +43,7 @@ export function composedRules(): NetRule[] {
         const { x, op, rhs } = m.captures;
         const e = parseSetExpr(rhs);
         if (!e) return "";
-        const test = memberTest({ kind: "scalar", x }, e, enc);
+        const test = memberTest({ kind: "scalar", x }, e, enc, carriers);
         if (test === null) return "";
         return op === "∈" ? test : `!(${test})`;
       },
@@ -61,7 +61,7 @@ export function composedRules(): NetRule[] {
         const { a, b, op, rhs } = m.captures;
         const e = parseSetExpr(rhs);
         if (!e) return "";
-        const test = memberTest({ kind: "pair", a, b }, e, enc);
+        const test = memberTest({ kind: "pair", a, b }, e, enc, carriers);
         if (test === null) return "";
         return op === "∈" ? test : `!(${test})`;
       },
