@@ -69,6 +69,40 @@ function domRan(inv: string | undefined): { dom?: string; ran?: string } {
   return {};
 }
 
+// The encoding forms that become a plain C++ scalar, and so carry no
+// default constructor of their own.
+const SCALAR_FORMS = new Set<EncodingForm>(["bool", "int"]);
+
+// `v ≔ <literal>` in INITIALISATION, for the scalar variables only, as the C++
+// literal to initialise the member with.
+//
+// Deliberately narrow. It reads INITIALISATION and nothing else, because a
+// member initialiser can only express the initial value — the same assignment
+// in an EVENT is a state change and stays untranslated until the rule catalog
+// grows one (MintRoute's `bcastRouTimer ≔ TRUE` in set_bcastRouTimer, still a
+// visible gap). ⚠ Emitting those in the constructor instead would be worse than
+// useless: the reachability pass reads assignments off the .cc, so a
+// constructor line would make `create_routePkt` look enabled by a variable
+// nothing ever sets true.
+function initialValues(model: EncodedMachine):
+  { values: Map<string, string>; consumed: Set<string> } {
+  const values = new Map<string, string>();
+  // The action TEXTS these account for. Returned rather than re-derived at the
+  // constructor, so the shape is recognised in one place — a second copy of
+  // this regex is how two answers drift apart.
+  const consumed = new Set<string>();
+  const init = model.events.find((e) => e.label === INITIALISATION);
+  if (!init) return { values, consumed };
+  for (const a of init.actions) {
+    const m = /^\s*(\w+)\s*≔\s*(TRUE|FALSE|−?-?\d+)\s*$/.exec(a);
+    if (!m || !SCALAR_FORMS.has(model.encodings.get(m[1]) as EncodingForm)) continue;
+    values.set(m[1], m[2] === "TRUE" ? "true" : m[2] === "FALSE" ? "false"
+      : m[2].replace(/−/g, "-"));
+    consumed.add(a.trim());
+  }
+  return { values, consumed };
+}
+
 function cppType(form: EncodingForm, inv: string | undefined): string {
   const { dom = "int", ran = "int" } = domRan(inv);
   switch (form) {
@@ -292,8 +326,29 @@ export function emit(
   // Types the contexts NAME (`WSN = ND ↔ ND`), so a parameter declared with the
   // bare name resolves to its container rather than falling back to `int`.
   const aliases = typeAliases(contexts);
+  // ⚠ A SCALAR MEMBER WITH NO INITIALISER IS UNDEFINED BEHAVIOUR, and this
+  // emitted one: `bool bcastRouTimer;` was read by three guards before anything
+  // assigned it. It happened to read false, which is why `create_routePkt`
+  // never fired — a real defect wearing the costume of correct behaviour, since
+  // the same build on another toolchain may read true and start broadcasting.
+  //
+  // Containers need nothing: std::set and std::map default-construct empty,
+  // which is exactly what `v ≔ ∅` means. Only the scalar forms are at risk.
+  //
+  // The VALUE comes from the model wherever the model states one. Event-B's
+  // INITIALISATION is what a member initialiser expresses in C++, so
+  // `bcastRouTimer ≔ FALSE` becomes `bool bcastRouTimer = false;` — a
+  // translation of that clause, not a guess. Where the model states nothing,
+  // value-initialisation still removes the undefined read.
+  const { values: scalarInit, consumed: initRealisedByDecl } = initialValues(model);
   const fields = [...model.encodings.entries()]
-    .map(([id, form]) => `    ${cppType(form, model.variableTypes.get(id))} ${id};`).join("\n");
+    .map(([id, form]) => {
+      const t = cppType(form, model.variableTypes.get(id));
+      const init = SCALAR_FORMS.has(form)
+        ? ` = ${scalarInit.get(id) ?? (t === "bool" ? "false" : "0")}`
+        : "";
+      return `    ${t} ${id}${init};`;
+    }).join("\n");
 
   const hasSendDown = model.events.some((e) => e.label === "send_down");
   const hasSendUp = model.events.some((e) => e.label === "send_up");
@@ -413,7 +468,14 @@ export function emit(
   const ctorBody = tInit
     ? [
         ...tInit.actions.map((a) => `    ${a}`),
-        ...tInit.untranslatedActions.map((a) => `    // UNTRANSLATED ACTION: ${a}`),
+        // An action the MEMBER INITIALISER already realises is translated, not
+        // untranslated, and reporting it here would be false — the count is this
+        // project's measure of what is visibly missing. The event-level
+        // assignments to the same variable are NOT dropped: those are a state
+        // change a declaration cannot express, and they stay visible.
+        ...tInit.untranslatedActions
+          .filter((a) => !initRealisedByDecl.has(a.trim()))
+          .map((a) => `    // UNTRANSLATED ACTION: ${a}`),
       ].join("\n")
     : "";
 

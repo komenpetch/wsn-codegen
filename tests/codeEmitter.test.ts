@@ -341,3 +341,45 @@ describe("set-typed parameters over a product", () => {
     expect(ccFor("r ∈ ℙ(ℤ)")).toContain("bool ProdApp::takes_r(const std::set<Data>& r) {");
   });
 });
+
+// A scalar member with no initialiser is undefined behaviour, and the emitter
+// produced one: `bool bcastRouTimer;`, read by three guards before anything
+// assigned it.
+//
+// The corpus cannot tell a model-derived value from a default, because its only
+// bool starts FALSE and false is also what value-initialisation gives. So the
+// distinction is tested on a synthetic model that starts one TRUE — otherwise
+// the assertion would pass for an emitter that ignored the model entirely.
+describe("scalar member initialisers", () => {
+  const machine = (actions: string[]): EncodedMachine => ({
+    name: "m0",
+    chain: ["m0"],
+    variables: ["flag", "count"],
+    variableTypes: new Map([["flag", "flag ∈ BOOL"], ["count", "count ∈ ℕ"]]),
+    events: [{ label: "INITIALISATION", parameters: [], guards: [], actions }],
+    encodings: new Map<string, "bool" | "int">([["flag", "bool"], ["count", "int"]]),
+  });
+  const header = (actions: string[]): string =>
+    emit(machine(actions), "X", 2, []).find((f) => f.path.endsWith(".h"))!.content;
+
+  it("takes the value from the model, including when it is not the default", () => {
+    expect(header(["flag ≔ TRUE"])).toContain("bool flag = true;");
+    expect(header(["flag ≔ FALSE"])).toContain("bool flag = false;");
+    expect(header(["count ≔ 7"])).toContain("int count = 7;");
+  });
+
+  it("value-initialises a scalar the model's INITIALISATION never assigns", () => {
+    const h = header([]);
+    expect(h).toContain("bool flag = false;");
+    expect(h).toContain("int count = 0;");
+  });
+
+  it("leaves containers alone — they default-construct empty already", () => {
+    const m = machine([]);
+    m.variables.push("buf");
+    m.variableTypes.set("buf", "buf ∈ ℙ(ND)");
+    (m.encodings as Map<string, string>).set("buf", "set");
+    const h = emit(m, "X", 2, []).find((f) => f.path.endsWith(".h"))!.content;
+    expect(h).toContain("std::set<Node> buf;");
+  });
+});

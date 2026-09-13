@@ -109,10 +109,15 @@ describe("generate (network branch) for MintRoute M4", () => {
   // figure the parked design measured before it was parked, reached again from
   // the module it kept verbatim, which is the check that it was re-applied
   // rather than re-derived into something else.
+  // 2026-09-14: 34 -> 33. `bcastRouTimer ≔ FALSE` in INITIALISATION is realised
+  // by the member initialiser now (`bool bcastRouTimer = false;`), which is
+  // what a member initialiser MEANS, so reporting it as untranslated was false.
+  // ⚠ The same assignment inside an EVENT is still untranslated and still
+  // counted -- a declaration cannot express a state change.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(34);
+    expect(after).toBe(33);
   });
 
   // ⚠ THE ORDER OF THE NET RULES IN netPipeline.ts IS BEHAVIOUR, NOT STYLE,
@@ -145,6 +150,31 @@ describe("generate (network branch) for MintRoute M4", () => {
     const refused = [...cc.matchAll(/UNTRANSLATED GUARD: [^\n]*?dom\((\w+)\)/g)]
       .map((m) => m[1]).filter((v) => pairKeyed.has(v));
     expect(refused).toEqual([]);
+  });
+
+  it("leaves no scalar member uninitialised", () => {
+    // ⚠ `bool bcastRouTimer;` was emitted with no initialiser and read by three
+    // guards before anything assigned it. Reading it is undefined behaviour; it
+    // happened to read false, which is why create_routePkt never fired — a real
+    // defect wearing the costume of correct behaviour, since the same source on
+    // another toolchain may read true and start broadcasting route packets.
+    //
+    // Containers are exempt and must stay exempt: std::set and std::map
+    // default-construct empty, which is exactly what the model's `v ≔ ∅` says,
+    // and demanding `= {}` there would be noise.
+    const h = byExt(".h");
+    const state = h.slice(h.indexOf("── Event-B machine state ──"));
+    const uninitialised = [...state.matchAll(/^\s+(bool|int|Node|Data|PktId|long)\s+(\w+);$/gm)]
+      .map((m) => `${m[1]} ${m[2]}`);
+    expect(uninitialised).toEqual([]);
+  });
+
+  it("stops reporting an initialisation the declaration realises", () => {
+    expect(byExt(".h")).toContain("bool bcastRouTimer = false;");
+    // ⚠ Only the INITIALISATION clause. The event-level assignments to the same
+    // variable are a state change a declaration cannot express, so they are
+    // still counted — the gap stays visible.
+    expect(byExt(".cc")).toContain("UNTRANSLATED ACTION: bcastRouTimer ≔ TRUE");
   });
 
   it("keeps the flooding events translatable", () => {
