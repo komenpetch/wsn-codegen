@@ -33,25 +33,25 @@ describe("pipeline.machineNames / leafMachine / defaultName", () => {
     expect(leafMachine([load("pM3"), load("pM1"), load("uM2")])).toBe("pM3");
   });
   it("derives a default C++ name per machine label", () => {
-    expect(defaultName("pM3")).toBe("Pm3App");
-    expect(defaultName("uM4")).toBe("Um4App");
+    expect(defaultName("pM3")).toBe("Pm3Wsn");
+    expect(defaultName("uM4")).toBe("Um4Wsn");
   });
 });
 
 describe("pipeline.generateMerged (whole project → one module)", () => {
   it("emits exactly 3 files, merging the chain into the leaf machine", () => {
     const tree = generateMerged(all());
-    expect(tree.map((f) => f.path).sort()).toEqual(["Pm3App.cc", "Pm3App.h", "Pm3App.ned"]);
+    expect(tree.map((f) => f.path).sort()).toEqual(["Pm3Wsn.cc", "Pm3Wsn.h", "Pm3Wsn.ned"]);
     // The merged module carries state/events from across the whole chain: the
     // sensing event added at pM3 AND events introduced back at pM1.
-    const cc = tree.find((f) => f.path === "Pm3App.cc")!.content;
-    expect(cc).toContain("bool Pm3App::sensing(");   // added at pM3 (leaf)
+    const cc = tree.find((f) => f.path === "Pm3Wsn.cc")!.content;
+    expect(cc).toContain("bool Pm3Wsn::sensing(");   // added at pM3 (leaf)
     // send_up is introduced at pM1 (base) and emitted under its SensorApp name
-    expect(cc).toContain("bool Pm3App::socketDataArrived(");
+    expect(cc).toContain("bool Pm3Wsn::socketDataArrived(");
   });
   it("merges regardless of file order (leaf is content, not position)", () => {
     const tree = generateMerged([load("pM3"), load("pM1"), load("uM2")]);
-    expect(tree.map((f) => f.path).sort()).toEqual(["Pm3App.cc", "Pm3App.h", "Pm3App.ned"]);
+    expect(tree.map((f) => f.path).sort()).toEqual(["Pm3Wsn.cc", "Pm3Wsn.h", "Pm3Wsn.ned"]);
   });
   it("honors a custom output name", () => {
     const tree = generateMerged(all(), "WsnApp");

@@ -93,7 +93,14 @@ describe("codeEmitter", () => {
     // renamed, not duplicated: the Event-B label survives only as provenance
     expect(cc).toContain("Event-B: send_down");
     expect(cc).not.toMatch(/bool Pm1App::send_down/);
-    expect(cc).not.toMatch(/void Pm1App::sendSensorPacket/); // no separate void shell fn
+    // ⚠ The "no separate void shell fn" claim holds at structure 1 only. The
+    // default moved to structure 2 in the 2026-09-13 renumber, and structure 2's
+    // parity behaviour is precisely that the sensing timer calls a void
+    // `sendSensorPacket()` -- the baseline's own wiring -- alongside this bool
+    // overload. Asserted against structure 1 so the claim keeps its meaning.
+    const v1cc = emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "Pm1App", 1)
+      .find((f) => f.path === "Pm1App.cc")!.content;
+    expect(v1cc).not.toMatch(/void Pm1App::sendSensorPacket/);
     expect(cc).not.toMatch(/void Pm1App::sendDown\(/);
     expect(cc).not.toMatch(/void Pm1App::sendUp\(/);
   });
@@ -174,70 +181,86 @@ describe("codeEmitter", () => {
   });
 });
 
-// The three comparison outputs for the project report: v1 = the original
-// pre-SensorApp structure, v2 = v1 with only the CommPattern pair changed,
-// v3 = the full SensorApp shell (the default).
+// The emitted structures, numbered as the paper numbers them (renumbered
+// 2026-09-13). 1 = the SensorApp shell with the transmit left behind an
+// extension point and the context in shipped fixture headers; 2 = 1 brought to
+// behavioural parity, self-contained; 3 = 2's shell carrying PPkt.
+//
+// ⚠ 3 is indistinguishable from 2 AT THIS LEVEL on purpose: the shell is the
+// same and the packet classes are spliced on afterwards by the pipeline, so
+// emit() treats 3 as 2. What makes 3 different is covered in generateNet.test.ts.
 describe("emit versions (compare-table outputs)", () => {
   const vTree = (v: 1 | 2 | 3) =>
     emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "Pm1App", v);
   const vFile = (v: 1 | 2 | 3, ext: string) =>
     vTree(v).find((f) => f.path === `Pm1App.${ext}`)!.content;
 
-  it("v1: original RoutingProtocolBase structure, pattern pair untouched", () => {
+  it("1: SensorApp shell, transmit behind the extension point, context in fixtures", () => {
     const h = vFile(1, "h");
     const cc = vFile(1, "cc");
-    expect(h).toContain("public RoutingProtocolBase");
-    expect(h).not.toContain("ApplicationBase");
-    expect(h).toContain("void handleMessageWhenUp(cMessage *msg) override { delete msg; }");
-    expect(cc).toContain("bool Pm1App::send_down(");
-    expect(cc).toContain("bool Pm1App::send_up(");
-    expect(cc).not.toContain("sendSensorPacket");
-    expect(vFile(1, "ned")).toContain("UdpControlInfo/up");
-  });
-  it("v2: v1 structure with ONLY the pair changed to the merged SensorApp functions", () => {
-    const h = vFile(2, "h");
-    const cc = vFile(2, "cc");
-    expect(h).toContain("public RoutingProtocolBase");   // structure still v1
-    expect(h).not.toContain("ApplicationBase");
-    expect(h).toContain("INetworkSocket *socket");       // minimal members the pair needs
+    expect(h).toContain("public ApplicationBase");
+    // The context lives in shipped fixture headers, which is why a module
+    // downloaded from the web build could not compile — the reason 2 exists.
+    expect(h).toContain('#include "eb_context.h"');
+    expect(cc).toContain("EXTENSION POINT");
+    // The CommPattern pair is already merged and renamed at this structure.
     expect(cc).toContain("bool Pm1App::sendSensorPacket(Node x, PktId pkt)");
     expect(cc).toContain("bool Pm1App::socketDataArrived(");
-    expect(cc).toContain("socket->send(packet);");
-    expect(cc).not.toMatch(/Pm1App::send_down\(/);
-    expect(cc).not.toContain("openSocket");              // no shell helpers yet
-    expect(cc).not.toContain("scheduleNextSensing");
-    expect(cc).not.toContain("void Pm1App::initialize");
   });
-  it("v3 is the default and carries the full SensorApp shell", () => {
-    expect(vFile(3, "h")).toContain("public ApplicationBase");
+
+  it("2: same shell, transmit bound and the context inlined — three self-contained files", () => {
+    const h = vFile(2, "h");
+    const cc = vFile(2, "cc");
+    expect(h).toContain("public ApplicationBase");
+    // Self-containment is the whole point of 2: no fixture includes at all.
+    expect(h).not.toContain('#include "eb_context.h"');
+    expect(h).not.toContain('#include "eb_helpers.h"');
+    expect(h).toContain("inline const int");            // context inlined instead
+    expect(vTree(2).map((f) => f.path).sort())
+      .toEqual(["Pm1App.cc", "Pm1App.h", "Pm1App.ned"]);
+    // ⚠ Structure 2 KEEPS both EXTENSION POINT markers -- they are the
+    // documented remaining hand step (the identity binding), and structure 3 is
+    // what finally replaces them. What 2 adds over 1 is the bound transmit and
+    // the inlined context, not the removal of those markers.
+    expect(cc).toContain("EXTENSION POINT");
+    expect(cc).toContain("void Pm1App::sendSensorPacket()");   // parity: timer-driven
+  });
+
+  it("2 is the default, and 3 shares its shell exactly", () => {
     const dflt = emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "Pm1App");
-    expect(dflt.find((f) => f.path === "Pm1App.h")!.content).toContain("public ApplicationBase");
-    expect(vFile(3, "cc")).toContain("void Pm1App::openSocket()");
+    expect(dflt.find((f) => f.path === "Pm1App.h")!.content).toBe(vFile(2, "h"));
+    // 3 = 2 at this level; the packet classes are spliced on by the pipeline.
+    expect(vFile(3, "h")).toBe(vFile(2, "h"));
   });
+
   it("all versions break guard early-returns onto their own line", () => {
     for (const v of [1, 2, 3] as const)
       expect(vFile(v, "cc")).toContain("if (!(!nbrs.empty()))\n        return false;");
   });
 });
 
-describe("base-class name collisions (v4)", () => {
-  const h = (v: 1 | 2 | 3 | 4) =>
+describe("base-class name collisions (structure 2)", () => {
+  const h = (v: 1 | 2 | 3) =>
     emit(collidingMachine(), "CollApp", v).find((f) => f.path === "CollApp.h")!.content;
 
   it("re-exposes a hidden base overload when an event is named like one", () => {
     // `bool receive(...)` would otherwise hide cSimpleModule::receive() and its
     // timeout overload (-Woverloaded-virtual).
-    expect(h(4)).toContain("using omnetpp::cSimpleModule::receive;");
+    expect(h(2)).toContain("using omnetpp::cSimpleModule::receive;");
     // the Event-B name itself is kept
-    expect(h(4)).toContain("bool receive(");
+    expect(h(2)).toContain("bool receive(");
   });
 
   it("emits no using-declaration for events that collide with nothing", () => {
-    expect(h(4)).not.toContain("cSimpleModule::tick");
+    expect(h(2)).not.toContain("cSimpleModule::tick");
   });
 
-  it("leaves the frozen structures v1-v3 untouched", () => {
-    for (const v of [1, 2, 3] as const) expect(h(v)).not.toContain("using omnetpp::cSimpleModule");
+  it("is a parity-structure feature: 1 does not carry it, 2 and 3 do", () => {
+    // The using-declaration arrived with the parity structure (old v4, now 2),
+    // so structure 1 -- the frozen pre-parity shell -- must not have it, and 3
+    // shares 2's shell so it must.
+    expect(h(1)).not.toContain("using omnetpp::cSimpleModule");
+    for (const v of [2, 3] as const) expect(h(v)).toContain("using omnetpp::cSimpleModule");
   });
 });
 
@@ -266,7 +289,7 @@ describe("context-named types", () => {
     ],
     encodings: new Map(),
   });
-  const out = emit(machine(), "AliasApp", 4, ctx);
+  const out = emit(machine(), "AliasApp", 2, ctx);
   const h = out.find((f) => f.path === "AliasApp.h")!.content;
   const cc = out.find((f) => f.path === "AliasApp.cc")!.content;
 
@@ -287,7 +310,7 @@ describe("context-named types", () => {
       name: "C1", sets: [], constants: ["CTL_VAL"],
       axioms: [{ label: "axm1_1", text: "CTL_VAL = 0" }],
     }];
-    const vh = emit(machine(), "ValApp", 4, valueCtx).find((f) => f.path === "ValApp.h")!.content;
+    const vh = emit(machine(), "ValApp", 2, valueCtx).find((f) => f.path === "ValApp.h")!.content;
     expect(vh).toContain("inline const int CTL_VAL = 0;");
   });
 });
@@ -306,7 +329,7 @@ describe("set-typed parameters over a product", () => {
     encodings: new Map(),
   }) as EncodedMachine;
   const ccFor = (guard: string) =>
-    emit(ev(guard), "ProdApp", 4, []).find((f) => f.path === "ProdApp.cc")!.content;
+    emit(ev(guard), "ProdApp", 2, []).find((f) => f.path === "ProdApp.cc")!.content;
 
   it("types a set over a product as a set of pairs", () => {
     expect(ccFor("r ∈ ℙ(ℤ × ℤ)"))

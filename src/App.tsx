@@ -1,5 +1,6 @@
 import { useRef, useState, type DragEvent } from "react";
-import { generateMerged, machineNames, leafMachine, defaultName } from "./engine/pipeline";
+import { generate, generateMerged, machineNames, leafMachine, defaultName } from "./engine/pipeline";
+import type { EmitVersion } from "./engine/codeEmitter";
 import { readFolder, readZip, writeTree } from "./io/fileOutput";
 
 type EbFiles = { name: string; xml: string }[];
@@ -11,7 +12,19 @@ export default function App() {
   const [files, setFiles] = useState<EbFiles>([]);
   const [machines, setMachines] = useState<string[]>([]);
   const [outputName, setOutputName] = useState("");
+  // Which machine of the chain to emit. Defaults to the leaf, which is what the
+  // tool merges into — but it MUST be selectable: MintRoute's leaf is M5, whose
+  // route-table clauses do not translate yet, so a user who uploads MintRoute
+  // and takes the default gets a module that does not compile. M4 does.
+  const [target, setTarget] = useState("");
+  // The emitted structure, numbered as the paper numbers them.
+  const [structure, setStructure] = useState<EmitVersion>(2);
+  // Structure 3 carries a packet pattern class read off a SECOND project.
+  const [pktFiles, setPktFiles] = useState<EbFiles>([]);
+  const [pktMachines, setPktMachines] = useState<string[]>([]);
+  const [pktTarget, setPktTarget] = useState("");
   const zipInput = useRef<HTMLInputElement>(null);
+  const pktInput = useRef<HTMLInputElement>(null);
   const append = (s: string) => setLog((l) => [...l, s]);
 
   // Load Event-B files from any source (folder picker, zip button, drag-drop)
@@ -25,6 +38,7 @@ export default function App() {
       const names = f.length ? machineNames(f) : [];
       setFiles(f);
       setMachines(names);
+      setTarget(names.length ? leafMachine(f) : "");
       setOutputName(names.length ? defaultName(leafMachine(f)) : "");
       if (names.length) {
         append(`Loaded ${f.length} file(s); machines (base → leaf): ${names.join(" → ")}.`);
@@ -54,7 +68,7 @@ export default function App() {
     if (!outputName.trim()) return append("Enter an output name.");
     setBusy(true);
     try {
-      append(`Merging ${machines.length} machine(s) into ${outputName.trim()}…`);
+      append(`Emitting structure ${structure} from ${target || "the leaf machine"} → ${outputName.trim()}…`);
       // v4: self-contained output. Earlier structures #include the eb_context.h
       // / eb_helpers.h fixtures, which only the CLI staged — a download from
       // here shipped neither and could not compile.
@@ -71,8 +85,22 @@ export default function App() {
       // campaign (paper2/data/MEASURING.md), which has a sub-microsecond clock
       // and an exact post-GC heap baseline. The caveat travels with the number,
       // in the console object below, so it cannot be quoted out of context.
+      // Structure 3 needs a packet source, and refuses rather than silently
+      // emitting structure 2 without one — the CLI refuses the same way.
+      if (structure === 3 && !pktFiles.length) {
+        setBusy(false);
+        return append("Structure 3 carries PPkt from a second project — load a packet source first.");
+      }
+      const packetSource = pktFiles.length
+        ? { files: pktFiles, machine: pktTarget }
+        : undefined;
+
       const t0 = performance.now();
-      const tree = generateMerged(files, outputName.trim(), 4);
+      // `generate` when a machine is chosen, `generateMerged` for the leaf —
+      // the same two entry points the CLI uses.
+      const tree = target && target !== leafMachine(files)
+        ? generate(files, target, outputName.trim(), structure, packetSource)
+        : generateMerged(files, outputName.trim(), structure, packetSource);
       const genMs = performance.now() - t0;
 
       const outLines = tree.reduce(
@@ -82,6 +110,8 @@ export default function App() {
         generationMs: Number(genMs.toFixed(3)),
         inputFiles: files.length,
         machines: machines.length,
+        structure,
+        targetMachine: target,
         mergedInto: outputName.trim(),
         emittedFiles: tree.map((f) => f.path),
         emittedLines: outLines,
@@ -97,7 +127,11 @@ export default function App() {
       append(
         mode === "folder"
           ? `✓ Wrote ${tree.length} files (${tree.map((f) => f.path).join(", ")}) to chosen folder.`
-          : `✓ Downloaded generated-cpp.zip (${tree.length} files).`,
+          : mode === "zip-fallback"
+            // Say that the folder was attempted and failed. Reporting a plain
+            // download would hide why the files did not land where the user asked.
+            ? `✓ Downloaded generated-cpp.zip (${tree.length} files) — the folder picker was unavailable, so the zip was used instead.`
+            : `✓ Downloaded generated-cpp.zip (${tree.length} files).`,
       );
     } catch (e) {
       if ((e as Error).name === "AbortError") append("Cancelled.");
@@ -116,6 +150,29 @@ export default function App() {
     if (!file) return;
     append(`Reading ${file.name}…`);
     void loadWith(() => readZip(file));
+  }
+
+  // The packet source for structure 3: a SECOND Rodin project, whose packet-type
+  // partition supplies PPkt. Separate on purpose — a pattern is not owned by the
+  // protocol it was read off.
+  function pickPacketZip(file: File | undefined) {
+    if (!file) return;
+    append(`Reading packet source ${file.name}…`);
+    setBusy(true);
+    void (async () => {
+      try {
+        const f = await readZip(file);
+        const names = f.length ? machineNames(f) : [];
+        setPktFiles(f);
+        setPktMachines(names);
+        setPktTarget(names.length ? leafMachine(f) : "");
+        append(names.length
+          ? `Packet source: ${names.join(" → ")}. PPkt will be read from ${leafMachine(f)}.`
+          : "That zip holds no Event-B machine (.bum).");
+      } catch (e) {
+        append(`Error: ${(e as Error).message}`);
+      } finally { setBusy(false); }
+    })();
   }
 
   function onDrop(e: DragEvent) {
@@ -195,6 +252,37 @@ export default function App() {
             module ({outputName || "…"}.h/.cc/.ned).
           </p>
           <label className="flex flex-col gap-1 text-sm text-gray-700">
+            Target machine
+            <select
+              value={target}
+              disabled={busy}
+              onChange={(e) => {
+                setTarget(e.target.value);
+                setOutputName(defaultName(e.target.value));
+              }}
+              className="rounded border border-gray-300 px-2 py-1"
+            >
+              {machines.map((m) => (
+                <option key={m} value={m}>
+                  {m}{m === leafMachine(files) ? " (leaf)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-700">
+            Structure
+            <select
+              value={structure}
+              disabled={busy}
+              onChange={(e) => setStructure(Number(e.target.value) as EmitVersion)}
+              className="rounded border border-gray-300 px-2 py-1"
+            >
+              <option value={1}>1 — shell, extension point</option>
+              <option value={2}>2 — parity, self-contained</option>
+              <option value={3}>3 — 2 + packet class (PPkt)</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-700">
             Output name
             <input
               type="text"
@@ -205,6 +293,50 @@ export default function App() {
               className="rounded border border-gray-300 px-2 py-1"
             />
           </label>
+          {structure === 3 && (
+            <div className="w-full rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+              <p className="text-gray-700">
+                <strong>Packet source</strong> — structure 3 carries the packet pattern class
+                from a <em>second</em> Rodin project (a pattern is not owned by the protocol it
+                was read off).
+                {pktMachines.length > 0 && (
+                  <> Loaded: {pktMachines.join(" → ")}.</>
+                )}
+              </p>
+              <div className="mt-2 flex flex-wrap items-end gap-3">
+                <button
+                  onClick={() => pktInput.current?.click()}
+                  disabled={busy}
+                  className="rounded border border-gray-400 px-3 py-1 disabled:opacity-50"
+                >
+                  Pick packet-source .zip
+                </button>
+                <input
+                  ref={pktInput}
+                  type="file"
+                  accept=".zip"
+                  className="hidden"
+                  onChange={(e) => {
+                    pickPacketZip(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                {pktMachines.length > 0 && (
+                  <label className="flex flex-col gap-1 text-gray-700">
+                    PPkt from
+                    <select
+                      value={pktTarget}
+                      disabled={busy}
+                      onChange={(e) => setPktTarget(e.target.value)}
+                      className="rounded border border-gray-300 px-2 py-1"
+                    >
+                      {pktMachines.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
           <button
             onClick={() => void runGenerate()}
             disabled={busy}
