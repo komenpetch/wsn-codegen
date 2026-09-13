@@ -7,11 +7,12 @@ import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
 import { installScheduler } from "./scheduler";
 import { bindNodeIdentity } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
+import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { packetIdentityOf } from "./mediumBinding";
 import { getterOf } from "./packetModel";
-import { methodForLabel, implText } from "./emitted";
+import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
 import { capTag, carrierSetsOf } from "./text";
 import { wrapInNamespace } from "./moduleNamespace";
@@ -138,6 +139,48 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     const pm = packetModelOf(pRaw, pMachine);
     if (!pm)
       throw new Error("The packet source declares no packet-type partition, so there is no PPkt to carry.");
+    // ⚠ THE TWO SLOTS ARE NOT INTERCHANGEABLE, and swapping them used to emit a
+    // module that could not compile while reporting success.
+    //
+    // Once PPkt is carried, the packet source's lattice is the ONLY source of
+    // packet-type constants -- it replaces the base model's own. But the base
+    // model's events still guard on the names IT knows (`type(pkt) = BEACON`),
+    // so a source whose partition is coarser than the base's leaves those names
+    // undeclared: `PktType::BEACON` against an enum with no such member, and
+    // `CONTROL` redefined as `const int` beside the base context's
+    // `std::set<int>`. Measured with MintRoute as the base and AppLayer as the
+    // source: 13 clang errors, none of them visible at generation time.
+    //
+    // The check is containment, not equality: a source may legitimately know
+    // MORE types than the base uses -- that is the normal case, and what makes
+    // the app-layer chain plus MintRoute's PPkt work.
+    // ⚠ Walk FROM THE ROOT, don't take every key of `children`. The lattice is
+    // built from all of a project's partition axioms, so its children map also
+    // holds CTL_STATUS, ENV_STATUS, PKT and anything else the contexts
+    // partition. Taking the keys wholesale reported forty "missing packet
+    // types", burying the two that actually mattered.
+    const latticeNames = (l: TypeLattice): Set<string> => {
+      const out = new Set<string>([l.root]);
+      const walk = (t: string) => {
+        for (const c of l.children.get(t) ?? [])
+          if (!out.has(c)) { out.add(c); walk(c); }
+      };
+      walk(l.root);
+      for (const leaf of l.leaves) out.add(leaf);
+      return out;
+    };
+    const baseLattice = packetTypeLattice(raw.contexts);
+    if (baseLattice) {
+      const carried = latticeNames(pm.lattice);
+      const missing = [...latticeNames(baseLattice)].filter((t) => !carried.has(t));
+      if (missing.length)
+        throw new Error(
+          `The packet source cannot carry this model's packet types: ${missing.join(", ")} `
+          + `${missing.length === 1 ? "is" : "are"} declared by the target model's partition but not by `
+          + `the packet source's. The emitted module would reference them as enum members that do not `
+          + `exist. Check the two projects are not the wrong way round -- the packet source supplies the `
+          + `packet class, the target model supplies the behaviour that uses it.`);
+    }
     // The pattern brings its OPERATIONS, not only its structure: the events that
     // construct each leaf class come across too, with the state they need and
     // the context constants they read. Without them the packet classes are
@@ -204,6 +247,29 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
                    : "the transmit events never stamp a chunk field with the node they "
                      + "file the packet under, so no field carries the sender. ")
         + "Refusing rather than emitting a module that would compile and never receive.");
+    // ⚠ The arrival binds the CommPattern's ABSTRACT delivery, `send_up(x, pkt,
+    // nbrs)`, and passes exactly those three. A model that carries its own
+    // medium states its delivery event differently: MintRoute's send_up takes
+    // the wire fields as parameters because it IS the deserialiser, so its
+    // emitted signature has eight and the call passed three to it.
+    //
+    // That model does not want this shell at all. The layer is DERIVED from the
+    // model, not chosen -- a model with a medium gets the network-protocol shell
+    // from structure 2, which is written for exactly this shape. Structure 3 is
+    // the application shell carrying a packet class, and it fits a model whose
+    // delivery event is the abstract one.
+    //
+    // Checked against the emitted signature rather than against "has a medium"
+    // so the condition cannot drift from what the emitted call actually needs.
+    const sendUpParams = splitParams(sendUp.params);
+    if (sendUpParams.length !== 3)
+      throw new Error(
+        `Structure 3 cannot bind an arrival to this model's send_up: the arrival calls it with `
+        + `(node, packet, neighbours) and the emitted method takes ${sendUpParams.length} parameters `
+        + `(${sendUpParams.map((p) => p.name).join(", ")}). A delivery event that carries the wire `
+        + `fields belongs to a model with its own medium, which structure 2 emits as a network `
+        + `protocol. Use structure 2 for this model, or structure 3 with a model whose delivery `
+        + `event is the abstract CommPattern one.`);
     {
       // What the arrival stages, in both polarities. The delivery event states
       // its own half (`x ↦ pkt ∈ sentDown ∧ x ↦ pkt ∉ sentUp`); the receive

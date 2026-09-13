@@ -292,6 +292,47 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
   });
 });
 
+// ⚠ Structure 3 pairs TWO projects, and the pairing can be incoherent. Until
+// these two refusals existed the generator accepted both combinations below,
+// emitted a module, and reported success -- the failure surfaced only when the
+// user compiled it in OMNeT++. Both were measured against INET 4.5 with the
+// bundled clang: 13 errors and 1 error respectively.
+describe("v3 refuses an incoherent pairing instead of emitting a module that cannot compile", () => {
+  it("refuses a packet source whose lattice lacks a type the base model uses", () => {
+    // The slots are not interchangeable. MintRoute's events guard on BEACON and
+    // ROUTE; the AppLayer partition declares only DATA/CONTROL, so the emitted
+    // module said `PktType::BEACON` against an enum with no such member and
+    // redefined CONTROL as `const int` beside the base context's `std::set<int>`.
+    const run = () => generate(loadProject("MintRoute"), "M4", "M4Wsn", 3,
+      { files: loadProject("AppLayer"), machine: "pM3" });
+    expect(run).toThrow(/BEACON/);
+    expect(run).toThrow(/ROUTE/);
+    // ⚠ And it must name ONLY the packet types. The lattice tracks every
+    // partition in the contexts, so a naive walk of its children reported
+    // CTL_STATUS, ENV_STATUS, PKT and raw axiom text as "missing packet types" --
+    // a message that buries the two names that matter in forty that do not.
+    expect(run).not.toThrow(/CTL_STATUS|ENV_STATUS/);
+  });
+
+  it("refuses a base model whose delivery event is not the CommPattern shape", () => {
+    // The arrival binds `send_up(x, pkt, nbrs)` -- the abstract CommPattern
+    // delivery. MintRoute's own send_up takes the wire fields as parameters
+    // because it IS the deserialiser, so the emitted call passed 3 arguments to
+    // a method declaring 8. A model with its own medium belongs in structure 2,
+    // which gives it the network-protocol shell rather than the app shell.
+    expect(() => generate(loadProject("MintRoute"), "M4", "M4Wsn", 3,
+      { files: loadProject("MintRoute"), machine: "M4" }))
+      .toThrow(/send_up/);
+  });
+
+  it("still accepts the coherent pairing", () => {
+    // The guard rails must not block the configuration that works: the AppLayer
+    // chain as the base with MintRoute supplying the packet class.
+    expect(() => generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+      { files: loadProject("MintRoute"), machine: "M4" })).not.toThrow();
+  });
+});
+
 // v5 carrying the pattern's OPERATIONS, not just its types.
 describe("v5 carries the packet pattern's operations", () => {
   const tree = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
