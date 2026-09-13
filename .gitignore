@@ -26,8 +26,18 @@ dist-ssr
 # Generated code output — kept local; regenerate with `npm run generate`.
 /generated/
 
-# Compile-gate scratch output (Task 10 scripts/generate.ts; probe artifacts).
+# Compile-gate scratch output (scripts/generate.ts; probe artifacts). `out-*`
+# covers the per-machine folders the one CLI writes, e.g. `out-m4`, `out-m6`.
 /out/
+/out-*/
 
 # Local diagnostic probes (never published).
 scripts/_*.ts
+
+# Local benchmark output (scripts/benchmark.ts, scripts/measure-*). Regenerable,
+# and not the paper's measurement data — that lives frozen in paper2/data/.
+runs.ndjson
+runs-pre-trules.ndjson
+
+# This machine's agent configuration, not part of the tool.
+.claude/

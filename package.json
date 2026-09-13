@@ -9,9 +9,13 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck:netlayer": "tsc --project netlayer/tsconfig.json --skipLibCheck --noEmit",
     "test:watch": "vitest",
-    "generate": "vite-node scripts/generate.ts"
+    "typecheck": "tsc -b",
+    "generate": "vite-node scripts/generate.ts",
+    "scan": "vite-node scripts/scan.ts",
+    "shapes": "vite-node scripts/shapes.ts",
+    "selftest": "vite-node scripts/shapes.ts --selftest",
+    "event": "vite-node scripts/event.ts"
   },
   "dependencies": {
     "fast-xml-parser": "^5.8.0",

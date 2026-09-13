@@ -47,7 +47,7 @@ npm run preview     # http://localhost:4173/wsn-codegen/
 1. Click **Load Event-B folder** (or **load a .zip**, or drag a `.zip` onto the page). No model handy?
    Use the bundled **`tests/fixtures/shdecom`** folder (`pM1.bum` / `uM2.bum` / `pM3.bum`).
 2. The tool lists **every machine** it detects and the module they merge into (the most-refined
-   machine; the output name defaults to `<Leaf>App` and is editable). Click **Generate → save** —
+   machine; the output name defaults to `<Leaf>Wsn` and is editable). Click **Generate → save** —
    it merges the whole chain into one module.
 3. Choose where to write the three files:
    - **Chrome / Edge** — a native folder picker writes them directly (File System Access API).
@@ -58,18 +58,23 @@ The on-screen log reports each step. Cancelling a picker logs `Cancelled.` (not 
 ## Using the CLI + compile gate
 
 ```bash
-npm run generate                        # tests/fixtures/shdecom → out/
-npm run generate -- <inputDir> <outDir> # any Rodin project (every machine found)
-npm run generate -- <inputDir> <outDir> --v1   # emitted-structure version (see below)
+npm run generate                                  # tests/fixtures/shdecom → out/
+npm run generate -- <dir|project> <outDir>        # any Rodin project
+npm run generate -- MintRoute out-m4 --machine M4 # a named machine, not the leaf
+npm run generate -- <dir|project> <outDir> --v1   # emitted-structure version (see below)
 ```
 
+`<dir|project>` is a path, or one of the labels in `scripts/projects.ts` (`MintRoute`, `RTMCS`,
+`AppLayer`).
+
 `scripts/generate.ts` reads a folder of Event-B `.bum`/`.buc` files and **merges the whole
-refinement chain** into one module (the most-refined machine, flattened). Then syntax-check the
+refinement chain** into one module (the most-refined machine, flattened, unless `--machine` names
+another). Then syntax-check the
 generated `.cc` against real INET 4.5 headers — the project's single measurable success criterion
 (Form 01 §6). The exact toolchain paths and command are in
 **[scripts/compile-gate.md](scripts/compile-gate.md)**; the merged module passes `-fsyntax-only`.
 
-**Emitted-structure versions** (`--v1`…`--v4`, **default v4**) all pass the compile gate. v1–v3 are
+**Emitted-structure versions** (`--v1`…`--v5`, **default v4**) all pass the compile gate. v1–v4 are
 **frozen** — they are the project report's compare-table evidence:
 
 | | Structure |
@@ -78,6 +83,7 @@ generated `.cc` against real INET 4.5 headers — the project's single measurabl
 | **v2** | v1 with *only* the CommPattern pair changed into the merged SensorApp functions (plus the minimal members those bodies need) |
 | **v3** | the full SensorApp shell described below |
 | **v4** | v3 + **SensorApp behavioural parity** and a **self-contained header** (current default) |
+| **v5** | v4's shell carrying the packet pattern class **PPkt**, taken from another project via `--ppkt-from` |
 
 **v4 is the one to use.** v3 compiled and ran but transmitted nothing: the transmit call sat behind
 an unbound extension point. v4 emits the baseline call, so the module reproduces `SensorApp`'s
@@ -91,10 +97,37 @@ the CLI staged, so a **web download of v1–v3 could not compile**. v4 has no su
 
 ## Output: three files (the merged module)
 
-| File | Role |
-|---|---|
-| `<Name>.h` / `<Name>.cc` | INET 4.5 `ApplicationBase` subclass shaped like INET's `SensorApp`; one guarded `bool` method per Event-B event |
-| `<Name>.ned` | standalone `simple <Name> like IApp` module bound to the class via `@class`, with SensorApp's parameters, signals, and statistics |
+**One project + one target machine → exactly three files, one module.** The whole refinement chain
+flattens into the most-refined machine first, so a chain of any length collapses to one output; the
+packet classes and the NED wrapper go inside those same three files.
+
+How much is in them depends on the model, and nothing selects it by hand:
+
+| | model with no medium (app layer) | model with a medium (app + network layer) |
+|---|---|---|
+| `<Name>.h` / `<Name>.cc` | `ApplicationBase` subclass shaped like INET's `SensorApp` | `NetworkProtocolBase, INetworkProtocol` shaped like INET's `MintRoute`, **plus** the `PPkt` chunk classes, one `send<Type>Broadcast` per packet type, the event scheduler and the medium binding |
+| `<Name>.ned` | `simple <Name> like IApp` bound via `@class`, with SensorApp's parameters, signals and statistics | `simple <Name> extends NetworkProtocolBase like INetworkProtocol` **and** the `<Name>NetworkLayer` compound module INET needs to slot it into a node |
+| example | `Pm3Wsn` from `pM1 → uM2 → pM3` | `M4Wsn` from MintRoute `M0 → … → M4` |
+
+The test is the medium, read off the model: does it serialise a packet field by field, hand it to a
+shared relation, and deliver it to whoever a propagation variable names? The app-layer chain has the
+CommPattern pair but none of that, so it answers no and keeps the app-layer shell. The CLI says which
+one it emitted, having read that back off the generated text rather than predicted it.
+
+The name is layer-neutral on purpose (`<Leaf>Wsn`, not `…App` or `…Net`): one generator, one output,
+one name, whatever the model turns out to contain. Each module is emitted inside its own C++ namespace
+(`namespace eb_<name>`, with the NED `@class` qualified to match), so two generated modules can be
+linked into one executable — without it the second one's inlined Event-B context redefines the first's.
+
+**v5** is the third combination: the app layer's SensorApp shell carrying PPkt from a *different*
+project's packet-type partition, because the packet pattern class is a pattern and not a possession of
+the protocol it was read off.
+
+```bash
+npm run generate -- AppLayer out-v5 --v5 --ppkt-from MintRoute --ppkt-machine M4
+```
+
+Everything below describes the app-layer half, which is present either way.
 
 The generated class is a working **SensorApp-shaped shell**, and the model's CommPattern events are
 **emitted under SensorApp's names, merged with its structures** (thesis Steps S4/S5): Event-B
@@ -149,19 +182,41 @@ transmission instead of the baseline shell.
 For a compile-and-run recipe against a real INET 4.5 project (toolchain paths, `opp_makemake` flags,
 and headless-run notes) see **[docs/OMNETPP_INTEGRATION.md](docs/OMNETPP_INTEGRATION.md)**.
 
+## Documentation
+
+`docs/` holds the material written to be published as the tool's website. Start at
+**[docs/index.md](docs/index.md)**.
+
+| Page | For |
+|---|---|
+| [index.md](docs/index.md) | what the tool is, what it produces, and its scope |
+| [documentation.md](docs/documentation.md) | the pipeline, the Rodin input format, encoding selection, the output contract |
+| [TRANSLATION_RULES.md](docs/TRANSLATION_RULES.md) | the complete 38-rule catalog |
+| [rule-map.md](docs/rule-map.md) | which rule in `src/engine/rules.ts` implements which catalog rule — **generated**, run `node scripts/gen-rule-map.mjs` after changing the rules |
+| [usage.md](docs/usage.md) | running the tool, and placing the module in an OMNeT++ project |
+| [about.md](docs/about.md) | the project, the measured results, and what the tool does not do |
+
 ---
 
 ## Project layout
 
 ```
-src/engine/     six-stage pipeline: parser → flattener → encodingResolver →
-                rules → ruleEngine → codeEmitter (pipeline.ts wires them)
+src/engine/     the pipeline: parser → flattener → encodingResolver →
+                rules → ruleEngine → codeEmitter (pipeline.ts wires them),
+                plus the network-layer half it calls when the model has a
+                medium: netPipeline.ts, packetTypes/packetModel/packetEmitter
+                (PPkt), mediumBinding, netProtocolShell, scheduler,
+                nodeIdentity, and the extra rule modules they compose in
 src/assets/     eb_helpers.h + eb_context.h (staged next to v1–v3 output; v4 inlines them)
 src/io/         folder read + folder/zip write (File System Access + fallbacks)
 src/App.tsx     thin UI shell (machine list + output-name; merges the whole chain)
-scripts/        headless generate CLI + compile-gate.md
-tests/          vitest suite + fixtures/shdecom + generation snapshots
-docs/           OMNeT++/INET integration guide
+scripts/        headless generate CLI + compile-gate.md, the measurement probes
+                (scan/shapes/event) and the case-study paths (projects.ts)
+tests/          vitest suite + fixtures/shdecom + generation snapshots +
+                __baseline__/ (the frozen app-layer output)
+docs/           published documentation (index, documentation, usage, about,
+                the rule catalog and the rule map) + OMNeT++/INET integration
+                guide + findings/netlayer/ (the network-layer evidence trail)
 out/            local-only generator output (gitignored)
 ```
 
@@ -175,6 +230,10 @@ out/            local-only generator output (gitignored)
 | `npm test` | run the vitest suite (engine unit tests + generation snapshots) |
 | `npm run lint` | ESLint |
 | `npm run generate` | merge a project into one module (+ shared headers) into `out/` |
+| `npm run scan` | untranslated-clause counts per machine, across the case studies |
+| `npm run shapes` | the same gap grouped by clause SHAPE (`--list` for the clauses) |
+| `npm run selftest` | check the shape detectors against known clauses |
+| `npm run event` | print one event's flattened guards and actions |
 
 Pushing to `main` deploys the built app to GitHub Pages via `.github/workflows/deploy.yml`
 (it runs the tests and build first).

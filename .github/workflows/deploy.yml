@@ -11,10 +11,10 @@ jobs:
         with: { node-version: 20 }
       - run: npm ci
       - run: npm test
-      # netlayer/ is not in tsconfig.app.json's "src" include, so `npm run
-      # build`'s tsc -b never type-checks it. Without this step its TypeScript
-      # reaches CI unchecked.
-      - run: npm run typecheck:netlayer
+      # `npm run build` runs tsc -b, which now covers src/, scripts/ and tests/
+      # through tsconfig.test.json. Until the netlayer merge (2026-09-12) the
+      # network-layer TypeScript sat outside every referenced project and
+      # reached CI unchecked; a separate typecheck:netlayer step covered it.
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }
