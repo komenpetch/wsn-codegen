@@ -31,6 +31,12 @@ const sources = readdirSync(ENGINE)
 const strays = (pattern: RegExp, owner: string): string[] =>
   sources.filter((s) => s.file !== owner && pattern.test(s.text)).map((s) => s.file);
 
+// Code with comments removed. Every module here explains the Event-B shape it
+// handles in prose, so a textual guard that reads comments flags the
+// documentation rather than a copy.
+const stripComments = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^[ \t]*\/\/.*$/gm, " ");
+
 describe("shared helpers have exactly one home", () => {
   it("only text.ts spells out the regex-escape character class", () => {
     // Was written out eight times across six files.
@@ -74,12 +80,48 @@ describe("shared helpers have exactly one home", () => {
   });
 
   it("only actionShapes.ts recognises `v ≔ v ∪ …` / `v ≔ v ∖ …`", () => {
-    // Written NINE times across packetOps.ts and mediumBinding.ts, at three
+    // Written TEN times across packetOps.ts and mediumBinding.ts, at three
     // different strictnesses, and the difference was behaviour rather than
     // style: the anchored maplet form rejects `v ≔ v ∪ ({k} × s)` and the bare
     // `∪` prefix accepts it, so two passes disagreed about which variables a
     // carried event fills. The choice now has a name at each call site.
-    expect(strays(/≔\\s\*\$\{?\w*\}?\\s\*[∪∖]/, "actionShapes.ts")).toEqual([]);
+    //
+    // ⚠ THE FIRST VERSION OF THIS GUARD MATCHED NOTHING AT ALL — not even its
+    // own owner — and it passed its mutation test only because the probe that
+    // was supposed to break it had been mangled by a heredoc into the same
+    // single-backslash spelling the guard expected. An inert guard is worse
+    // than no guard: it reads as coverage. Two things fix it.
+    //
+    // (i) BOTH SPELLINGS. A regex LITERAL writes `\s`; a template literal fed
+    // to `new RegExp` writes `\\s`. The real code uses both, and the tenth
+    // copy — still in transmitRecordsItsOwnFiring when this was rewritten —
+    // was the template one.
+    //
+    // (ii) CODE ONLY. Every one of these modules explains the Event-B shape in
+    // prose above the function, so matching comments would flag documentation.
+    const selfUpdate = /≔\\{1,2}s\*(?:\$\{\w+\}|\\{1,2}1|\w+)\\{1,2}s\*[∪∖]/;
+
+    // ⚠ Not a single-owner check, and the exceptions are the interesting part.
+    // Three other modules write this shape for a DIFFERENT question:
+    // aliasEncoding and encodingResolver infer "what encoding does this
+    // variable's usage imply", and nestedMap's NEST-ADD / NEST-DEL are RULE
+    // patterns that translate the clause into C++. None of them is asking
+    // "which events add to v", which is the question actionShapes owns.
+    //
+    // ⚠ This list is the guard's weak point: every name added to it is one
+    // fewer file being checked, so a fourth exception should be argued rather
+    // than appended. The test above asserts the pattern still matches its own
+    // owner precisely so an exception list that has swallowed the signal
+    // cannot masquerade as a passing guard.
+    const owners = ["actionShapes.ts", "aliasEncoding.ts", "encodingResolver.ts", "nestedMap.ts"];
+    const offenders = sources
+      .filter((s) => !owners.includes(s.file) && selfUpdate.test(stripComments(s.text)))
+      .map((s) => s.file);
+    expect(offenders).toEqual([]);
+    // And the guard is live: it must still see the shape in its own owner,
+    // which is exactly what the first version failed to do.
+    expect(selfUpdate.test(stripComments(
+      sources.find((s) => s.file === "actionShapes.ts")!.text))).toBe(true);
   });
 
   it("only emitted.ts rewrites an emitted member declaration", () => {

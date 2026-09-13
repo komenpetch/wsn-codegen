@@ -548,8 +548,7 @@ export function transmitRecordsItsOwnFiring(base: EncodedMachine,
     const m = /^\s*(\w+)\s*↦\s*(\w+)\s*∉\s*(\w+)\s*$/.exec(g.trim());
     if (!m || !base.variableTypes.has(m[3])) continue;
     const [, x, pkt, v] = m;
-    const adds = new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∪\\s*\\{\\s*${x}\\s*↦\\s*${pkt}\\s*\\}\\s*$`);
-    if (sd.actions.some((a) => adds.test(a.trim()))) return true;
+    if (sd.actions.some((a) => addsMaplet(a, v, x, pkt))) return true;
   }
   return false;
 }
