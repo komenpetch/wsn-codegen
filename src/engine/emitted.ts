@@ -1,4 +1,17 @@
-// Reading facts back OUT of the code the emitter just produced.
+// The emitted C++ as a surface the later passes work against: reading facts
+// back out of it, and writing into it safely.
+//
+// It began as the reading half only, and the opening sentence still said so
+// after `mustFind`, `mustReplace` and `redeclareMembers` were added — a header
+// comment describing half its own file. That is the same stale-doc-comment
+// class this project has already been bitten by, where the generated header
+// carried a SensorApp description above a NetworkProtocolBase class and every
+// sentence of it was false.
+//
+// Two halves, and they belong together because they are the same seam: a pass
+// that reads an anchor and a pass that rewrites one both depend on the exact
+// shape codeEmitter produces, so when that shape moves there is one file to
+// re-read rather than two.
 //
 // Several network-layer passes attach to the emitted C++ rather than to the
 // model: the scheduler needs each event method's final parameter list, the
