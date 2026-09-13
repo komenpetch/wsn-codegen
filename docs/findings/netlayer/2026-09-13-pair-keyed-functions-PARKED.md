@@ -1,13 +1,28 @@
-# Pair-keyed functions — designed, built, measured, and PARKED
+# Pair-keyed functions — designed, built, measured, parked, and UN-PARKED
 
-**Status: PARKED 2026-09-13, deliberately, on a scope ruling.** The work below is
-complete and was green on every gate, but it is **PRouteTable scope** and the
-current scope is **PPkt**. It was built while chasing a repeating flood and
-should be re-applied when PRouteTable starts properly — not before, and not
-without the design review the project had scheduled for exactly this decision.
-
-The module source is parked verbatim at
-[`parked/pairKeyed.ts.parked`](parked/pairKeyed.ts.parked) (238 lines).
+> **⚠ STATUS: UN-PARKED 2026-09-14 on user instruction** (*"yes un-park it and
+> re-run multihop"*). Everything below describes the design and the measurements
+> that were made before parking, and it is kept because the design is still the
+> design. What has changed:
+>
+> - `src/engine/pairKeyed.ts` is **live**, and it is byte-identical to the copy
+>   that was parked — which is the check that it was re-applied rather than
+>   re-derived into something else. The `parked/pairKeyed.ts.parked` copy is
+>   **deleted**: a second copy of live source is how the two answers drift, which
+>   is the same reason `alias` is exported from `nestedMap.ts` instead of cloned.
+> - The measured figures below are reproduced: MintRoute M4 untranslated
+>   **78 → 34**, and the flood repeats.
+> - ⚠ **The encoding alone was NOT enough.** `PKT-MEM` had to be re-applied with
+>   it (this doc's own condition, in "What was kept when this was parked"):
+>   without it `update_nbr` is schedulable and then refuses on
+>   `pkt ↦ x ∈ pktFwdr`, so `updateNbrs` is still never drained and the flood
+>   still fires once. Two further defects it uncovered are recorded in CLAUDE.md
+>   under 2026-09-14.
+> - ⚠ **The drain events are NOT scheduled.** They run inline on the arrival,
+>   where the hand-written MintRoute does the same work. See CLAUDE.md.
+> - ⚠ **Still open, and still not to be acted on:** RTMCS. Its untranslated count
+>   moved **69 → 38** as a side effect, and that is compile evidence only —
+>   RTMCS has no harness here and **the project is not on RTMCS yet.**
 
 ---
 
