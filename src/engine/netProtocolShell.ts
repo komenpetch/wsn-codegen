@@ -54,7 +54,7 @@ import { esc } from "./text";
 // half of it ran. `defaultName` is now the only source of the name and it is
 // layer-neutral ("M4Wsn"), so nothing has to be renamed when a model turns out
 // to have a network layer.
-export const netLayerName = (cls: string): string =>
+const netLayerName = (cls: string): string =>
   cls ? `${cls}NetworkLayer` : "NetworkLayer";
 
 // The app layer's class doc comment, verbatim from codeEmitter.ts, and what
@@ -494,7 +494,20 @@ const PAIR_RENAMES: { from: string; to: string; label: string }[] = [
 const PAIR_USING = ["sendDown"];
 
 export function renameCommPatternPair(tree: GeneratedTree, cls: string): GeneratedTree {
-  return tree.map((f) => {
+  // ⚠ The provenance comment this matches on is written by codeEmitter, and the
+  // regex below pins its exact WORDING. If that wording drifts, every
+  // `def.test(text)` is simply false: nothing renames, nothing raises, and the
+  // network module keeps the application layer's `sendSensorPacket` /
+  // `socketDataArrived` on a NetworkProtocolBase. The `throw` further down
+  // guards a different and less likely case (a missing `.h` anchor), so it
+  // never fired for this one — only tests/mediumBinding.test.ts did, which puts
+  // the guard in the test rather than in the code.
+  //
+  // Every model that reaches here has the CommPattern pair: modelHasMedium is
+  // what selects this shell, and it is derived from send_down/send_up. So "no
+  // rename happened anywhere" is a precondition failure, not a valid outcome.
+  let renamedSomewhere = false;
+  const out = tree.map((f) => {
     if (f.path.endsWith(".ned")) return f;
     let text = f.content;
     let renamedAny = false;
@@ -535,6 +548,14 @@ export function renameCommPatternPair(tree: GeneratedTree, cls: string): Generat
         anchor,
       ].join("\n"));
     }
+    if (renamedAny) renamedSomewhere = true;
     return { ...f, content: text };
   });
+
+  if (!renamedSomewhere)
+    throw new Error(
+      "renameCommPatternPair: renamed nothing. The CommPattern pair is what selects "
+      + "this shell, so its provenance comments must be present — codeEmitter's wording "
+      + "for them has drifted from the pattern this pass matches on.");
+  return out;
 }

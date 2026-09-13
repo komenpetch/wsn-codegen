@@ -1,4 +1,6 @@
+import { INITIALISATION } from "./types";
 import type { EncodedMachine, GeneratedTree } from "./types";
+import { mustFind } from "./emitted";
 
 // The node-level identity binding: bind the model's carrier set to the
 // simulation's actual nodes.
@@ -31,7 +33,7 @@ interface CartesianInit { target: string; overSink: boolean; value: string; }
 // not run at construction time -- ND was empty then -- so they are specialised
 // to this node once its id exists.
 function cartesianInits(model: EncodedMachine): CartesianInit[] {
-  const init = model.events.find((e) => e.label === "INITIALISATION");
+  const init = model.events.find((e) => e.label === INITIALISATION);
   if (!init) return [];
   const out: CartesianInit[] = [];
   for (const a of init.actions) {
@@ -120,7 +122,7 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine, cls
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {
       const anchor = "    // ── Event-B machine state ──";
-      if (!f.content.includes(anchor)) return f;
+      mustFind(f.content, anchor, "bindNodeIdentity (myNodeId declaration)");
       return {
         ...f,
         content: f.content.replace(
@@ -138,10 +140,18 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine, cls
     }
     if (f.path.endsWith(".cc")) {
       // Append inside initialize(), just before its closing brace.
-      const at = f.content.indexOf(`void ${cls}::initialize(int stage) {`);
-      if (at < 0) return f;
+      //
+      // ⚠ Both anchors are preconditions. Skipping here leaves `myNodeId`
+      // declared and never assigned and every node-keyed map empty, so
+      // `create_bconPkt` declines on its first guard: the module compiles,
+      // links, runs and floods nothing. That is the failure recorded on
+      // 2026-09-13 as "compiles and does nothing", and it took a round to find.
+      const at = mustFind(f.content, `void ${cls}::initialize(int stage) {`,
+        "bindNodeIdentity (initialize)");
       const end = f.content.indexOf("\n}", at);
-      if (end < 0) return f;
+      if (end < 0)
+        throw new Error(`bindNodeIdentity: ${cls}::initialize(int stage) has no closing brace to `
+          + "insert the identity binding before.");
       return { ...f, content: f.content.slice(0, end) + "\n" + seed + f.content.slice(end) };
     }
     return f;

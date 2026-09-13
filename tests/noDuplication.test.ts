@@ -73,6 +73,25 @@ describe("shared helpers have exactly one home", () => {
     expect(strays(/`(get|set)\$\{cap\(/, "packetModel.ts")).toEqual([]);
   });
 
+  it("only actionShapes.ts recognises `v ≔ v ∪ …` / `v ≔ v ∖ …`", () => {
+    // Written NINE times across packetOps.ts and mediumBinding.ts, at three
+    // different strictnesses, and the difference was behaviour rather than
+    // style: the anchored maplet form rejects `v ≔ v ∪ ({k} × s)` and the bare
+    // `∪` prefix accepts it, so two passes disagreed about which variables a
+    // carried event fills. The choice now has a name at each call site.
+    expect(strays(/≔\\s\*\$\{?\w*\}?\\s\*[∪∖]/, "actionShapes.ts")).toEqual([]);
+  });
+
+  it("only emitted.ts rewrites an emitted member declaration", () => {
+    // nestedMap.ts and pairKeyed.ts each carried an identical copy of this —
+    // same early return, same tree.map, same declaration regex, differing only
+    // in the replacement type. It is what stops a pair-keyed function being
+    // declared `std::map<int, T>`, a key of the wrong arity, so a drifted
+    // second copy would mis-declare exactly the variables a caller had just
+    // gone to the trouble of translating.
+    expect(strays(/std::\\\\w\+<\[\^;/, "emitted.ts")).toEqual([]);
+  });
+
   it("only nestedMap.ts decides what a two-level table is", () => {
     // The scheduler's copy claimed in its own comment to match "the same way"
     // and did not: it stopped at the opening paren, so `ctlNeighbours ∈ PKT ↔

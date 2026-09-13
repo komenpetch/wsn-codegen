@@ -1,3 +1,4 @@
+import { redeclareMembers } from "./emitted";
 import type { EncodedMachine, GeneratedTree } from "./types";
 import type { NetRule } from "./packetRules";
 import type { RuleMatch } from "./rules";
@@ -89,19 +90,11 @@ export function pairKeyedVars(model: EncodedMachine): PairKeyedVar[] {
 // pass for the same reason nestedMap's is: EncodingForm has no pair-keyed form
 // to select, and the resolver is not this pipeline's to change.
 export function fixPairKeyedDeclarations(tree: GeneratedTree, vars: PairKeyedVar[]): GeneratedTree {
-  if (vars.length === 0) return tree;
-  return tree.map((f) => {
-    if (!f.path.endsWith(".h")) return f;
-    let content = f.content;
-    for (const v of vars) {
-      const decl = new RegExp(`^([ \\t]*)std::\\w+<[^;\\n]*>\\s+${esc(v.name)};.*$`, "m");
-      content = content.replace(
-        decl,
-        `$1std::map<std::pair<${v.keyA}, ${v.keyB}>, ${v.value}> ${v.name};`
-        + `   // ${v.name} ∈ ${v.domain} → … (key is a maplet)`);
-    }
-    return { ...f, content };
-  });
+  return redeclareMembers(tree, vars.map((v) => ({
+    name: v.name,
+    cppType: `std::map<std::pair<${v.keyA}, ${v.keyB}>, ${v.value}>`,
+    note: `${v.name} ∈ ${v.domain} → … (key is a maplet)`,
+  })));
 }
 
 // The rule forms, one family per variable. Every shape here is taken from a

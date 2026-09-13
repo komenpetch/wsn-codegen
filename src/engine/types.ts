@@ -53,3 +53,8 @@ export interface EncodedMachine extends FlatMachine {
 export interface Fragment { sourceExpr: string; rule: string; cpp: string; }
 export interface GeneratedFile { path: string; content: string; }
 export type GeneratedTree = GeneratedFile[];
+
+// The label Rodin gives every machine's initialisation event. Spelled out as
+// a literal in three places, which is two places for a typo to hide in --
+// `find(e => e.label === "INITIALISATION")` silently finds nothing.
+export const INITIALISATION = "INITIALISATION";

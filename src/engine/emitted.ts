@@ -75,6 +75,91 @@ export const headerOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWit
 export const implOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWith(".cc"));
 export const implText = (tree: GeneratedTree): string => implOf(tree)?.content ?? "";
 
+// ── Writing INTO the emitted code, and failing loudly when the anchor is gone ──
+//
+// Seventeen passes rewrite the emitted text by finding an anchor in it, and a
+// pass whose anchor has drifted does not fail -- `String.replace` with no match
+// returns the string unchanged and `indexOf` returns -1 for the caller to
+// ignore. Measured on this tree: seven of the seventeen could return the tree
+// untouched without raising.
+//
+// Most of those surface at clang, because the half that DID splice then
+// references what the other half never declared. Two do not, and they are the
+// expensive ones: a scheduler whose timer hook never matched, and a node
+// identity binding whose initialize() never matched, both produce a module that
+// compiles, runs, and executes no model events. This project has paid for that
+// shape twice already -- once as a module with "no scheduler and no medium
+// binding, indistinguishable from a model that simply has no network layer",
+// and once as a class-name regex that matched nothing so a test "passed while
+// checking zero methods".
+//
+// So an anchor is a PRECONDITION, not a hint. These two say so.
+
+/**
+ * Rewrite emitted member declarations to a different C++ type.
+ *
+ * The encoding resolver has no form for a structured Event-B type, so two
+ * passes correct its output after the fact: `nestedMap` (a variable whose range
+ * is itself a function) and `pairKeyed` (a variable whose KEY is a maplet).
+ * Both had their own copy of this, identical but for the replacement string —
+ * same early return, same `tree.map`, same declaration regex. A second copy of
+ * a regex is how the two answers drift, and this one is load-bearing: it is
+ * what stops `std::map<int, T>` being declared for a key of the wrong arity.
+ *
+ * ⚠ A variable handed here MUST have a declaration to rewrite. Missing one
+ * means the emitter declared it some other way and the C++ type is now wrong
+ * for every clause the caller went on to translate — a compile error at best,
+ * so it raises rather than leaving the wrong declaration in place.
+ */
+export function redeclareMembers(tree: GeneratedTree,
+  members: readonly { name: string; cppType: string; note: string }[]): GeneratedTree {
+  if (members.length === 0) return tree;
+  return tree.map((f) => {
+    if (!f.path.endsWith(".h")) return f;
+    let content = f.content;
+    for (const m of members) {
+      const decl = new RegExp(`^([ \\t]*)std::\\w+<[^;\\n]*>\\s+${esc(m.name)};.*$`, "m");
+      if (!decl.test(content))
+        throw new Error(
+          `redeclareMembers: no member declaration for '${m.name}' to rewrite to ` +
+          `'${m.cppType}'. The emitter declared it some other way, so its C++ type ` +
+          `no longer matches the clauses translated against it.`);
+      content = content.replace(decl, `$1${m.cppType} ${m.name};   // ${m.note}`);
+    }
+    return { ...f, content };
+  });
+}
+
+/** Index of `needle` in `text`, or throw naming the pass and the anchor. */
+export function mustFind(text: string, needle: string, pass: string): number {
+  const at = text.indexOf(needle);
+  if (at < 0)
+    throw new Error(
+      `${pass}: the emitted code has no ${JSON.stringify(needle)} to attach to. ` +
+      `The emitter's output shape changed; this pass needs revisiting rather than skipping.`);
+  return at;
+}
+
+/**
+ * `text.replace(pattern, replacement)`, but throwing when the pattern matches
+ * nothing. The silent version is the defect: the pass reports success and the
+ * behaviour it was supposed to install is simply absent.
+ */
+export function mustReplace(text: string, pattern: string | RegExp, replacement: string,
+  pass: string): string {
+  const hit = typeof pattern === "string" ? text.includes(pattern) : pattern.test(text);
+  if (!hit)
+    throw new Error(
+      `${pass}: nothing in the emitted code matches ${pattern.toString()}. ` +
+      `The emitter's output shape changed; this pass needs revisiting rather than skipping.`);
+  // ⚠ The `.test()` above advances a GLOBAL regex's lastIndex, and a reset
+  // looks necessary here. It is not: String.prototype.replace sets lastIndex
+  // to 0 itself before a global match. Verified by mutation -- deleting a
+  // reset placed here changed no test and no emitted byte, so it was removed
+  // rather than left as defensive-looking code with a false rationale.
+  return text.replace(pattern, replacement);
+}
+
 // ── Reachability: events nothing can ever enable ────────────────────────────
 //
 // An event is schedulable when its parameters can be BOUND. That is a different

@@ -1,3 +1,4 @@
+import { INITIALISATION } from "./types";
 import type { EncodedMachine, EncodingForm, GeneratedTree, RawContext } from "./types";
 import { translateEvent } from "./ruleEngine";
 
@@ -15,7 +16,7 @@ const alias = (token: string): string => ALIAS[token] ?? "int";
 // Only TYPE-valued equations qualify. `CTL_VAL = 0` and `BROADCAST = −1` are
 // value equations and must keep flowing to the scalar-constant path.
 export type TypeAliases = Map<string, string>;
-export function typeAliases(contexts: RawContext[]): TypeAliases {
+function typeAliases(contexts: RawContext[]): TypeAliases {
   const out: TypeAliases = new Map();
   for (const c of contexts)
     for (const a of c.axioms) {
@@ -407,7 +408,7 @@ export function emit(
     }
   }
 
-  const init = model.events.find((e) => e.label === "INITIALISATION");
+  const init = model.events.find((e) => e.label === INITIALISATION);
   const tInit = init ? translateEvent(init, model) : undefined;
   const ctorBody = tInit
     ? [

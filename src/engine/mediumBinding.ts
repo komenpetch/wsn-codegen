@@ -1,3 +1,4 @@
+import { mapletAddedTo, variableGainingMaplet } from "./actionShapes";
 import type { EncodedMachine, GeneratedTree, FlatEvent } from "./types";
 import { splitConjuncts } from "./ruleEngine";
 import type { PacketModel, PacketField } from "./packetModel";
@@ -165,7 +166,7 @@ export type MediumCore = {
 export const modelHasMedium = (model: EncodedMachine, pm: PacketModel): boolean =>
   mediumCore(model, pm) !== null;
 
-export function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore | null {
+function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore | null {
   const tx = model.events.find((e) => e.label === TRANSMIT);
   const rx = model.events.find((e) => e.label === DELIVER);
   if (!tx || !rx) return null;                     // no CommPattern pair, no medium
@@ -187,9 +188,8 @@ export function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore |
       new RegExp(`^(\\w+)\\s*=\\s*${f.ebName}\\(\\s*${txPkt}\\s*\\)$`).exec(c)).find(Boolean);
     if (!read) continue;
     const q = read[1];
-    const stored = acts(tx).map((a) =>
-      new RegExp(`^(\\w+)\\s*≔\\s*\\1\\s*∪\\s*\\{\\s*${txPkt}\\s*↦\\s*${q}\\s*\\}$`).exec(a)).find(Boolean);
-    if (stored) wire.push({ staging: stored[1], getter: getterOf(f) });
+    const staging = acts(tx).map((a) => variableGainingMaplet(a, txPkt, q)).find(Boolean);
+    if (staging) wire.push({ staging, getter: getterOf(f) });
   }
   if (wire.length === 0) return null;              // nothing is serialised: not a medium
 
@@ -215,10 +215,9 @@ export function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore |
   for (const ev of model.events) {
     if (ev.label === TRANSMIT || ev.label === DELIVER) continue;
     for (const a of acts(ev)) {
-      const put = requires.map((v) =>
-        new RegExp(`^${v}\\s*≔\\s*${v}\\s*∪\\s*\\{\\s*(\\w+)\\s*↦\\s*(\\w+)\\s*\\}$`).exec(a)).find(Boolean);
+      const put = requires.map((v) => mapletAddedTo(a, v)).find(Boolean);
       if (!put) continue;
-      const [, x, p] = put;
+      const [x, p] = put;
       for (const f of fields)
         if (acts(ev).some((b) =>
           new RegExp(`^${f.ebName}\\s*≔\\s*${f.ebName}\\s*[${OVERRIDE_GLYPHS}]\\s*\\{\\s*${p}\\s*↦\\s*${x}\\s*\\}$`).test(b)))

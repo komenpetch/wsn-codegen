@@ -26,13 +26,14 @@
 // parent selection, chooseParent, cpCost, cRouteTree, the routing decisions.
 // Those are the Specific layer in the class diagram and were never in scope.
 
+import { INITIALISATION } from "./types";
+import { addsMaplet, addsTo, anyMapletAdded, removesFrom, variableAddedTo } from "./actionShapes";
 import type { EncodedMachine, FlatEvent, RawContext, RawModel, Labelled } from "./types";
 import { eventAncestry } from "./flattener";
 import type { PacketModel, PacketField } from "./packetModel";
 import { getterOf, setterOf } from "./packetModel";
 import { OVERRIDE_GLYPHS } from "./text";
 
-const INITIALISATION = "INITIALISATION";
 
 // Machine variables an event mentions, in its guards or its actions.
 function variablesUsedBy(ev: FlatEvent, known: Map<string, string>): string[] {
@@ -136,10 +137,8 @@ export function transmitEventsOf(base: EncodedMachine, source: EncodedMachine,
   }
   if (observed.size === 0) return [];
 
-  const adds = (action: string, v: string) =>
-    new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∪\\s*\\{\\s*\\w+\\s*↦\\s*\\w+\\s*\\}\\s*$`).test(action.trim());
   return source.events
-    .filter((e) => [...observed].some((v) => e.actions.some((a) => adds(a, v))))
+    .filter((e) => [...observed].some((v) => e.actions.some((a) => addsMaplet(a, v))))
     .map((e) => e.label);
 }
 
@@ -164,8 +163,8 @@ export function receiveEventsOf(base: EncodedMachine, source: EncodedMachine,
   if (!su) return [];
   const published = new Set<string>();
   for (const a of su.actions) {
-    const m = /^\s*(\w+)\s*≔\s*\1\s*∪/.exec(a.trim());
-    if (m && base.variableTypes.has(m[1])) published.add(m[1]);
+    const v = variableAddedTo(a);
+    if (v && base.variableTypes.has(v)) published.add(v);
   }
   if (published.size === 0) return [];
 
@@ -264,10 +263,9 @@ export function carryEvents(base: EncodedMachine, source: EncodedMachine,
 export function drainEventsOf(model: EncodedMachine, source: EncodedMachine,
   carriedLabels: readonly string[]): string[] {
   const carried = new Set(carriedLabels);
-  const adds = (c: string, v: string) =>
-    new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∪`).test(c);
-  const removes = (c: string, v: string) =>
-    new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∖`).test(c);
+  // addsTo rather than addsMaplet: a variable filled by a cartesian product is
+  // just as undrained as one filled a maplet at a time. actionShapes.ts carries
+  // the difference between the two readings.
 
   // Variables the carried events fill and never empty.
   const filled = new Set<string>();
@@ -275,8 +273,8 @@ export function drainEventsOf(model: EncodedMachine, source: EncodedMachine,
   for (const ev of model.events) {
     if (ev.label === INITIALISATION || !carried.has(ev.label)) continue;
     for (const v of model.variables) {
-      if (ev.actions.some((a) => adds(a, v))) filled.add(v);
-      if (ev.actions.some((a) => removes(a, v))) drained.add(v);
+      if (ev.actions.some((a) => addsTo(a, v))) filled.add(v);
+      if (ev.actions.some((a) => removesFrom(a, v))) drained.add(v);
     }
   }
   const blocked = [...filled].filter((v) => !drained.has(v));
@@ -371,8 +369,8 @@ export function arrivalRequirementsOf(base: EncodedMachine, source: EncodedMachi
   for (const ev of source.events)
     if (wanted.has(ev.label))
       for (const a of ev.actions) {
-        const m = /^\s*(\w+)\s*≔\s*\1\s*∪/.exec(a.trim());
-        if (m) written.add(m[1]);
+        const v = variableAddedTo(a);
+        if (v) written.add(v);
       }
 
   const out = new Set<string>();
@@ -455,20 +453,20 @@ export function supersededEventsOf(base: EncodedMachine, pRaw: RawModel, pMachin
   const su = base.events.find((e) => e.label === sendUpLabel);
   const published = new Set<string>();
   for (const a of su?.actions ?? []) {
-    const m = /^\s*(\w+)\s*≔\s*\1\s*∪/.exec(a.trim());
-    if (m && base.variableTypes.has(m[1])) published.add(m[1]);
+    const v = variableAddedTo(a);
+    if (v && base.variableTypes.has(v)) published.add(v);
   }
   const guardsMembership = (ev: FlatEvent, v: string) =>
     ev.guards.some((g) => new RegExp(`↦\\s*\\w+\\s*∈\\s*${v}\\s*$`).test(g.trim()));
-  const removesFrom = (ev: FlatEvent, v: string) =>
-    ev.actions.some((a) => new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∖`).test(a.trim()));
+  const eventRemovesFrom = (ev: FlatEvent, v: string) =>
+    ev.actions.some((a) => removesFrom(a, v));
 
   for (const v of published) {
     // premise: a carried event consumes this publication UNDER a guard
     if (!base.events.some((e) => carried.has(e.label) && guardsMembership(e, v))) continue;
     for (const e of base.events) {
       if (carried.has(e.label) || e.label === sendUpLabel || e.label === INITIALISATION) continue;
-      if (removesFrom(e, v) && !guardsMembership(e, v)) out.add(e.label);
+      if (eventRemovesFrom(e, v) && !guardsMembership(e, v)) out.add(e.label);
     }
   }
   return [...out];
@@ -577,9 +575,9 @@ export function senderFieldOf(source: EncodedMachine, pm: PacketModel,
   for (const ev of source.events) {
     if (!wanted.has(ev.label)) continue;
     for (const a of ev.actions) {
-      const put = /^\s*(\w+)\s*≔\s*\1\s*∪\s*\{\s*(\w+)\s*↦\s*(\w+)\s*\}\s*$/.exec(a.trim());
+      const put = anyMapletAdded(a);
       if (!put) continue;
-      const [, , x, p] = put;
+      const [, x, p] = put;
       for (const f of pm.fields) {
         const stamp = new RegExp(
           `^\\s*${f.ebName}\\s*≔\\s*${f.ebName}\\s*[${OVERRIDE_GLYPHS}]\\s*\\{\\s*${p}\\s*↦\\s*${x}\\s*\\}\\s*$`);

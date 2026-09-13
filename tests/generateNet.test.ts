@@ -115,6 +115,38 @@ describe("generate (network branch) for MintRoute M4", () => {
     expect(after).toBe(34);
   });
 
+  // ⚠ THE ORDER OF THE NET RULES IN netPipeline.ts IS BEHAVIOUR, NOT STYLE,
+  // and this is the test that says so.
+  //
+  // `SETEXPR-PAIR-MEM` matches `a ↦ b ∈ dom(F)` for any pair-shaped F and
+  // deliberately emits "" for the shapes it cannot answer — the
+  // intercept-and-refuse technique several rules rely on. A pair-keyed
+  // function is one of those shapes, so whichever rule set is offered FIRST
+  // wins the clause, and only `pairKeyedRules` can actually translate it.
+  //
+  // Measured, by moving pairKeyedRules to the end of that array: MintRoute M4
+  // goes 34 → 45 untranslated and exactly these nine guards stop translating —
+  // `nd ↦ nb ∈ dom(lastSeqno)`, the same over missed / receiveEst / received /
+  // sentEst, and three over liveliness.
+  //
+  // The untranslated COUNT above would also catch a reorder, but it catches it
+  // as a bare number: someone who reorders sees `expected 45 to be 34` and can
+  // "fix" it by editing that number. This one names the constraint, so the
+  // failure says what was broken.
+  it("lets the pair-keyed rules claim a domain test before the set-expression rules", () => {
+    const h = byExt(".h"), cc = byExt(".cc");
+    // The pair-keyed variables, read off the emitted header rather than listed
+    // here — a hardcoded name would test a constant, and this set is exactly
+    // what fixPairKeyedDeclarations rewrote.
+    const pairKeyed = new Set(
+      [...h.matchAll(/std::map<std::pair<[^>]*>,[^>]*>\s+(\w+);/g)].map((m) => m[1]));
+    expect(pairKeyed.size).toBeGreaterThan(0);
+
+    const refused = [...cc.matchAll(/UNTRANSLATED GUARD: [^\n]*?dom\((\w+)\)/g)]
+      .map((m) => m[1]).filter((v) => pairKeyed.has(v));
+    expect(refused).toEqual([]);
+  });
+
   it("keeps the flooding events translatable", () => {
     const cc = byExt(".cc");
     for (const ev of ["start_flooding", "reset_flooding"])

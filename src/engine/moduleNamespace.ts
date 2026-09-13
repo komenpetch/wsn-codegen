@@ -38,7 +38,7 @@ import { esc } from "./text";
 // One namespace per module, derived from the module's own name, so two modules
 // generated from different projects cannot collide however similar their
 // contexts are.
-export const namespaceOf = (name: string): string => `eb_${name.toLowerCase()}`;
+const namespaceOf = (name: string): string => `eb_${name.toLowerCase()}`;
 
 // In the header the context block sits between `using namespace inet;` and the
 // end of the file; in the .cc everything after the includes is definitions.

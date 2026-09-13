@@ -4,7 +4,7 @@ import type { PacketField } from "./packetModel";
 import { getterOf } from "./packetModel";
 import { nestedMapVars } from "./nestedMap";
 import { pairKeyedVars } from "./pairKeyed";
-import { emittedMethods, splitParams, implOf, unreachableEvents } from "./emitted";
+import { emittedMethods, splitParams, implOf, unreachableEvents, mustFind, mustReplace } from "./emitted";
 
 // A generic event scheduler.
 //
@@ -410,7 +410,7 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
     : { label, params, lines, rollback, ok: false, why: `no binding for ${missing.join(", ")}` };
 }
 
-export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: PacketField[],
+function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: PacketField[],
   // Events NOT scheduled spontaneously, each with the reason, which is emitted
   // beside the declaration. Two reasons exist so far and they are different
   // claims: "the simulator realises this" (the medium binding) and "a carried
@@ -607,14 +607,19 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // Events the ARRIVAL runs inline -- see emitScheduler.
   arrivalEvents: readonly string[] = []): GeneratedTree {
   const ccFile = implOf(tree);
-  if (!ccFile) return tree;
+  if (!ccFile)
+    throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
   const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets, deliveryLabels, neverRuns, arrivalEvents);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {
       const anchor = "  public:";
       const at = f.content.lastIndexOf(anchor);
-      if (at < 0) return f;
+      // Not mustFind: this is the LAST occurrence, and a missing one is the
+      // same precondition failure.
+      if (at < 0)
+        throw new Error("installScheduler: the generated header has no `  public:` "
+          + "to declare the scheduler before. The emitter's output shape changed.");
       return { ...f, content: f.content.slice(0, at) + decls + "\n\n" + f.content.slice(at) };
     }
     if (f.path.endsWith(".cc")) {
@@ -622,16 +627,21 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
       // Record what fired. Without this the run is unmeasurable: a green 60s
       // and a plausible packet count say nothing about whether the MODEL
       // executed, which is the only thing under test.
+      // ⚠ Loud, because losing THIS is losing the evidence rather than the
+      // behaviour: without the scalars a run that executed no model events and
+      // a run that executed all of them produce identical output.
       const FIN = `void ${cls}::finish() {`;
-      if (content.includes(FIN))
-        content = content.replace(
-          FIN,
-          FIN +
-            '\n    for (auto& _fc : firedCount)' +
-            '\n        recordScalar(("fired:" + _fc.first).c_str(), _fc.second);',
-        );
-      const at = content.indexOf("\nDefine_Module(");
-      content = at < 0 ? content + "\n" + defs : content.slice(0, at + 1) + defs + "\n\n" + content.slice(at + 1);
+      content = mustReplace(content, FIN,
+        FIN +
+          '\n    for (auto& _fc : firedCount)' +
+          '\n        recordScalar(("fired:" + _fc.first).c_str(), _fc.second);',
+        "installScheduler (firing counters)");
+      // Throws rather than appending at EOF, matching spliceImpl in
+      // netPipeline.ts — the silent fallback still compiled, so an emitter
+      // change that moved Define_Module would have quietly relocated the
+      // scheduler with nothing to show for it.
+      const at = mustFind(content, "\nDefine_Module(", "installScheduler (definitions)");
+      content = content.slice(0, at + 1) + defs + "\n\n" + content.slice(at + 1);
       // Drive it from the timer that already exists in the shell.
       //
       // Once the model's own transmit event drives the radio -- the medium
@@ -644,13 +654,26 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
       // contends for the same duty-cycled MAC, so the model's transmissions are
       // the ones that get lost. The method stays emitted, like the shell's other
       // helpers; nothing calls it.
-      content = content.replace(
+      // ⚠ THE SCHEDULER MUST END UP WITH EXACTLY ONE DRIVE PATH, and which one
+      // depends on the shell — so the precondition is checked against the
+      // emitted code rather than against a flag.
+      //
+      // The NETWORK shell writes its own `runEnabledEvents();` into the timer it
+      // emits (netProtocolShell.ts), and it is installed before this pass, so
+      // there is no `sendSensorPacket();` here to rewrite and none is wanted.
+      // The APPLICATION shell has no such call: its timer calls SensorApp's own
+      // `sendSensorPacket();`, and rewriting THAT is the only thing that reaches
+      // runEnabledEvents(). With neither present the module compiles, links,
+      // runs its full sixty seconds and fires ZERO model events — the most
+      // expensive failure this generator has, and one it has already had.
+      const alreadyDriven = /^\s*runEnabledEvents\(\);/m.test(content);
+      if (!alreadyDriven) content = mustReplace(content,
         /^(\s*)sendSensorPacket\(\);$/m,
         modelDrivesTransmit
           ? `$1runEnabledEvents();   // Event-B events enabled at this tick\n` +
             `$1// (the shell's own sendSensorPacket() is not called: ${transmitOwner})`
           : `$1sendSensorPacket();\n$1runEnabledEvents();   // Event-B events enabled at this tick`,
-      );
+        "installScheduler (timer hook)");
       return { ...f, content };
     }
     return f;

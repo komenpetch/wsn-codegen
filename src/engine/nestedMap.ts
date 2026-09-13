@@ -1,3 +1,4 @@
+import { redeclareMembers } from "./emitted";
 import type { EncodedMachine, GeneratedTree } from "./types";
 import type { NetRule } from "./packetRules";
 import type { RuleMatch } from "./rules";
@@ -50,19 +51,11 @@ export function nestedMapVars(model: EncodedMachine): NestedMapVar[] {
 // post-emit pass because EncodingForm has no two-level form to select, and
 // wsn-codegen/src is not this project's to change.
 export function fixNestedMapDeclarations(tree: GeneratedTree, vars: NestedMapVar[]): GeneratedTree {
-  if (vars.length === 0) return tree;
-  return tree.map((f) => {
-    if (!f.path.endsWith(".h")) return f;
-    let content = f.content;
-    for (const v of vars) {
-      const decl = new RegExp(`^([ \\t]*)std::\\w+<[^;\\n]*>\\s+${esc(v.name)};.*$`, "m");
-      content = content.replace(
-        decl,
-        `$1std::map<${v.outer}, std::map<${v.inner}, ${v.value}>> ${v.name};   // ${v.name} ∈ … ↔ (… ⇸ …)`,
-      );
-    }
-    return { ...f, content };
-  });
+  return redeclareMembers(tree, vars.map((v) => ({
+    name: v.name,
+    cppType: `std::map<${v.outer}, std::map<${v.inner}, ${v.value}>>`,
+    note: `${v.name} ∈ … ↔ (… ⇸ …)`,
+  })));
 }
 
 export function nestedMapRules(vars: NestedMapVar[]): NetRule[] {

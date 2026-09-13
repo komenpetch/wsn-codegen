@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fixSetTypedParameters } from "../src/engine/netPipeline";
+import { fixSetTypedParameters } from "../src/engine/postEmit";
 import type { GeneratedTree } from "../src/engine/types";
 
 // fixSetTypedParameters retypes an event parameter the emitter declared `int`
