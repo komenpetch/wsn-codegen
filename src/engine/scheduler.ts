@@ -3,7 +3,7 @@ import { splitConjuncts } from "./ruleEngine";
 import type { PacketField } from "./packetModel";
 import { getterOf } from "./packetModel";
 import { nestedMapVars } from "./nestedMap";
-import { emittedMethods, splitParams, implOf } from "./emitted";
+import { emittedMethods, splitParams, implOf, unreachableEvents } from "./emitted";
 
 // A generic event scheduler.
 //
@@ -47,6 +47,10 @@ interface Plan {
   rollback: string[];   // undo of anything synthesised
   ok: boolean;
   why?: string;         // when !ok
+  // The packet-type tag this event STAMPS on a fresh packet. Emitted by the
+  // scheduler, not by the event body, so a reachability scan over the .cc
+  // cannot see it -- it has to be carried here.
+  stamps?: string;
   method?: string;      // emitted name, when the CommPattern merge renamed it
 }
 
@@ -81,6 +85,7 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
   const clauses = guards.flatMap((g) => splitConjuncts(g));
   const lines: string[] = [];
   const rollback: string[] = [];
+  let stamps: string | undefined;
   const resolved = new Set<string>();
   // Inside a loop an unmet precondition must skip this candidate, not abandon
   // the whole event -- returning would silently stop at the first bad one.
@@ -188,7 +193,7 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         // since a packet off the wire has a chunk and no map entry. TYPE-CMP /
         // TYPE-MEM (mediumRules.ts) now read the chunk everywhere, so there is
         // one storage again and nothing to keep in step.
-        if (tag) lines.push(`    ensurePkt(${p})->setType(PktType::${tag});`);
+        if (tag) { lines.push(`    ensurePkt(${p})->setType(PktType::${tag});`); stamps = tag; }
         // Any `q = g(p)` guard over an already-known q is satisfied by
         // construction too -- the model is describing the packet being made.
         for (const c of clauses) {
@@ -342,7 +347,7 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
 
   const missing = params.filter((p) => !resolved.has(p.name)).map((p) => p.name);
   return missing.length === 0
-    ? { label, params, lines, rollback, ok: true }
+    ? { label, params, lines, rollback, ok: true, stamps }
     : { label, params, lines, rollback, ok: false, why: `no binding for ${missing.join(", ")}` };
 }
 
@@ -353,7 +358,10 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
   // event supersedes this" (the packet-pattern merge).
   notScheduled: ReadonlyMap<string, string> = new Map(),
   carrierSets: ReadonlySet<string> = new Set(),
-  deliveryLabels: readonly string[] = []): { decls: string; defs: string } {
+  deliveryLabels: readonly string[] = [],
+  // Events that genuinely never execute -- NOT the same as `notScheduled`,
+  // which also holds send_up, an event the arrival calls on every reception.
+  neverRuns: ReadonlySet<string> = new Set()): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -392,7 +400,28 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     plans.push(plan);
   }
 
-  const firable = plans.filter((p) => p.ok);
+  const schedulable = plans.filter((p) => p.ok);
+  const skippedPlans = plans.filter((p) => !p.ok);
+  // ⚠ SCHEDULABLE IS NOT REACHABLE. Binding an event's parameters and its guards
+  // ever holding are different questions, and the gap was measured: 18 try_
+  // methods emitted, 7 ever fired. The rest each wait on something no runnable
+  // code produces -- a DATA packet nothing stamps, `bcastRouTimer = TRUE` that
+  // nothing assigns, a `recvBuff` written only by an event a refinement retired.
+  //
+  // An event that can never fire is not free: it is a method a reader has to
+  // understand, and it makes the scheduler look like it drives far more of the
+  // model than it does.
+  //
+  // The unschedulable events join `neverRuns` for this: they are exactly the
+  // ones that produce nothing because they never execute.
+  const unreachable = unreachableEvents(cc, cls, schedulable.map((p) => p.label),
+    new Set([...neverRuns, ...skippedPlans.map((p) => p.label)]),
+    // Which event stamps which packet tag. The stamp is emitted BY THIS
+    // SCHEDULER, into the try_ method, so it is not in the .cc the analysis
+    // reads -- without this, create_bconPkt is reported as "nothing creates a
+    // BEACON packet", which is exactly what it does.
+    new Map(schedulable.filter((p) => p.stamps).map((p) => [p.label, p.stamps!])));
+  const firable = schedulable.filter((p) => !unreachable.has(p.label));
   const defs: string[] = [];
   for (const p of firable) {
     const loops = p.lines.filter((l) => l.trim().startsWith("for (")).length;
@@ -406,7 +435,6 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     ];
     defs.push(`bool ${cls}::try_${p.label}()\n{\n${body.join("\n")}\n}`);
   }
-  const skipped = plans.filter((p) => !p.ok);
 
   const runBody = firable.map((p) => `    if (try_${p.label}()) fired = true;`).join("\n");
   defs.push(
@@ -445,7 +473,9 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     "    // about whether the MODEL executed, which is the only thing under test.",
     "    std::map<std::string, long> firedCount;",
     ...firable.map((p) => `    bool try_${p.label}();`),
-    ...skipped.map((p) => `    // not schedulable: ${p.label} -- ${p.why}`),
+    ...skippedPlans.map((p) => `    // not schedulable: ${p.label} -- ${p.why}`),
+    ...[...unreachable].map(([label, why]) =>
+      `    // not scheduled: ${label} -- ${why}`),
     ...[...notScheduled].map(([label, why]) =>
       `    // not scheduled: ${label} -- ${why}`),
     `    bool runEnabledEvents();`,
@@ -470,10 +500,14 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // The network module's transmit path is the medium binding; the application's
   // is the model's transmit event calling transmitPacket(). Same decision, two
   // reasons, and the emitted comment should say which one applies.
-  transmitOwner = "the medium\n    //  binding makes the model's transmit event the transmit path"): GeneratedTree {
+  transmitOwner = "the medium\n    //  binding makes the model's transmit event the transmit path",
+  // Events that genuinely never execute. `notScheduled` is NOT this set: it also
+  // holds send_up, which the arrival calls on every reception and which fills
+  // ctlNeighbours -- masking it would make receive_controlPkt look unreachable.
+  neverRuns: ReadonlySet<string> = new Set()): GeneratedTree {
   const ccFile = implOf(tree);
   if (!ccFile) return tree;
-  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets, deliveryLabels);
+  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets, deliveryLabels, neverRuns);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

@@ -317,10 +317,16 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // ("the simulator's medium realises it"); this is the application's
     // version of the same fact, and reporting a gap that is not there is the
     // kind of thing this project treats as a defect in its own right.
+    // ⚠ Captured BEFORE send_up joins the map. A superseded event never runs;
+    // send_up runs on EVERY reception, called by the arrival, and it is what
+    // fills ctlNeighbours -- which receive_controlPkt guards on. Reachability
+    // analysis that confused the two would delete the flood. See
+    // unreachableEvents.
+    const neverRuns = new Set(superseded.keys());
     superseded.set("send_up", "the socket arrival realises it, on a real reception");
     return installScheduler(tree, model, outputName, pm.fields, superseded, true,
       carrierSetsOf(raw, pRaw), delivery,
-      "the model's own\n    //  transmit event is the transmit path now");
+      "the model's own\n    //  transmit event is the transmit path now", neverRuns);
   }
   if (version === 2) {
     // One model, whichever way this goes: tryNetworkLayer hands back the one it

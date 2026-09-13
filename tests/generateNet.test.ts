@@ -325,6 +325,43 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
       .toThrow(/send_up/);
   });
 
+  it("does not schedule an event nothing can enable, and says why", () => {
+    // ⚠ 18 try_ methods were emitted and 7 ever fired. The other 11 are not a
+    // translation gap -- each needs something no runnable code produces:
+    //
+    //   create_routePkt      guards `bcastRouTimer = TRUE`; that variable is
+    //                        assigned NOWHERE in the module.
+    //   start_tx_routePkt    needs a ROUTE packet, which only create_routePkt makes.
+    //   dest_recv_pkt        }  all guard `recvBuff`, which is written only by
+    //   fwdr_receive_pkt     }  `receive` -- an event a carried refinement
+    //   clear_recvdBuff      }  supersedes, so it never runs.
+    //   *_dataPkt (4)        need a DATA packet; create_dataPkt is unschedulable
+    //                        (no binding for `sd` -- the PEnv sensing boundary).
+    //
+    // The analysis reads the EMITTED module, not the model: WiMedium is filled
+    // by the ARRIVAL rather than by any scheduled event, so a model-only
+    // producer scan would call receive_controlPkt unreachable and kill the flood.
+    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+      { files: loadProject("MintRoute"), machine: "M4" });
+    const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
+    const h = t.find((f) => f.path.endsWith(".h"))!.content;
+
+    for (const dead of ["create_routePkt", "start_tx_routePkt", "dest_recv_pkt",
+                        "fwdr_receive_pkt", "clear_recvdBuff", "receive_dataPkt",
+                        "receive_dup_dataPkt", "sink_recv_dataPkt", "start_tx_dataPkt"])
+      expect(cc).not.toContain(`bool Pm3Wsn::try_${dead}(`);
+
+    // ⚠ And the flood must survive. These are the seven that actually fired.
+    for (const live of ["start_flooding", "create_bconPkt", "start_tx_bconPkt",
+                        "send_down", "receive_controlPkt", "receive_dup_controlPkt",
+                        "finish_tx_pkt"])
+      expect(cc).toContain(`bool Pm3Wsn::try_${live}(`);
+
+    // A dropped event states its reason, like every other exclusion.
+    expect(h).toMatch(/not scheduled: create_routePkt -- .*bcastRouTimer/);
+    expect(h).toMatch(/not scheduled: dest_recv_pkt -- .*recvBuff/);
+  });
+
   it("still accepts the coherent pairing", () => {
     // The guard rails must not block the configuration that works: the AppLayer
     // chain as the base with MintRoute supplying the packet class.

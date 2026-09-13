@@ -74,3 +74,131 @@ export function splitParams(params: string): { cppType: string; name: string }[]
 export const headerOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWith(".h"));
 export const implOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWith(".cc"));
 export const implText = (tree: GeneratedTree): string => implOf(tree)?.content ?? "";
+
+// ── Reachability: events nothing can ever enable ────────────────────────────
+//
+// An event is schedulable when its parameters can be BOUND. That is a different
+// question from whether its guards can ever HOLD, and the gap between them was
+// measured: the app-layer module emitted 18 `try_` methods and 7 ever fired.
+// The other 11 were not translation gaps -- each needed something no runnable
+// code produces.
+//
+// One rule in three forms. A guard REQUIRES something; some method PRODUCES it:
+//
+//   container non-empty   `X.count(..) > 0` / `inRan(X, ..)`   X.insert / X[..] =
+//   a packet of a type    `getType() == PktType::T`            setType(PktType::T)
+//   a scalar value        `v == TRUE`                          any assignment to v
+//
+// ⚠ READ THE EMITTED MODULE, NOT THE MODEL. `WiMedium` and `sentDown` are filled
+// by the ARRIVAL, which is emitted binding code and not an Event-B event at all;
+// a producer scan over the model would find no writer, call receive_controlPkt
+// unreachable and silently delete the flood.
+//
+// ⚠ AND "NOT SCHEDULED" IS NOT "NEVER RUNS". `send_up` is excluded from the
+// poll loop because the arrival calls it directly -- it runs on every reception
+// and fills `ctlNeighbours`, which receive_controlPkt guards on. Only events
+// that genuinely never execute may be masked, which is why `neverRuns` is passed
+// in rather than inferred from the exclusion list.
+//
+// Conservative by construction: a NEGATED guard states an absence and is
+// skipped, so nothing is dropped on the strength of a requirement this cannot
+// read. Under-removing leaves a dead method; over-removing breaks behaviour.
+interface Produced { containers: Set<string>; types: Set<string>; scalars: Set<string> }
+
+function producedBy(text: string): Produced {
+  const containers = new Set<string>(), types = new Set<string>(), scalars = new Set<string>();
+  // TWO patterns, because neither covers the other's shape:
+  //
+  //   anywhere    `X.insert(`        also catches the arrival's rollback-aware
+  //                                  staging, `bool _st_X = X.insert(..).second;`
+  //                                  whose LINE begins with `bool`.
+  //   line-start  `X[` or `X.insert` catches `ctlNeighbours[pkt].insert(nb)` and
+  //                                  `nbHops[s][pkt] = nbh`, where the identifier
+  //                                  before `.insert` is `]`, not a word.
+  //
+  // ⚠ Missing either one deletes live events and CASCADES: the staged write is
+  // what fills WiMedium, so receive_controlPkt looked unreachable, and dropping
+  // it removed its own writes, which took out the next event, and so on until
+  // the flood was gone. A write is a statement and a read is an expression, but
+  // the emitted forms are varied enough that one regex cannot see them all.
+  for (const m of text.matchAll(/(\w+)\.insert\(/g)) containers.add(m[1]);
+  for (const m of text.matchAll(/^\s*(\w+)(?:\[|\.insert\b)/gm)) containers.add(m[1]);
+  for (const m of text.matchAll(/setType\(PktType::(\w+)\)/g)) types.add(m[1]);
+  for (const m of text.matchAll(/^\s*(\w+)\s*=[^=]/gm)) scalars.add(m[1]);
+  return { containers, types, scalars };
+}
+
+function requiredBy(body: string): Produced {
+  const containers = new Set<string>(), types = new Set<string>(), scalars = new Set<string>();
+  for (const line of body.split("\n")) {
+    const g = /^\s*if \(!\((.*)\)\)\s*$/.exec(line);
+    if (!g) continue;
+    const expr = g[1];
+    if (expr.startsWith("!")) continue;   // a negated guard asserts ABSENCE
+    for (const m of expr.matchAll(/inRan\((\w+),/g)) containers.add(m[1]);
+    for (const m of expr.matchAll(/(\w+)\.count\([^)]*\)\s*>\s*0/g)) containers.add(m[1]);
+    for (const m of expr.matchAll(/getType\(\)\s*==\s*PktType::(\w+)/g)) types.add(m[1]);
+    const sc = /^(\w+) == (?:TRUE|FALSE)$/.exec(expr);
+    if (sc) scalars.add(sc[1]);
+  }
+  return { containers, types, scalars };
+}
+
+export function unreachableEvents(cc: string, cls: string,
+  candidates: readonly string[], neverRuns: ReadonlySet<string>,
+  // label → the packet tag that event stamps on a fresh packet. The scheduler
+  // emits the stamp, so it is absent from `cc` and has to be supplied.
+  stampsOf: ReadonlyMap<string, string> = new Map()): Map<string, string> {
+  const methods = emittedMethods(cc, cls);
+  // ⚠ `m.label ?? m.method`, the same key signatures() uses. Only the renamed
+  // CommPattern pair carries a provenance comment, so keying on `label` alone
+  // finds two methods out of forty -- every lookup misses, nothing is ever
+  // dropped, and the pass silently does nothing.
+  const byLabel = new Map(methods.map((m) => [m.label ?? m.method, m]));
+  const bodyOf = (m: EmittedMethod): string => {
+    const end = cc.indexOf("\n}", m.start);
+    return end < 0 ? cc.slice(m.start) : cc.slice(m.start, end);
+  };
+
+  const dropped = new Map<string, string>();
+  for (;;) {
+    // Everything except the bodies that can never execute.
+    let runnable = cc;
+    for (const [label, m] of byLabel)
+      if (neverRuns.has(label) || dropped.has(label))
+        runnable = runnable.replace(bodyOf(m), "");
+    const prod = producedBy(runnable);
+    // A tag is produced by any creating event still standing.
+    for (const [label, tag] of stampsOf)
+      if (!neverRuns.has(label) && !dropped.has(label)) prod.types.add(tag);
+
+    let changed = false;
+    for (const label of candidates) {
+      if (dropped.has(label) || neverRuns.has(label)) continue;
+      const m = byLabel.get(label);
+      if (!m) continue;
+      const body = bodyOf(m);
+      const req = requiredBy(body);
+      // ⚠ AN EVENT MAY SATISFY ITS OWN REQUIREMENT. A creating event guards
+      // `type(pkt) = BEACON` on a parameter it is about to MINT, and the
+      // scheduler stamps the tag rather than searching for a packet that
+      // already carries it -- "satisfied by CONSTRUCTION", as planFor puts it.
+      // Judged against other methods only, create_bconPkt was dropped for
+      // "nothing creates a BEACON packet", which is precisely what it does.
+      const own = producedBy(body);
+      const ownStamp = stampsOf.get(label);
+      if (ownStamp) own.types.add(ownStamp);
+      for (const t of own.types) req.types.delete(t);
+      for (const c of own.containers) req.containers.delete(c);
+      let why: string | undefined;
+      for (const c of req.containers)
+        if (!prod.containers.has(c)) { why = `nothing that runs ever fills \`${c}\``; break; }
+      if (!why) for (const t of req.types)
+        if (!prod.types.has(t)) { why = `nothing that runs ever creates a ${t} packet`; break; }
+      if (!why) for (const s of req.scalars)
+        if (!prod.scalars.has(s)) { why = `it guards \`${s}\`, which nothing ever assigns`; break; }
+      if (why) { dropped.set(label, why); changed = true; }
+    }
+    if (!changed) return dropped;
+  }
+}
