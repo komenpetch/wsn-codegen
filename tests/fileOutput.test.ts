@@ -160,6 +160,27 @@ describe("reading a project refuses an ambiguous input instead of picking one", 
     expect(files.map((f) => f.name).sort()).toEqual(["C0.buc", "pM1.bum"]);
   });
 
+  it("⚠ takes the basename from a WINDOWS-made archive, which uses backslashes", async () => {
+    // PowerShell's Compress-Archive writes entry names with backslash
+    // separators, and JSZip reports them verbatim. Splitting on "/" alone
+    // leaves the WHOLE PATH as the basename, so the parser is handed a file
+    // called "MintRoute_amiCheck\M4.bum" instead of "M4.bum".
+    const files = await readZip(await zipOf({
+      "MintRoute_amiCheck\\M4.bum": "<machine>ami</machine>",
+    }));
+    expect(files.map((f) => f.name)).toEqual(["M4.bum"]);
+  });
+
+  it("⚠ refuses a WINDOWS-made archive holding two projects", async () => {
+    // The duplicate guard was blind to exactly the archives most likely to
+    // have the problem: a zip of a parent folder, made on Windows. With the
+    // path left in the name the two copies never appeared to collide.
+    await expect(readZip(await zipOf({
+      "MintRoute_amiCheck\\C0.buc": "<c>one</c>",
+      "MintRoute_edited2.deprecated\\C0.buc": "<c>two</c>",
+    }))).rejects.toThrow(/C0\.buc/);
+  });
+
   it("guards the FOLDER path too, which flattens basenames the same way", async () => {
     // webkitdirectory yields a recursive flat FileList and readFolderViaInput
     // keys on f.name, so picking a parent folder has the identical defect.

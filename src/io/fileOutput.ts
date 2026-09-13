@@ -86,6 +86,22 @@ function readFolderViaInput(): Promise<{ name: string; xml: string }[]> {
 // used only to explain a collision.
 interface ProjectFile { name: string; xml: string; path?: string }
 
+// ⚠ BOTH separators. The ZIP spec says entry names use forward slashes, but
+// PowerShell's Compress-Archive writes BACKSLASHES and JSZip reports them
+// verbatim -- so splitting on "/" alone left the whole path as the "basename"
+// and the parser was handed a file called `MintRoute_amiCheck\M4.bum`.
+//
+// That also made the duplicate guard below blind to exactly the archives most
+// likely to need it: a zip of a parent folder holding two projects, made on
+// Windows. With the directory still in the name the two copies never collided.
+// Measured on the real WSN_MintRoute_3_2_5_9 zip: 26 entries, 26 "distinct"
+// names, no refusal.
+//
+// lastIndexOf twice rather than a regex: no escaping to get wrong, and this
+// project has lost time to a mangled `\s` more than once.
+const basenameOf = (path: string): string =>
+  path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+
 // ⚠ A project is read by BASENAME, from anywhere in the archive or folder tree.
 // That is deliberate — a Rodin export nests its files under a project directory,
 // and several nest them one level deeper still. But it means a selection holding
@@ -129,8 +145,8 @@ export async function readZip(file: Blob): Promise<{ name: string; xml: string }
   const files: ProjectFile[] = [];
   for (const entry of Object.values(zip.files)) {
     if (!entry.dir && /\.(bum|buc)$/i.test(entry.name)) {
-      const base = entry.name.slice(entry.name.lastIndexOf("/") + 1);
-      files.push({ name: base, xml: await entry.async("string"), path: entry.name });
+      files.push({ name: basenameOf(entry.name), xml: await entry.async("string"),
+        path: entry.name });
     }
   }
   return dedupeProjectFiles(files);
