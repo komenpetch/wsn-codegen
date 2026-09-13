@@ -1,16 +1,35 @@
 import type { GeneratedTree, RawModel } from "./types";
 import { parseModel } from "./parser";
-import { flatten } from "./flattener";
+import { flatten, parentOf } from "./flattener";
 import { resolveEncodings } from "./encodingResolver";
 import { emit, type EmitVersion } from "./codeEmitter";
+import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
+import { installScheduler } from "./scheduler";
+import { bindNodeIdentity } from "./nodeIdentity";
+import { packetModelOf } from "./packetModel";
+import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
+import { installAppTransmit, installAppReceive } from "./appTransmit";
+import { packetIdentityOf } from "./mediumBinding";
+import { getterOf } from "./packetModel";
+import { methodForLabel, implText } from "./emitted";
+import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
+import { capTag, carrierSetsOf } from "./text";
+import { wrapInNamespace } from "./moduleNamespace";
 
 export type EbFiles = { name: string; xml: string }[];
 
-// A default C++ class/file name for a machine label: "pM3" → "Pm3App".
+// A default C++ class/file name for a machine label: "pM3" → "Pm3Wsn",
+// "M4" → "M4Wsn".
+//
+// The suffix names the DOMAIN, not a layer. It used to be "App" (Pm3App), from
+// when the only output was an ApplicationBase module, and the network-layer work
+// briefly added a second name ("M4Net") alongside it. Two names for one
+// generator's one output invited exactly the confusion they caused: which of
+// them a given file was, and whether the two were separate artifacts. One
+// generator, one output, one name — what varies is how much network layer the
+// model puts inside it.
 export function defaultName(machine: string): string {
-  return machine
-    ? machine.charAt(0).toUpperCase() + machine.slice(1).toLowerCase() + "App"
-    : "App";
+  return machine ? capTag(machine) + "Wsn" : "Wsn";
 }
 
 function parsedMachines(files: EbFiles): RawModel {
@@ -35,7 +54,9 @@ function depthFn(raw: RawModel): (name: string) => number {
         throw new Error(`Refinement cycle detected at machine '${cur.name}'.`);
       seen.add(cur.name);
       d++;
-      cur = cur.refines ? byName.get(cur.refines) : undefined;
+      // parentOf, not a bare lookup: a machine declaring a target that is absent has an
+      // incomplete chain and must not be scored as a base machine of depth 1.
+      cur = parentOf(byName, cur);
     }
     return d;
   };
@@ -65,11 +86,185 @@ export function leafMachine(files: EbFiles): string {
 
 // Generate one class for a single target machine, flattened over its refines
 // chain (base first). `outputName` is the emitted class/file name.
-export function generate(files: EbFiles, target: string, outputName: string, version: EmitVersion = 3): GeneratedTree {
-  const raw = parsedMachines(files);
+export function generate(files: EbFiles, target: string, outputName: string, version: EmitVersion = 2,
+  packetSource?: PacketSource): GeneratedTree {
+  return emitOne(parsedMachines(files), target, outputName, version, packetSource);
+}
+
+// The one place the two halves of the generator meet.
+//
+// The network layer is not a separate generator and not a separate output: it
+// is what this pipeline emits IN ADDITION when the target machine has one —
+// the packet classes, the per-type transmit methods, the flooding scheduler and
+// the medium binding, on top of the same app-layer module. tryNetworkLayer says
+// no for a model with no medium, and that model gets the app-layer module
+// unchanged. Either way the result is exactly three files, one module.
+//
+// v1–v3 never take the network branch: those are the frozen emitted structures
+// behind the report's compare table, and they predate the network layer.
+// Where a v5 module's packet pattern class comes from. It is a SEPARATE Event-B
+// project on purpose: PPkt is a pattern, read off whichever model states the
+// packet-type partition richly enough, and then carried by a module generated
+// from another. MintRoute's partition gives DATA/ROUTE/BEACON and seven fields;
+// the app-layer chain's gives DATA/CONTROL and four.
+export interface PacketSource { files: EbFiles; machine: string; }
+
+function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
+  packetSource?: PacketSource): GeneratedTree {
+  const tree = emitBody(raw, target, outputName, version, packetSource);
+  // ONE exit point for the namespace, so a future structure cannot be added
+  // without it. A module emitted without the wrap compiles perfectly on its own
+  // and fails only when linked beside a second generated module, with
+  // `redefinition of 'DATA'` pointing at the context block rather than at the
+  // omission. v1-v3 are excluded deliberately: they are the frozen compare-table
+  // artifacts and predate the whole question.
+  return version >= 2 ? wrapInNamespace(tree, outputName) : tree;
+}
+
+function emitBody(raw: RawModel, target: string, outputName: string, version: EmitVersion,
+  packetSource?: PacketSource): GeneratedTree {
+  // v5: the app layer's SensorApp shell, carrying PPkt. The shell is v4's --
+  // codeEmitter treats 5 as 4 -- and the packet classes are spliced on top from
+  // `packetSource`, which is why v4 itself does not move: it stays the frozen
+  // compare-table artifact it was measured as.
+  //
+  // The packet source is a SEPARATE project on purpose: PPkt is a pattern, and a
+  // pattern is not owned by the protocol it was read off.
+  if (version === 3) {
+    if (!packetSource)
+      throw new Error("Structure 3 needs a packet source: which project's packet-type partition PPkt comes from.");
+    const pRaw = parseModel(packetSource.files);
+    const pMachine = packetSource.machine || leafOf(pRaw);
+    const pm = packetModelOf(pRaw, pMachine);
+    if (!pm)
+      throw new Error("The packet source declares no packet-type partition, so there is no PPkt to carry.");
+    // The pattern brings its OPERATIONS, not only its structure: the events that
+    // construct each leaf class come across too, with the state they need and
+    // the context constants they read. Without them the packet classes are
+    // emitted and never constructed -- see packetOps.ts for what this costs.
+    const pModel = resolveEncodings(flatten(pRaw, pMachine));
+    const base = resolveEncodings(flatten(raw, target));
+    // Creating events, then the TRANSMIT events -- the ones whose actions feed
+    // the variable this model's own `send_down` observes. Derived, not named:
+    // see transmitEventsOf.
+    let model = carryPacketOps(base, pModel, pm);
+    model = carryEvents(model, pModel, transmitEventsOf(base, pModel));
+    // The RECEIVE events: the mirror image, derived from what send_up publishes.
+    // These re-queue an arrival into the buffer the transmit events read, which
+    // is what turns a reception into a rebroadcast.
+    model = carryEvents(model, pModel, receiveEventsOf(base, pModel));
+    // Then the ENABLERS: without whatever sets floodFlg TRUE, create_bconPkt can
+    // never fire. Narrow on purpose -- the transitive closure is 39 of the 40
+    // events in MintRoute's machine, i.e. the whole protocol.
+    const carriedSoFar = model.events.map((e) => e.label);
+    model = carryEvents(model, pModel, enablingEventsOf(model, pModel, carriedSoFar));
+    const mergedRaw = { ...raw, contexts: mergeContexts(raw.contexts, pRaw.contexts) };
+    // The same two encoding fixes the network branch applies, and for the same
+    // reason: encodingResolver's infer() silently defaults an unrecognised type
+    // to "set". They matter HERE because the carried state is the packet
+    // source's -- MintRoute's `bcastRouTimer ∈ BOOL` came through as a
+    // std::set<int> and the emitted `bcastRouTimer == TRUE` would not compile.
+    fixAliasedEncodings(mergedRaw, model);
+    fixBooleanEncodings(model);
+    // Last: the transmit. The packet classes, the creating events and the
+    // transmit events are all in place by now, so what this replaces is the
+    // placeholder payload the CommPattern merge left in send_down.
+    let tree = emitWithPacketClasses({
+      raw: mergedRaw, model, name: outputName, pm, carriers: carrierSetsOf(raw, pRaw),
+    });
+    // The transmit replaces the placeholder payload the CommPattern merge left
+    // in send_down; the scheduler then fires the events that reach it. Without
+    // the scheduler the creating events are emitted and never called, so the
+    // module compiles and does nothing -- which is what v5 was until now.
+    tree = installAppTransmit(tree, outputName, pm,
+      // This model's send_down is a pure OBSERVATION and nothing clears the
+      // pair it observes on the SENDER, so the module records which
+      // transmissions it has already realised. A model that keeps that record
+      // itself gets nothing. See transmitRecordsItsOwnFiring.
+      !transmitRecordsItsOwnFiring(base));
+    // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
+    // every such map is empty, create_bconPkt declines on its first guard, and
+    // the scheduler fires nothing at all.
+    tree = bindNodeIdentity(tree, model, outputName, "application");
+    // The receive half: an arrival runs the model's own send_up, which publishes
+    // who received the packet; the carried receive events then consume that and
+    // re-queue it for transmission. That loop is the rebroadcast.
+    const sendUp = methodForLabel(implText(tree), outputName, "send_up");
+    // ⚠ DERIVED, not named. This used to be
+    // `pm.fields.find(f => f.ebName === "pktFwdr")` -- the one place the carry
+    // named a field -- and the guard below then skipped the WHOLE receive
+    // binding if it missed, so a packet source with a differently named sender
+    // field would have produced a module that compiles, runs and never
+    // receives. See senderFieldOf.
+    const fwdr = senderFieldOf(pModel, pm, transmitEventsOf(base, pModel));
+    if (!sendUp || !fwdr)
+      throw new Error(
+        "The packet pattern cannot be bound to an arrival: "
+        + (!sendUp ? `no emitted method carries the Event-B provenance "send_up". `
+                   : "the transmit events never stamp a chunk field with the node they "
+                     + "file the packet under, so no field carries the sender. ")
+        + "Refusing rather than emitting a module that would compile and never receive.");
+    {
+      // What the arrival stages, in both polarities. The delivery event states
+      // its own half (`x ↦ pkt ∈ sentDown ∧ x ↦ pkt ∉ sentUp`); the receive
+      // events downstream of it state the rest. Both are read off guards --
+      // nothing here names sentDown or WiMedium.
+      const need = deliveryRequirementsOf(base);
+      const staged = {
+        // the MERGED model, not `base`: WiMedium and the rest of the medium
+        // state only exist once the packet source's events have been carried,
+        // so asking `base` whether it has them answers no and stages nothing.
+        insert: [...new Set([...need.mustContain,
+          ...arrivalRequirementsOf(model, pModel, receiveEventsOf(base, pModel))])],
+        remove: need.mustNotContain,
+      };
+      tree = installAppReceive(tree, outputName, packetIdentityOf(model, pm),
+        sendUp.method, getterOf(fwdr), staged,
+        // Nothing restores the packet's fields on a receiving node otherwise:
+        // this model's delivery event is the ABSTRACT one. See
+        // deserialiseFieldsOf.
+        deserialiseFieldsOf(base, pm));
+    }
+    // What an ARRIVAL may run: the events a delivery enables -- those that
+    // consume what send_up publishes, and the transmits that carry the result
+    // on. NOT the creating events: an arrival that ran the whole set made every
+    // reception produce another packet, at zero simulated time.
+    const delivery = [...receiveEventsOf(base, pModel), ...transmitEventsOf(base, pModel)];
+    // ⚠ The base model's ABSTRACT versions of what was just carried must stop
+    // being scheduled. Carrying a refinement into a model that still holds the
+    // abstraction leaves the module running two accounts of one story, and the
+    // abstract one wins every race because it says almost nothing -- measured:
+    // the app chain's `receive` fired 57 times on a node where the carried
+    // `receive_controlPkt` fired 0, and filed the packet into `ndBuff`, which is
+    // the very guard the concrete event then failed. See supersededEventsOf.
+    const baseLabels = new Set(base.events.map((e) => e.label));
+    const carriedLabels = model.events.map((e) => e.label).filter((l) => !baseLabels.has(l));
+    const superseded = new Map<string, string>(
+      supersededEventsOf(model, pRaw, pMachine, carriedLabels)
+        .map((l) => [l, "a carried event supersedes it (the packet pattern's own refinement)"] as const));
+    // ⚠ And the delivery event itself, which the ARRIVAL realises.
+    //
+    // It was being reported as `not schedulable: send_up -- no binding for
+    // nbrs`, which reads as a translation gap and is not one: the socket
+    // callback binds `nbrs` to this node and calls the event on every real
+    // reception. The network module already labels its equivalent correctly
+    // ("the simulator's medium realises it"); this is the application's
+    // version of the same fact, and reporting a gap that is not there is the
+    // kind of thing this project treats as a defect in its own right.
+    superseded.set("send_up", "the socket arrival realises it, on a real reception");
+    return installScheduler(tree, model, outputName, pm.fields, superseded, true,
+      carrierSetsOf(raw, pRaw), delivery,
+      "the model's own\n    //  transmit event is the transmit path now");
+  }
+  if (version === 2) {
+    // One model, whichever way this goes: tryNetworkLayer hands back the one it
+    // built, so a model with no network layer is not flattened and encoded twice.
+    const { model, tree } = tryNetworkLayer(raw, target, outputName);
+    return tree ?? emit(model, outputName, version, raw.contexts);
+  }
   // Contexts reach the emitter so v4 can inline the Event-B context block
   // (constants derived from the project's own axioms) instead of #including a
-  // shipped fixture; v1–v3 ignore them.
+  // shipped fixture; v1-v3 ignore them.
   return emit(resolveEncodings(flatten(raw, target)), outputName, version, raw.contexts);
 }
 
@@ -77,8 +272,9 @@ export function generate(files: EbFiles, target: string, outputName: string, ver
 // machine, whose flattened form subsumes the entire refinement chain. Emits
 // exactly three files (<name>.h/.cc/.ned). `outputName` defaults to the leaf's
 // derived name. `version` selects the emitted structure (see EmitVersion).
-export function generateMerged(files: EbFiles, outputName?: string, version: EmitVersion = 3): GeneratedTree {
+export function generateMerged(files: EbFiles, outputName?: string, version: EmitVersion = 2,
+  packetSource?: PacketSource): GeneratedTree {
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
-  return emit(resolveEncodings(flatten(raw, leaf)), outputName ?? defaultName(leaf), version, raw.contexts);
+  return emitOne(raw, leaf, outputName ?? defaultName(leaf), version, packetSource);
 }

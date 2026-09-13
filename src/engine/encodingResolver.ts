@@ -1,4 +1,5 @@
 import type { FlatMachine, EncodedMachine, EncodingForm } from "./types";
+import { esc } from "./text";
 
 export function resolveEncodings(machine: FlatMachine): EncodedMachine {
   const encodings = new Map<string, EncodingForm>();
@@ -28,11 +29,11 @@ function infer(id: string, invariant: string, machine: FlatMachine): EncodingFor
 // ENC4 vs ENC5: a relation is map-of-sets when the machine reads/writes it by a
 // single key — {k}◁id, id(k), or id ≔ id ∪ ({k}×s) — not only by whole pairs.
 function usesKeyAccess(id: string, machine: FlatMachine): boolean {
-  const esc = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escId = esc(id);
   const keyForms = [
-    new RegExp(`◁\\s*${esc}\\b`),                       // {k} ◁ id
-    new RegExp(`\\b${esc}\\s*\\(`),                     // id(k)
-    new RegExp(`\\b${esc}\\s*≔\\s*${esc}\\s*∪\\s*\\(\\{`),  // id ≔ id ∪ ({k}×s)
+    new RegExp(`◁\\s*${escId}\\b`),                       // {k} ◁ id
+    new RegExp(`\\b${escId}\\s*\\(`),                     // id(k)
+    new RegExp(`\\b${escId}\\s*≔\\s*${escId}\\s*∪\\s*\\(\\{`),  // id ≔ id ∪ ({k}×s)
   ];
   for (const ev of machine.events)
     for (const t of [...ev.guards, ...ev.actions])
