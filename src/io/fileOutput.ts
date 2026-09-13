@@ -59,11 +59,20 @@ function readFolderViaInput(): Promise<{ name: string; xml: string }[]> {
         const picked = Array.from(input.files ?? []).filter((f) =>
           /\.(bum|buc)$/.test(f.name),
         );
-        resolve(
+        // ⚠ webkitdirectory yields a RECURSIVE flat FileList and `f.name` is the
+        // basename, so picking a parent folder that holds two projects has the
+        // same collision the zip path has. Same guard, one implementation.
+        // (readFolder's showDirectoryPicker branch walks `dir.entries()`, which
+        // is one level and cannot produce a duplicate name, so it needs none.)
+        resolve(dedupeProjectFiles(
           await Promise.all(
-            picked.map(async (f) => ({ name: f.name, xml: await f.text() })),
+            picked.map(async (f) => ({
+              name: f.name,
+              xml: await f.text(),
+              path: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
+            })),
           ),
-        );
+        ));
       } catch (e) {
         reject(e);
       }
@@ -72,20 +81,59 @@ function readFolderViaInput(): Promise<{ name: string; xml: string }[]> {
   });
 }
 
+// One Rodin file on its way in: `name` is the basename the parser keys on,
+// `path` is where it came from (archive entry or folder-relative path) and is
+// used only to explain a collision.
+interface ProjectFile { name: string; xml: string; path?: string }
+
+// ⚠ A project is read by BASENAME, from anywhere in the archive or folder tree.
+// That is deliberate — a Rodin export nests its files under a project directory,
+// and several nest them one level deeper still. But it means a selection holding
+// TWO projects flattens into one, and any basename they share resolves to
+// whichever the iteration reached last, silently.
+//
+// That is not hypothetical. The 2026-09-13 four-hop simulation result was
+// generated from `MintRoute_3_2_5_9_complete_edited2.deprecated` rather than the
+// maintained `..._complete_amiCheck`, because the packet-source zip was made
+// from the PARENT folder holding both. All 13 of their .bum/.buc basenames
+// collide, "amiCheck" sorts first, and the deprecated copy overwrote it. The
+// output compiled, ran, and produced a plausible result from the wrong model.
+//
+// Identical bytes under two paths are NOT ambiguous — there is nothing to choose
+// between, so one is kept. Keeping both would hand the parser two machines of
+// the same name, which is its own failure.
+export function dedupeProjectFiles(
+  files: readonly ProjectFile[],
+): { name: string; xml: string }[] {
+  const byName = new Map<string, ProjectFile>();
+  for (const f of files) {
+    const seen = byName.get(f.name);
+    if (!seen) { byName.set(f.name, f); continue; }
+    if (seen.xml === f.xml) continue;
+    throw new Error(
+      `This selection holds more than one Rodin project: "${f.name}" appears twice `
+      + `with different contents, at "${seen.path ?? seen.name}" and "${f.path ?? f.name}". `
+      + `A project is read by file name from anywhere in the selection, so the two would be `
+      + `merged and one silently overwritten — you would get a module built from whichever `
+      + `copy happened to come last. Select a single project directory.`);
+  }
+  return [...byName.values()].map(({ name, xml }) => ({ name, xml }));
+}
+
 // Read a zipped Rodin project (the "Pick .zip" button or a drag-and-drop). Pull
 // every .bum/.buc entry from anywhere in the archive and return the same
 // {name (basename), xml} shape as readFolder, so the pipeline downstream is
 // identical regardless of whether the input was a folder or a zip.
 export async function readZip(file: Blob): Promise<{ name: string; xml: string }[]> {
   const zip = await JSZip.loadAsync(file);
-  const files: { name: string; xml: string }[] = [];
+  const files: ProjectFile[] = [];
   for (const entry of Object.values(zip.files)) {
     if (!entry.dir && /\.(bum|buc)$/i.test(entry.name)) {
       const base = entry.name.slice(entry.name.lastIndexOf("/") + 1);
-      files.push({ name: base, xml: await entry.async("string") });
+      files.push({ name: base, xml: await entry.async("string"), path: entry.name });
     }
   }
-  return files;
+  return dedupeProjectFiles(files);
 }
 
 // How the three files reached the user. `zip-fallback` is a zip that was NOT the
