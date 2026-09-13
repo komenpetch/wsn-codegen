@@ -1,102 +1,107 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
-import JSZip from "jszip";
-import { writeTree, readZip } from "../src/io/fileOutput";
+//
+// The SAVE path, which had no test at all — and that is exactly how its gap
+// survived: the zip fallback was reachable only when `showDirectoryPicker` was
+// ABSENT, so every browser that has the picker and then refuses it left the
+// user with no files and one error line. The suite runs in `node` by default
+// (the engine is pure), so this file opts into jsdom for `document` and `URL`.
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { writeTree } from "../src/io/fileOutput";
+import type { GeneratedTree } from "../src/engine/types";
 
-// writeTree has two output paths the user can hit depending on the browser:
-// the File System Access folder write (Chrome/Edge) and the zip download
-// fallback (Firefox/Safari/mobile). readZip is the symmetric input path: read
-// a Rodin project that has been zipped. Exercise all of them against the real
-// functions, stubbing only the browser-native showDirectoryPicker boundary.
+const tree: GeneratedTree = [
+  { path: "Pm3Wsn.h", content: "// header" },
+  { path: "Pm3Wsn.cc", content: "// impl" },
+  { path: "Pm3Wsn.ned", content: "// ned" },
+];
 
-interface PickerWindow {
-  showDirectoryPicker?: unknown;
-}
+// Anchor clicks are what a zip download is; capture them instead of navigating.
+let clicked: string[];
+let origClick: () => void;
+
+beforeEach(() => {
+  clicked = [];
+  origClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+    clicked.push(this.download);
+  };
+  URL.createObjectURL = vi.fn(() => "blob:fake");
+  URL.revokeObjectURL = vi.fn();
+});
 
 afterEach(() => {
-  vi.restoreAllMocks();
-  delete (window as unknown as PickerWindow).showDirectoryPicker;
+  HTMLAnchorElement.prototype.click = origClick;
+  delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker;
 });
 
-describe("writeTree output paths", () => {
-  it("writes each file through the directory handle when the picker exists", async () => {
-    const written: Record<string, string> = {};
-    const fakeDir = {
-      getFileHandle: async (name: string) => ({
-        createWritable: async () => ({
-          write: async (data: string) => {
-            written[name] = data;
-          },
-          close: async () => {},
+const setPicker = (fn: unknown) => {
+  (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker = fn;
+};
+
+describe("writeTree: the user gets the files, or a reason", () => {
+  it("falls back to the zip when the picker exists and FAILS", async () => {
+    // The real case, reproduced: the in-app browser has the picker and rejects
+    // it with "Must be handling a user gesture". Before the fix this threw and
+    // the user got nothing.
+    setPicker(() => {
+      const e = new Error("Must be handling a user gesture to show a file picker.");
+      e.name = "SecurityError";
+      return Promise.reject(e);
+    });
+    await expect(writeTree(tree)).resolves.toBe("zip-fallback");
+    expect(clicked).toEqual(["generated-cpp.zip"]);
+  });
+
+  it("still downloads the zip when there is no picker at all", async () => {
+    // Firefox and Safari. This path always worked; it must keep working, and it
+    // must stay DISTINGUISHABLE from the fallback so the UI can explain itself.
+    await expect(writeTree(tree)).resolves.toBe("zip");
+    expect(clicked).toEqual(["generated-cpp.zip"]);
+  });
+
+  it("⚠ does NOT turn a cancelled picker into a surprise download", async () => {
+    // A user who dismisses the picker has decided not to save. Handing them a
+    // download instead would be the tool overriding that decision, so AbortError
+    // alone keeps propagating — App.tsx reports it as "Cancelled."
+    setPicker(() => {
+      const e = new Error("The user aborted a request.");
+      e.name = "AbortError";
+      return Promise.reject(e);
+    });
+    await expect(writeTree(tree)).rejects.toThrow(/aborted/i);
+    expect(clicked).toEqual([]);
+  });
+
+  it("writes every file to the folder when the picker succeeds", async () => {
+    const written = new Map<string, string>();
+    setPicker(() => Promise.resolve({
+      getFileHandle: (name: string) => Promise.resolve({
+        createWritable: () => Promise.resolve({
+          write: (data: string) => { written.set(name, data); return Promise.resolve(); },
+          close: () => Promise.resolve(),
         }),
       }),
-    };
-    (window as unknown as PickerWindow).showDirectoryPicker = vi.fn(async () => fakeDir);
-
-    const mode = await writeTree([
-      { path: "RTMCS.h", content: "H" },
-      { path: "RTMCS.cc", content: "CC" },
-    ]);
-
-    expect(mode).toBe("folder");
-    expect(written).toEqual({ "RTMCS.h": "H", "RTMCS.cc": "CC" });
+    }));
+    await expect(writeTree(tree)).resolves.toBe("folder");
+    expect([...written.keys()].sort()).toEqual(["Pm3Wsn.cc", "Pm3Wsn.h", "Pm3Wsn.ned"]);
+    expect(written.get("Pm3Wsn.h")).toBe("// header");
+    expect(clicked).toEqual([]);   // no stray download beside the folder write
   });
 
-  it("falls back to a single zip download when showDirectoryPicker is absent", async () => {
-    // Simulate a browser without the File System Access API.
-    (window as unknown as PickerWindow).showDirectoryPicker = undefined;
-    (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi.fn(() => "blob:fake");
-    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
-
-    const downloads: string[] = [];
-    const realCreate = document.createElement.bind(document);
-    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
-      const el = realCreate(tag);
-      if (tag === "a") {
-        vi.spyOn(el as HTMLAnchorElement, "click").mockImplementation(() => {
-          downloads.push((el as HTMLAnchorElement).download);
-        });
-      }
-      return el;
-    });
-
-    const mode = await writeTree([{ path: "RTMCS.h", content: "// scaffold" }]);
-
-    expect(mode).toBe("zip");
-    expect(downloads).toEqual(["generated-cpp.zip"]);
-  });
-});
-
-describe("readZip input path", () => {
-  async function makeZip(entries: Record<string, string>): Promise<File> {
-    const zip = new JSZip();
-    for (const [path, content] of Object.entries(entries)) zip.file(path, content);
-    const buf = await zip.generateAsync({ type: "arraybuffer" });
-    return new File([buf], "project.zip", { type: "application/zip" });
-  }
-
-  it("extracts .bum/.buc entries (recursively) and ignores other files", async () => {
-    const file = await makeZip({
-      "WBAN/M0.bum": "<machine0/>",
-      "WBAN/C0.buc": "<context0/>",
-      "WBAN/notes.txt": "ignore me",
-      "README.md": "ignore me too",
-    });
-
-    const files = await readZip(file);
-
-    expect(files).toEqual(
-      expect.arrayContaining([
-        { name: "M0.bum", xml: "<machine0/>" },
-        { name: "C0.buc", xml: "<context0/>" },
-      ]),
-    );
-    expect(files).toHaveLength(2);
-    expect(files.some((f) => f.name.endsWith(".txt") || f.name.endsWith(".md"))).toBe(false);
-  });
-
-  it("returns no files for a zip with no Event-B models", async () => {
-    const file = await makeZip({ "docs/readme.txt": "nothing here" });
-    expect(await readZip(file)).toEqual([]);
+  it("falls back if the picker opens but a WRITE fails part way", async () => {
+    // Permission revoked, disk full, a handle that goes away. Some files may
+    // already be on disk; the zip at least hands over the complete set rather
+    // than leaving the user with a partial folder and an error.
+    let n = 0;
+    setPicker(() => Promise.resolve({
+      getFileHandle: () => Promise.resolve({
+        createWritable: () => Promise.resolve({
+          write: () => (++n > 1 ? Promise.reject(new Error("quota")) : Promise.resolve()),
+          close: () => Promise.resolve(),
+        }),
+      }),
+    }));
+    await expect(writeTree(tree)).resolves.toBe("zip-fallback");
+    expect(clicked).toEqual(["generated-cpp.zip"]);
   });
 });

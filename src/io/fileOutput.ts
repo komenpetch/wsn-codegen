@@ -88,17 +88,12 @@ export async function readZip(file: Blob): Promise<{ name: string; xml: string }
   return files;
 }
 
-export async function writeTree(tree: GeneratedTree): Promise<"folder" | "zip"> {
-  if (fsWindow.showDirectoryPicker) {
-    const dir = await fsWindow.showDirectoryPicker({ mode: "readwrite" });
-    for (const f of tree) {
-      const handle = await dir.getFileHandle(f.path, { create: true });
-      const w = await handle.createWritable();
-      await w.write(f.content);
-      await w.close();
-    }
-    return "folder";
-  }
+// How the three files reached the user. `zip-fallback` is a zip that was NOT the
+// first choice: the directory picker existed and failed, so the caller should say
+// so rather than reporting a plain download.
+export type WriteOutcome = "folder" | "zip" | "zip-fallback";
+
+async function downloadZip(tree: GeneratedTree): Promise<void> {
   const zip = new JSZip();
   for (const f of tree) zip.file(f.path, f.content);
   const blob = await zip.generateAsync({ type: "blob" });
@@ -108,5 +103,39 @@ export async function writeTree(tree: GeneratedTree): Promise<"folder" | "zip"> 
   a.download = "generated-cpp.zip";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function writeTree(tree: GeneratedTree): Promise<WriteOutcome> {
+  // ⚠ The zip used to be reachable ONLY when showDirectoryPicker was absent, so
+  // a browser that HAS the picker and then refuses it left the user with
+  // nothing at all: no folder, no zip, one error line, and a generation they
+  // would have to run again. Measured in the in-app browser, where the picker
+  // exists and rejects with "Must be handling a user gesture". Firefox and
+  // Safari were never exposed — they have no picker and always took the zip.
+  //
+  // This is the same shape as the 2026-07-21 defect where the shipped path
+  // differed from the tested one: the fallback existed and the failing case
+  // could not reach it.
+  if (fsWindow.showDirectoryPicker) {
+    try {
+      const dir = await fsWindow.showDirectoryPicker({ mode: "readwrite" });
+      for (const f of tree) {
+        const handle = await dir.getFileHandle(f.path, { create: true });
+        const w = await handle.createWritable();
+        await w.write(f.content);
+        await w.close();
+      }
+      return "folder";
+    } catch (e) {
+      // ⚠ A CANCELLED picker is a decision, not a failure. Turning it into a
+      // surprise download would hand the user a file they just declined to
+      // save, so AbortError alone keeps propagating — App.tsx reports it as
+      // "Cancelled." Everything else falls through to the zip.
+      if ((e as Error).name === "AbortError") throw e;
+      await downloadZip(tree);
+      return "zip-fallback";
+    }
+  }
+  await downloadZip(tree);
   return "zip";
 }
