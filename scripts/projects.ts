@@ -26,6 +26,14 @@ export const PROJECTS: Record<string, string> = {
 export const projectDir = (project: string): string =>
   resolve(ROOT, PROJECTS[project] ?? project);
 
+// Is a case study's source actually on this machine?
+//
+// ⚠ The models are the advisor's and are deliberately NOT published in this
+// repo, so on a clean checkout — CI, or anyone who clones it — they are absent.
+// Tests that read one must skip rather than fail, and vitest reports a skip
+// count, so the gap stays visible instead of passing quietly.
+export const hasProject = (project: string): boolean => existsSync(projectDir(project));
+
 // Read a project's Rodin files. Both .bum and .buc — the contexts carry the
 // axioms the emitted Event-B context block is derived from.
 export function loadProject(project: string): EbFiles {
