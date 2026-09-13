@@ -3,6 +3,7 @@ import { splitConjuncts } from "./ruleEngine";
 import type { PacketField } from "./packetModel";
 import { getterOf } from "./packetModel";
 import { nestedMapVars } from "./nestedMap";
+import { pairKeyedVars } from "./pairKeyed";
 import { emittedMethods, splitParams, implOf, unreachableEvents } from "./emitted";
 
 // A generic event scheduler.
@@ -81,7 +82,10 @@ function signatures(cc: string, cls: string): Map<string, { params: Param[]; met
 }
 
 function planFor(label: string, params: Param[], guards: string[], carriers: Set<string>,
-  enc: (id: string) => string | undefined, nestedVars: Set<string>, pktField: Map<string, string>): Plan {
+  enc: (id: string) => string | undefined, nestedVars: Set<string>, pktField: Map<string, string>,
+  // Variables whose key is a MAPLET, not a scalar -- the two binding cases
+  // below read them as `f.at({a, b})`.
+  pairKeyed: Set<string>): Plan {
   const clauses = guards.flatMap((g) => splitConjuncts(g));
   const lines: string[] = [];
   const rollback: string[] = [];
@@ -128,8 +132,34 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
     }
     return undefined;
   };
+  // ⚠ A `∉` guard alone does NOT mean the event creates the packet. Every
+  // event that takes a packet the node ALREADY HOLDS also says what must not
+  // be true of it -- MintRoute's `final_tx_controlPkt` guards
+  // `pkt ∈ middleware` and `pkt ∉ sensedPkts` together, and reading only the
+  // second minted a brand-new ROUTE packet every tick for an event whose whole
+  // job is to retire one that exists. That also fooled the reachability pass
+  // into scheduling `start_tx_routePkt`, because a minted-and-stamped packet
+  // looks exactly like a produced one.
+  //
+  // So a positive membership naming the parameter settles it: in a set, in a
+  // pair, in a function's domain -- whichever spelling, the model is saying the
+  // packet is already there. Membership in a CARRIER set is excluded, because
+  // that clause is the parameter's TYPE and every parameter has one.
+  const existsAlready = (p: string) => clauses.some((c) => {
+    const t = c.trim();
+    if (t.includes("∉")) return false;
+    const m = /^([^∈]*)∈\s*(.*)$/.exec(t);
+    if (!m) return false;
+    // p must be a MEMBER of the left side, not an argument inside it.
+    // `type(pkt) ∈ CONTROL` says what kind of packet this is, not that it
+    // exists -- reading it as existence retired `create_bconPkt` and took the
+    // whole flood with it, which is how this narrowing was found.
+    const lhs = m[1].replace(/\w+\s*\([^)]*\)/g, " ");
+    if (!new RegExp(`\\b${p}\\b`).test(lhs)) return false;
+    return !(lhs.trim() === p && carriers.has(m[2].trim()));
+  });
   const isFresh = (p: string) =>
-    clauses.some((c) => new RegExp(`^${p}\\s*∉`).test(c.trim()));
+    clauses.some((c) => new RegExp(`^${p}\\s*∉`).test(c.trim())) && !existsAlready(p);
 
   let progress = true;
   while (progress && resolved.size < params.length) {
@@ -163,6 +193,35 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
           lines.push(`    if (${f}.count(${x}) == 0) ${bail()}`);
           lines.push(`    ${par.cppType} ${p} = ${f}.at(${x})${arith};`);
         }
+        resolved.add(p); progress = true; continue;
+      }
+      // determined: p = f(a ↦ b) -- a PAIR-KEYED function read. The key is a
+      // maplet, so `p = f(x)` above cannot match it: that pattern allows one
+      // \w+ inside the parens and this has two plus the glyph.
+      const pk2 = clauses.map((c) =>
+        new RegExp(`^${p}\\s*=\\s*(\\w+)\\(\\s*(\\w+)\\s*↦\\s*(\\w+)\\s*\\)$`).exec(c.trim())
+      ).find(Boolean);
+      if (pk2 && pairKeyed.has(pk2[1]) && known(pk2[2]) && known(pk2[3])) {
+        const [, f, a, b] = pk2;
+        lines.push(`    if (${f}.count({${a}, ${b}}) == 0) ${bail()}`);
+        lines.push(`    ${par.cppType} ${p} = ${f}.at({${a}, ${b}});`);
+        resolved.add(p); progress = true; continue;
+      }
+      // determined: p = q − f(a ↦ b) − n
+      //
+      // This one shape is what unblocks the repeating flood. `update_nbr` binds
+      //     delta = sNo − lastSeqno(y ↦ x) − 1
+      // and without it the event is unschedulable, so nothing ever removes a
+      // pair from `updateNbrs` and every node accepts one packet per forwarder
+      // for ever. It is INET MintRoute's `sDelta = seqNo - nbr.lastSeqno - 1`.
+      const pkd = clauses.map((c) =>
+        new RegExp(`^${p}\\s*=\\s*(\\w+)\\s*(?:−|-)\\s*(\\w+)\\(\\s*(\\w+)\\s*↦\\s*(\\w+)\\s*\\)`
+          + `(?:\\s*(?:−|-)\\s*(\\d+))?$`).exec(c.trim())
+      ).find(Boolean);
+      if (pkd && pairKeyed.has(pkd[2]) && known(pkd[1]) && known(pkd[3]) && known(pkd[4])) {
+        const [, q, f, a, b, n] = pkd;
+        lines.push(`    if (${f}.count({${a}, ${b}}) == 0) ${bail()}`);
+        lines.push(`    ${par.cppType} ${p} = ${q} - ${f}.at({${a}, ${b}})${n ? ` - ${n}` : ""};`);
         resolved.add(p); progress = true; continue;
       }
       // determined: p = R[{x}] -- a relational image. Set-valued, but still
@@ -361,7 +420,9 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
   deliveryLabels: readonly string[] = [],
   // Events that genuinely never execute -- NOT the same as `notScheduled`,
   // which also holds send_up, an event the arrival calls on every reception.
-  neverRuns: ReadonlySet<string> = new Set()): { decls: string; defs: string } {
+  neverRuns: ReadonlySet<string> = new Set(),
+  // Events the ARRIVAL runs inline instead of the timer scheduling them.
+  arrivalEvents: readonly string[] = []): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -375,6 +436,9 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
   // compile. No current model has the guard shape that reaches it, so nothing
   // was broken -- the point is that the two answers have to be the same answer.
   const nestedVars = new Set(nestedMapVars(model).map((v) => v.name));
+  // Derived here rather than plumbed through installScheduler: the model is
+  // already in hand and pairKeyedVars reads it directly.
+  const pairKeyed = new Set(pairKeyedVars(model).map((v) => v.name));
   const sigs = signatures(cc, cls);
   // The model's own carrier sets, passed in from the contexts. This used to be
   // `Object.keys(CARRIER_ALIAS)` -- the three names that happen to need a C++
@@ -395,7 +459,7 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     if (notScheduled.has(ev.label)) continue;
     const sig = sigs.get(ev.label);
     if (!sig) continue;                          // not emitted as a bool method
-    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField);
+    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField, pairKeyed);
     plan.method = sig.method;
     plans.push(plan);
   }
@@ -422,21 +486,48 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     // BEACON packet", which is exactly what it does.
     new Map(schedulable.filter((p) => p.stamps).map((p) => [p.label, p.stamps!])));
   const firable = schedulable.filter((p) => !unreachable.has(p.label));
+  // ⚠ Some events are not SCHEDULED at all -- they are run inline on the
+  // arrival, because a reception is the only thing that enables them.
+  //
+  // The hand-written MintRoute settles the shape: it calls updateNbrCounters()
+  // at the top of onReceiveBeaconPkt, so the neighbour counters are updated by
+  // the reception itself, never searched for by a timer. The model says the
+  // same thing as events that DRAIN what the receive events fill, and giving
+  // those a try_ method puts a second, timer-driven account of one reception
+  // into the module. So they are emitted where the reception is handled, and
+  // there is one place a reception is accounted for.
+  const inlined = new Set(arrivalEvents.filter((l) => firable.some((p) => p.label === l)));
+  const scheduled = firable.filter((p) => !inlined.has(p.label));
   const defs: string[] = [];
-  for (const p of firable) {
-    const loops = p.lines.filter((l) => l.trim().startsWith("for (")).length;
-    const call = `${p.method ?? p.label}(${p.params.map((x) => x.name).join(", ")})`;
+  const closers = (p: Plan) => Array(p.lines.filter((l) => l.trim().startsWith("for (")).length);
+  const callOf = (p: Plan) => `${p.method ?? p.label}(${p.params.map((x) => x.name).join(", ")})`;
+  for (const p of scheduled) {
     const body = [
       ...p.lines,
-      `    if (${call}) { firedCount["${p.label}"]++; return true; }`,
+      `    if (${callOf(p)}) { firedCount["${p.label}"]++; return true; }`,
       ...(p.rollback.length ? p.rollback : []),
-      ...Array(loops).fill("    }"),
+      ...closers(p).fill("    }"),
       "    return false;",
     ];
     defs.push(`bool ${cls}::try_${p.label}()\n{\n${body.join("\n")}\n}`);
   }
 
-  const runBody = firable.map((p) => `    if (try_${p.label}()) fired = true;`).join("\n");
+  // The same body, at the arrival, with no method to name it. The lambda is
+  // scoping only: the binding loops exit early (an event that fires erases the
+  // very pair the loop is walking), and a bare `return` here would abandon the
+  // rest of the arrival.
+  const inlineAt = (p: Plan) => [
+    `    // ${p.label} -- run by the reception, not by the timer.`,
+    "    if ([&]() -> bool {",
+    ...p.lines.map((l) => `    ${l}`),
+    `        if (${callOf(p)}) { firedCount["${p.label}"]++; return true; }`,
+    ...p.rollback.map((l) => `    ${l}`),
+    ...closers(p).fill("        }"),
+    "        return false;",
+    "    }()) fired = true;",
+  ].join("\n");
+
+  const runBody = scheduled.map((p) => `    if (try_${p.label}()) fired = true;`).join("\n");
   defs.push(
     `// One round of the Event-B operational semantics: attempt every event whose\n` +
     `// parameters this scheduler can bind, in declaration order, and report\n` +
@@ -456,12 +547,17 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
   //
   // Derived, not listed: the receive events come from what send_up publishes,
   // the transmit events from what send_down observes.
-  if (deliveryLabels.length > 0) {
-    const usable = deliveryLabels.filter((l) => firable.some((p) => p.label === l));
+  if (deliveryLabels.length > 0 || inlined.size > 0) {
+    const usable = deliveryLabels.filter((l) => scheduled.some((p) => p.label === l));
     defs.push(
       "// The events a DELIVERY enables -- the subset an arrival may run.\n" +
       `bool ${cls}::runDeliveryEvents()\n{\n    bool fired = false;\n` +
       usable.map((l) => `    if (try_${l}()) fired = true;`).join("\n") +
+      // ⚠ After the receive events, never before: they are what fills the
+      // state these drain, so running them first would find nothing.
+      (inlined.size
+        ? "\n" + firable.filter((p) => inlined.has(p.label)).map(inlineAt).join("\n")
+        : "") +
       "\n    return fired;\n}",
     );
   }
@@ -472,7 +568,10 @@ export function emitScheduler(model: EncodedMachine, cls: string, cc: string, fi
     "    // unmeasurable: a green 60s and a plausible packet count say nothing",
     "    // about whether the MODEL executed, which is the only thing under test.",
     "    std::map<std::string, long> firedCount;",
-    ...firable.map((p) => `    bool try_${p.label}();`),
+    ...scheduled.map((p) => `    bool try_${p.label}();`),
+    ...[...inlined].map((l) =>
+      `    // not scheduled: ${l} -- the reception runs it, inline in` +
+      ` runDeliveryEvents()`),
     ...skippedPlans.map((p) => `    // not schedulable: ${p.label} -- ${p.why}`),
     ...[...unreachable].map(([label, why]) =>
       `    // not scheduled: ${label} -- ${why}`),
@@ -504,10 +603,12 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // Events that genuinely never execute. `notScheduled` is NOT this set: it also
   // holds send_up, which the arrival calls on every reception and which fills
   // ctlNeighbours -- masking it would make receive_controlPkt look unreachable.
-  neverRuns: ReadonlySet<string> = new Set()): GeneratedTree {
+  neverRuns: ReadonlySet<string> = new Set(),
+  // Events the ARRIVAL runs inline -- see emitScheduler.
+  arrivalEvents: readonly string[] = []): GeneratedTree {
   const ccFile = implOf(tree);
   if (!ccFile) return tree;
-  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets, deliveryLabels, neverRuns);
+  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets, deliveryLabels, neverRuns, arrivalEvents);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

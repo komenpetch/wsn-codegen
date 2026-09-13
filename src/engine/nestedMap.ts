@@ -24,7 +24,9 @@ import { esc } from "./text";
 
 // Event-B type token -> the C++ type a declaration uses.
 export const ALIAS: Record<string, string> = { ND: "Node", PKT: "PktId", "ℤ": "Data", BOOL: "bool" };
-const alias = (t: string) => ALIAS[t] ?? "int";
+// Exported because pairKeyed.ts asks the same question -- what C++ type does
+// this Event-B carrier become -- and a second copy is how the two answers drift.
+export const alias = (t: string) => ALIAS[t] ?? "int";
 const re = (p: RegExp) => (expr: string): RuleMatch | null => {
   const g = p.exec(expr.trim());
   return g ? { captures: g.groups ?? {} } : null;

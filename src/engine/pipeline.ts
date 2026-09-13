@@ -8,7 +8,7 @@ import { installScheduler } from "./scheduler";
 import { bindNodeIdentity } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
-import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
+import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { packetIdentityOf } from "./mediumBinding";
 import { getterOf } from "./packetModel";
@@ -187,6 +187,11 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // emitted and never constructed -- see packetOps.ts for what this costs.
     const pModel = resolveEncodings(flatten(pRaw, pMachine));
     const base = resolveEncodings(flatten(raw, target));
+    // Read BEFORE anything is carried, because every "which events did we
+    // carry" question below is answered as "not in this set" -- and `model`
+    // grows with each carry, so asking it later would answer a different
+    // question each time.
+    const baseLabels = new Set(base.events.map((e) => e.label));
     // Creating events, then the TRANSMIT events -- the ones whose actions feed
     // the variable this model's own `send_down` observes. Derived, not named:
     // see transmitEventsOf.
@@ -201,6 +206,14 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // events in MintRoute's machine, i.e. the whole protocol.
     const carriedSoFar = model.events.map((e) => e.label);
     model = carryEvents(model, pModel, enablingEventsOf(model, pModel, carriedSoFar));
+    // ⚠ And the events that DRAIN what the carried ones only ever fill. Without
+    // this the carried receive events add to `updateNbrs` and nothing removes
+    // from it, so each node accepts one packet per forwarder for ever and the
+    // flood fires once per run instead of once per beacon. See drainEventsOf.
+    const carriedWithEnabling = model.events.map((e) => e.label)
+      .filter((l) => !baseLabels.has(l));
+    const drainLabels = drainEventsOf(model, pModel, carriedWithEnabling);
+    model = carryEvents(model, pModel, drainLabels);
     const mergedRaw = { ...raw, contexts: mergeContexts(raw.contexts, pRaw.contexts) };
     // The same two encoding fixes the network branch applies, and for the same
     // reason: encodingResolver's infer() silently defaults an unrecognised type
@@ -303,7 +316,6 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // the app chain's `receive` fired 57 times on a node where the carried
     // `receive_controlPkt` fired 0, and filed the packet into `ndBuff`, which is
     // the very guard the concrete event then failed. See supersededEventsOf.
-    const baseLabels = new Set(base.events.map((e) => e.label));
     const carriedLabels = model.events.map((e) => e.label).filter((l) => !baseLabels.has(l));
     const superseded = new Map<string, string>(
       supersededEventsOf(model, pRaw, pMachine, carriedLabels)
@@ -326,7 +338,14 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     superseded.set("send_up", "the socket arrival realises it, on a real reception");
     return installScheduler(tree, model, outputName, pm.fields, superseded, true,
       carrierSetsOf(raw, pRaw), delivery,
-      "the model's own\n    //  transmit event is the transmit path now", neverRuns);
+      "the model's own\n    //  transmit event is the transmit path now", neverRuns,
+      // ⚠ The drain events run ON THE ARRIVAL, not on the timer. They undo what
+      // a reception does, so a reception is the only thing that enables them --
+      // and the hand-written MintRoute is built exactly this way: its
+      // updateNbrCounters() is called at the top of onReceiveBeaconPkt, never
+      // from a timer. Scheduling them instead would give the module a second,
+      // timer-driven account of one reception.
+      drainLabels);
   }
   if (version === 2) {
     // One model, whichever way this goes: tryNetworkLayer hands back the one it

@@ -102,15 +102,17 @@ describe("generate (network branch) for MintRoute M4", () => {
   // bare scalar against a literal, ARITH-CMP-LIT) and the per-key chunk write
   // `netSeqNo(pkt) ≔ lsno` (PKT-SET-KEY).
   //
-  // ⚠ It briefly read 34, with the pair-keyed function encoding wired in. That
-  // is PRouteTable scope and was PARKED on a scope ruling the same day --
-  // docs/findings/netlayer/2026-09-13-pair-keyed-functions-PARKED.md has the
-  // design, the measurements and the four wiring points. The 44 clauses it
-  // translates are still untranslated here, deliberately.
+  // 2026-09-14: 78 -> 34, the pair-keyed function encoding UN-PARKED. The 44
+  // clauses are the ones keyed by a maplet -- `lastSeqno(y ↦ x)` and the five
+  // others over `neighbourTbl` -- which the generic function rule could only
+  // refuse, since `std::map<Node, T>` has nowhere to put a pair. 34 is the
+  // figure the parked design measured before it was parked, reached again from
+  // the module it kept verbatim, which is the check that it was re-applied
+  // rather than re-derived into something else.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(78);
+    expect(after).toBe(34);
   });
 
   it("keeps the flooding events translatable", () => {
@@ -360,6 +362,70 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // A dropped event states its reason, like every other exclusion.
     expect(h).toMatch(/not scheduled: create_routePkt -- .*bcastRouTimer/);
     expect(h).toMatch(/not scheduled: dest_recv_pkt -- .*recvBuff/);
+  });
+
+  it("runs the drain events on the arrival, not on the timer", () => {
+    // The hand-written MintRoute calls updateNbrCounters() at the top of
+    // onReceiveBeaconPkt -- the neighbour counters are updated BY the reception.
+    // The model says the same thing as `add_newEntry` / `update_nbr`, the events
+    // that drain what the receive events fill, so they are emitted at the
+    // arrival. Giving them try_ methods would put a second, timer-driven
+    // account of one reception into the module.
+    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+      { files: loadProject("MintRoute"), machine: "M4" });
+    const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
+    const body = (fn: string) =>
+      cc.slice(cc.indexOf(`bool Pm3Wsn::${fn}()`)).split("\n}")[0];
+
+    for (const drain of ["add_newEntry", "update_nbr"]) {
+      expect(cc).not.toContain(`bool Pm3Wsn::try_${drain}(`);
+      expect(body("runDeliveryEvents")).toContain(`${drain}(`);
+      expect(body("runEnabledEvents")).not.toContain(drain);
+    }
+    // ⚠ And after the receive events, never before: they are what fills the
+    // state the drains consume.
+    const d = body("runDeliveryEvents");
+    expect(d.indexOf("receive_controlPkt")).toBeLessThan(d.indexOf("update_nbr"));
+  });
+
+  it("mints a packet only for an event that creates one", () => {
+    // ⚠ A `∉` guard alone does not mean "this event creates the packet".
+    // `final_tx_controlPkt` guards `pkt ∈ middleware` AND `pkt ∉ sensedPkts`,
+    // and reading only the second minted a fresh ROUTE packet every tick for an
+    // event whose job is to retire one that exists -- which then fooled the
+    // reachability pass into scheduling start_tx_routePkt, because a minted and
+    // stamped packet looks exactly like a produced one.
+    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+      { files: loadProject("MintRoute"), machine: "M4" });
+    const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
+    for (const m of cc.matchAll(/bool Pm3Wsn::try_(\w+)\(\)\n\{([\s\S]*?)\n\}/g))
+      if (m[2].includes("newPktId()")) expect(m[1]).toMatch(/^create_/);
+    // ⚠ And the arrival mints nothing at all. The drain events are emitted
+    // inline there rather than as try_ methods, so scanning only try_ methods
+    // would have missed final_tx_controlPkt -- the event this narrowing is
+    // about. A reception that creates a packet is the zero-time loop.
+    expect(cc.slice(cc.indexOf("bool Pm3Wsn::runDeliveryEvents()")).split("\n}")[0])
+      .not.toContain("newPktId()");
+    // The creating events must still mint -- the narrowing above retired
+    // create_bconPkt once, and took the whole flood with it.
+    expect(cc).toContain("bool Pm3Wsn::try_create_bconPkt()");
+    expect(cc.slice(cc.indexOf("bool Pm3Wsn::try_create_bconPkt()")))
+      .toContain("newPktId()");
+  });
+
+  it("answers a maplet over a packet field from the chunk", () => {
+    // `pkt ↦ x ∈ pktFwdr` is a function's graph tested by maplet membership,
+    // which is legal Event-B because a function IS its graph. Refusing it left
+    // update_nbr schedulable and permanently declining, so `updateNbrs` was
+    // never drained and each node accepted one packet per forwarder for ever.
+    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+      { files: loadProject("MintRoute"), machine: "M4" });
+    const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
+    const upd = cc.slice(cc.indexOf("bool Pm3Wsn::update_nbr(")).split("\n}")[0];
+    expect(upd).toContain("getFwdrAddr() ==");
+    expect(upd).not.toContain("UNTRANSLATED");
+    // It reaches its actions, which is the whole point: the erase is the drain.
+    expect(upd).toContain("updateNbrs.erase(");
   });
 
   it("still accepts the coherent pairing", () => {

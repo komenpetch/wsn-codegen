@@ -24,6 +24,7 @@ import { miscRules } from "./miscRules";
 import { scalarRules } from "./scalarRules";
 import { composedRules } from "./composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "./nestedMap";
+import { pairKeyedVars, pairKeyedRules, fixPairKeyedDeclarations } from "./pairKeyed";
 import { installScheduler } from "./scheduler";
 import { bindNodeIdentity } from "./nodeIdentity";
 import { installNetProtocolShell, renameCommPatternPair } from "./netProtocolShell";
@@ -59,7 +60,14 @@ export function emitWithPacketClasses(
   // Composition is installed for the duration of this generation only, so the
   // app-layer catalog module is never mutated for other callers.
   const nested = nestedMapVars(model);
-  const composed = composeRules([...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
+  const pairKeyed = pairKeyedVars(model);
+  // ⚠ pairKeyedRules FIRST, and rule order here is BEHAVIOUR, not style. With
+  // them last, SETEXPR-PAIR-MEM claims `y ↦ x ∈ dom(sentEst)` and emits "" --
+  // the deliberate intercept-and-refuse technique -- so update_route stayed
+  // untranslated even though PK-DOM matched the clause in isolation. That cost
+  // a debugging round the first time this was built.
+  const composed = composeRules([...pairKeyedRules(pairKeyed, model),
+    ...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
     ...scalarRules(), ...composedRules(carriers), ...nestedMapRules(nested), ...imageRules()]);
   let tree = withRules(composed, () => emit(model, name, 2, raw.contexts));
 
@@ -76,6 +84,11 @@ export function emitWithPacketClasses(
   tree = fixNonLeafSetConstants(tree, pm.lattice);
   tree = fixSetTypedParameters(tree, name);
   tree = fixNestedMapDeclarations(tree, nested);
+  // ⚠ The encoding resolver calls a pair-keyed function an ordinary function
+  // and declares `std::map<int, T>` -- a key of the wrong ARITY, on six
+  // variables per case study. Nothing caught it because every clause using one
+  // was `// UNTRANSLATED`; translating them is what makes the declaration matter.
+  tree = fixPairKeyedDeclarations(tree, pairKeyed);
   tree = insertPacketRegistry(tree);
   tree = insertImageHelper(tree);
   return tree;

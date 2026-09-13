@@ -235,6 +235,73 @@ export function carryEvents(base: EncodedMachine, source: EncodedMachine,
 // Guards of the form `f(x) = V` on a carried variable whose initialisation gives
 // something else; the enabler is a source event that assigns f the value V.
 // Nothing is transitive, and nothing matches on a name.
+// Events that DRAIN a work queue the carried ones only ever fill.
+//
+// ⚠ This is what makes a carried flood repeat instead of firing once. Three
+// carried receive events add `f ↦ nb` to `updateNbrs`, and `receive_controlPkt`
+// guards `f ↦ nb ∉ updateNbrs` -- so once a node has heard from a forwarder it
+// can never hear from it again. In the packet source the release exists
+// (`update_nbr`: `updateNbrs ≔ updateNbrs ∖ {x ↦ y}`, which is INET
+// MintRoute's `updateNbrCounters` clause for clause), but it is neither a
+// creating, transmit, receive nor enabling event, so nothing carried it.
+// Measured before this: the guard rejected 652 of 681 attempts in 30 s.
+//
+// The condition is exact and bounded: a variable qualifies only when something
+// CARRIED adds to it and NOTHING carried removes from it. That selects
+// `updateNbrs` and leaves out `ndBuff`, which the carried transmit events
+// drain.
+//
+// ⚠ `floodTbl` is added to and never removed either, and is correctly NOT
+// carried for -- not by a special case, but because the search below finds no
+// event that processes it. It is the flood's permanent seen-set; there is no
+// release to carry.
+//
+// ⚠ AND "REMOVES FROM IT" IS NOT THE TEST. `add_newEntry` only READS the
+// queue, yet it is the sole writer of `neighbourTbl` and of the initial
+// `lastSeqno(y ↦ x) = 0` that both removers guard on; carrying the removers
+// without it leaves them unable to fire. The rule is "mentions the queue",
+// which is "processes" it, and on MintRoute it selects exactly three events.
+export function drainEventsOf(model: EncodedMachine, source: EncodedMachine,
+  carriedLabels: readonly string[]): string[] {
+  const carried = new Set(carriedLabels);
+  const adds = (c: string, v: string) =>
+    new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∪`).test(c);
+  const removes = (c: string, v: string) =>
+    new RegExp(`^\\s*${v}\\s*≔\\s*${v}\\s*∖`).test(c);
+
+  // Variables the carried events fill and never empty.
+  const filled = new Set<string>();
+  const drained = new Set<string>();
+  for (const ev of model.events) {
+    if (ev.label === INITIALISATION || !carried.has(ev.label)) continue;
+    for (const v of model.variables) {
+      if (ev.actions.some((a) => adds(a, v))) filled.add(v);
+      if (ev.actions.some((a) => removes(a, v))) drained.add(v);
+    }
+  }
+  const blocked = [...filled].filter((v) => !drained.has(v));
+  if (blocked.length === 0) return [];
+
+  // Whatever in the SOURCE processes one of those queues and is not already on
+  // its way across.
+  //
+  // ⚠ "Already there" is the MERGED model's labels, not just the carried ones.
+  // The two projects are refinements of one pattern, so they share event names:
+  // `send_down` and `finish_tx_pkt` exist in both, and asking only about the
+  // carried list called the BASE model's own events drains -- which would have
+  // let carryEvents replace them with the source's versions, and moved the
+  // CommPattern pair off the timer onto the arrival.
+  const present = new Set(model.events.map((e) => e.label));
+  const out = new Set<string>();
+  for (const ev of source.events) {
+    if (ev.label === INITIALISATION || present.has(ev.label)) continue;
+    const text = [...ev.guards, ...ev.actions];
+    if (blocked.some((v) => text.some((c) => new RegExp(`\\b${v}\\b`).test(c))))
+      out.add(ev.label);
+  }
+  return [...out];
+}
+
 export function enablingEventsOf(model: EncodedMachine, source: EncodedMachine,
   carriedLabels: readonly string[]): string[] {
   const init = source.events.find((e) => e.label === INITIALISATION);

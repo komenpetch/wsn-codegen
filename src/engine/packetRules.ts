@@ -355,24 +355,42 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     // puts every PKT-* rule before the app-layer catalog) and refuse it
     // explicitly, same as PKT-DOM-NOT.
     //
-    // ⚠ THE RATIONALE ABOVE IS STALE, AND THE UPGRADE IS PARKED, NOT REJECTED.
+    // ⚠ THE RATIONALE ABOVE IS STALE, AND IT IS ANSWERED NOW.
     // "Not otherwise reachable from a bare PktId" stopped being true when the
     // identity binding gave the module a pktStore: a function's graph contains
-    // `p ↦ v` exactly when the packet exists and its field holds that value,
-    // and both halves are answerable now -- `pktOf(p)` for the chunk, `pktLive`
-    // for a partial field's domain, precisely as PKT-DOM/PKT-GET do it.
+    // `p ↦ v` exactly when the packet is in the field's domain and the field
+    // holds that value, and both halves are answerable -- `pktOf(p)` for the
+    // chunk, `pktLive` for a partial field's domain, precisely as PKT-DOM and
+    // PKT-GET do it. It is literally `p ∈ dom(F) ∧ F(p) = v`, i.e. this rule's
+    // two neighbours conjoined, which is why it needs nothing they do not have.
     //
     // It was implemented on 2026-09-13 and reverted the same day on a scope
-    // ruling, because answering it translated EIGHT RTMCS receive events that
-    // had been refusing, and **RTMCS has no simulation harness in this
-    // project** -- `clang` exit 0 was the only evidence available for a real
-    // behavioural change. Re-apply it together with the parked pair-keyed work
-    // (docs/findings/netlayer/2026-09-13-pair-keyed-functions-PARKED.md), and
-    // run RTMCS when there is something to run it in.
+    // ruling: answering it translated eight RTMCS receive events that had been
+    // refusing, and RTMCS has no simulation harness in this project, so `clang`
+    // exit 0 was the only evidence available for a real behavioural change. It
+    // is re-applied here with the pair-keyed work, which is the condition the
+    // parked note set, and the evidence is a MintRoute run -- `update_nbr` and
+    // `update_route` are the two events this guard was refusing, and they are
+    // exactly the pair that DRAINS `updateNbrs`. Without this the pair-keyed
+    // encoding schedules them and they still refuse, so the flood still fires
+    // once. ⚠ RTMCS is still unrun; its eight events remain compile-only
+    // evidence.
     if (ev.MEM) out.push({
       id: `PKT-MEM-${f.ebName}`, tier: 1, evidence: ev.MEM,
-      match: re(new RegExp(`^\\w+\\s*↦\\s*\\w+\\s*(?:∈|∉)\\s*${F}$`)),
-      emit: () => "",
+      match: re(new RegExp(
+        `^(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*(?<op>∈|∉)\\s*${F}$`)),
+      emit: (m) => {
+        const { p, v, op } = m.captures;
+        // A total field rides on every chunk, so its domain is the chunk's own
+        // existence; a partial one's domain is pktLive. Same split as PKT-DOM.
+        // ⚠ pktLive and pktStore are deliberately separate (see the registry's
+        // own comment), so a live packet is not automatically a chunk this node
+        // holds -- the null check stays in both arms rather than being folded
+        // into the total one.
+        const dom = f.total ? "" : `pktLive.count(${p}) > 0 && `;
+        const has = `(${dom}pktOf(${p}) != nullptr && pktOf(${p})->${G}() == ${v})`;
+        return op === "∈" ? has : `!${has}`;
+      },
     });
   }
   return out;
