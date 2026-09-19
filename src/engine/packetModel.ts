@@ -143,7 +143,21 @@ export function isCreatingEvent(event: FlatEvent, fields: PacketField[]): boolea
 //      one child left) resolves to nothing rather than guessing.
 export function resolveTag(event: FlatEvent, lattice: TypeLattice): string | null {
   for (const tag of lattice.leaves) {
-    const pin = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*=\\s*${tag}\\b`);
+    // Two spellings of the SAME pin, and the second is not a special case.
+    // A name that is a lattice leaf has no children, so its partition part is a
+    // one-element set -- it is simultaneously a set by its axiom and a leaf by
+    // having nothing under it, which is the dual nature the unsplit CONTROL has
+    // in the pattern. Membership in a one-element set determines the value, so
+    // `type(pkt) ∈ CONTROL` pins CONTROL exactly as `type(pkt) = BEACON` pins
+    // BEACON. ⚠ It stays inside this loop over LEAVES on purpose: for a name
+    // with children, membership says "one of several" and pins nothing, which
+    // is what the elimination branch below is for.
+    //
+    // Same reading as the scheduler's type stamp and the extension's creating
+    // targets. Without it a project that declares no control split had its
+    // creating event resolve to no leaf at all, so nothing carried it and the
+    // module could not originate a control packet.
+    const pin = new RegExp(`type\\s*\\(\\s*\\w+\\s*\\)\\s*[=∈]\\s*${tag}\\b`);
     if (event.guards.some((g) => pin.test(g))) return tag;
   }
   for (const [parent, kids] of lattice.children) {

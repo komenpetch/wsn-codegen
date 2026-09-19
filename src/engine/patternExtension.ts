@@ -96,6 +96,38 @@ function controlLeavesOf(raw: RawModel): string[] {
 const camel = (s: string) => s.toLowerCase();
 
 /**
+ * What the per-control creating events are derived FOR: the leaves of the
+ * control split, or the control set itself when nothing splits it.
+ *
+ * ⚠ THE DEGENERATE CASE IS NOT AN EXCEPTION, and treating it as one left Tier A
+ * with dead state. `pktSeqNo` is declared in uM4 as a PPkt field serving
+ * duplicate detection and the missed count — the B2 decision, and a COMMON
+ * concern rather than a per-case-study one. But only the per-leaf creating
+ * events stamp it, so a project that declares no split had nothing stamp it at
+ * all: `update_nbr` guards `pkt ∈ dom(pktSeqNo)` and fired ZERO times, which
+ * left `updateNbrs` undrained and every node accepting exactly one packet for
+ * the whole run.
+ *
+ * So the obligation belongs to "a control packet is created", not to "a control
+ * SUBTYPE is created". An unsplit set is its own leaf — the same reading the
+ * type stamp already uses, where the emitted enum has a CONTROL member exactly
+ * when nothing splits CONTROL further.
+ *
+ * ✅ And the derivation reproduces MintRoute's own name for it: MintRoute M1,
+ * before its own C3 splits CONTROL into ROUTE and BEACON, calls this event
+ * `create_controlPkt`.
+ *
+ * ⚠ This does NOT invent a split. No packet subtype is created that the project
+ * does not declare, and the type guard stays the membership the model states.
+ */
+function creatingTargetsOf(raw: RawModel): { name: string; isSet: boolean }[] {
+  const leaves = controlLeavesOf(raw);
+  if (leaves.length > 0) return leaves.map((name) => ({ name, isSet: false }));
+  const set = controlSetOf(raw);
+  return set ? [{ name: set, isSet: true }] : [];
+}
+
+/**
  * One creating event per control leaf, plus the per-node counter each one needs.
  *
  * The rule is the pattern's and is uniform; only the leaves differ. Every guard
@@ -110,10 +142,10 @@ const camel = (s: string) => s.toLowerCase();
  * dataSeqNo and linkSeqNo apart for exactly this reason.
  */
 function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits: string; events: string } {
-  const leaves = controlLeavesOf(raw);
+  const targets = creatingTargetsOf(raw);
   const vars: string[] = [], invs: string[] = [], inits: string[] = [], events: string[] = [];
 
-  leaves.forEach((leaf, i) => {
+  targets.forEach(({ name: leaf, isSet }, i) => {
     const ctr = `${camel(leaf)}SeqNo`;
     vars.push(`   <org.eventb.core.variable name="varc${i}" org.eventb.core.identifier="${ctr}"/>`);
     invs.push(`   <org.eventb.core.invariant name="invc${i}" org.eventb.core.label="MPacket_${ctr}_inv" `
@@ -138,7 +170,7 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
       <org.eventb.core.guard name="grd04" org.eventb.core.label="MPacket_creating_pkt_g4" org.eventb.core.predicate="pkt ∉ dom(pktData)" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd05" org.eventb.core.label="MNDbuffMgt_record_ndBuff_g1" org.eventb.core.predicate="x ↦ pkt ∉ ndBuff" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd06" org.eventb.core.label="User_defined_guard_g1" org.eventb.core.predicate="data = CTL_VAL" org.eventb.core.theorem="false"/>
-      <org.eventb.core.guard name="grd07" org.eventb.core.label="User_defined_guard_g2" org.eventb.core.predicate="type(pkt) = ${leaf}" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd07" org.eventb.core.label="User_defined_guard_g2" org.eventb.core.predicate="type(pkt) ${isSet ? "∈" : "="} ${leaf}" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd08" org.eventb.core.label="MPacket_${ctr}_g" org.eventb.core.predicate="pkt ∉ dom(pktSeqNo) ∧ x ∈ dom(${ctr}) ∧ sno = ${ctr}(x) + 1" org.eventb.core.theorem="false"/>
       <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_creating_pkt_a1" org.eventb.core.assignment="createdPkts ≔ createdPkts ∪ {pkt}"/>
       <org.eventb.core.action name="act02" org.eventb.core.label="MPacket_creating_pkt_a2" org.eventb.core.assignment="pktFwdr ≔ pktFwdr ∪ {pkt ↦ x}"/>
@@ -155,13 +187,103 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
   };
 }
 
+/**
+ * The FLOOD: accept a control packet once, and consume a repeat without
+ * rebroadcasting it.
+ *
+ * Read off MintRoute's own flooding events (M1 `receive_pkt`/`receive_dup_pkt`,
+ * M2's medium substitution, M3's control-type refinement) and expressed in the
+ * pattern's vocabulary. Every guard below is one of MintRoute's, and the
+ * mapping is stated per guard rather than left to be reconstructed.
+ *
+ * ⚠ WHAT THE PATTERN ALREADY DOES, so that this adds only what is missing.
+ * `receive` takes a packet off `ctlNeighbours` into `recvBuff`;
+ * `fwdr_receive_pkt` (`nb ∉ Dests`) re-queues it into `ndBuff`, which is what
+ * `start_tx` transmits from — so THE REBROADCAST IS ALREADY THERE, and so is
+ * the destination exclusion, as its own event paired with `dest_recv_pkt`
+ * (`nb ∈ Dests`). MintRoute collapses those into one `nb ≠ Sink` guard; the
+ * pattern's decomposition is the richer one and is left alone. Two things are
+ * genuinely absent, and they are what this adds:
+ *
+ *   1. `receive`'s guards are ALL NEGATIVE — it does not require that the
+ *      packet was ever delivered. Measured: it fired once per packet the node
+ *      CREATED itself, 59 times on a node that had received nothing, while
+ *      real receptions went unconsumed.
+ *   2. There is no duplicate test, so a rebroadcast has nothing to stop it
+ *      coming back round. `floodTbl` is that test.
+ *
+ * ⚠ AND THE DUPLICATE CONSUMER IS NOT OPTIONAL, which is worth stating because
+ * a guard-only dedup looks sufficient. `send_up` guards `pkt ∉
+ * dom(ctlNeighbours)`, so ONE unconsumed entry stops that packet ever being
+ * published again, anywhere. A node that merely declines a duplicate leaves
+ * exactly such an entry, and the flood stops after two hops.
+ */
+function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
+  const set = controlSetOf(raw);
+  if (!set) return { uM4: "", pM5: "" };
+  // `receive_controlPkt` for CONTROL, `receive_floodPkt` for FLOOD — the
+  // derivation reproduces each case study's own spelling rather than imposing
+  // one. MintRoute names these events exactly this.
+  const fresh = `receive_${camel(set)}Pkt`, dup = `receive_dup_${camel(set)}Pkt`;
+
+  const uM4 = `   <org.eventb.core.event name="evt_rcv" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${fresh}" org.eventb.core.comment="Tier A, DERIVED from the control set the abstract creatingControlPacket names. Guards 1-4 and actions 1-2 are the abstract receive verbatim; 5-9 are MintRoute&apos;s own flooding guards, cited individually.">
+      <org.eventb.core.refinesEvent name="refrcv" org.eventb.core.target="receive"/>
+      <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="nb"/>
+      <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="pkt"/>
+      <org.eventb.core.parameter name="prm03" org.eventb.core.identifier="s"/>
+      <org.eventb.core.guard name="grd01" org.eventb.core.label="MReceive_receive_g1" org.eventb.core.predicate="nb ∈ ND ∧ pkt ∈ PKT" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd02" org.eventb.core.label="MReceive_receive_g2" org.eventb.core.predicate="nb ↦ pkt ∉ recvBuff" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd03" org.eventb.core.label="MReceive_receive_g3" org.eventb.core.predicate="nb ↦ pkt ∉ sentUp" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd04" org.eventb.core.label="MReceive_receive_g4" org.eventb.core.predicate="nb ↦ pkt ∉ sentDown" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd05" org.eventb.core.label="MFlood_delivered_g" org.eventb.core.predicate="pkt ↦ nb ∈ ctlNeighbours" org.eventb.core.comment="MintRoute M1 receive_pkt g2. THE MISSING GUARD: the abstract receive removes from ctlNeighbours without ever requiring membership, so it consumed nothing and fired on packets the node had created itself." org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd06" org.eventb.core.label="MFlood_medium_g" org.eventb.core.predicate="pkt ∉ ran(sentDown) ∧ pkt ∈ ran(sentUp)" org.eventb.core.comment="MintRoute M2 receive_pkt g1. The medium condition written in the CommPattern pair&apos;s own variables -- M2 is where MintRoute itself substitutes sentDown/sentUp for its M1 WiMedium, so this substitution is the model&apos;s, not ours." org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd07" org.eventb.core.label="MFlood_notMine_g" org.eventb.core.predicate="s ∈ ND ∧ s = initialSrcAddr(pkt) ∧ s ≠ nb" org.eventb.core.comment="MintRoute M1 receive_pkt g5: a node does not receive its own originated packet." org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd08" org.eventb.core.label="MFlood_fresh_g" org.eventb.core.predicate="nb ∈ dom(floodTbl) ∧ pkt ∉ floodTbl(nb)" org.eventb.core.comment="MintRoute M1 receive_pkt g7: the duplicate test." org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd09" org.eventb.core.label="MFlood_ctl_g" org.eventb.core.predicate="type(pkt) ∈ ${set}" org.eventb.core.comment="MintRoute M3 receive_controlPkt g1. LEAF-INDEPENDENT, the same reasoning update_nbr already carries: which control subtypes exist is per case study, so the flood says only that a control packet is what floods." org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act01" org.eventb.core.label="MReceive_receive_a1" org.eventb.core.assignment="recvBuff ≔ recvBuff ∪ {nb ↦ pkt}"/>
+      <org.eventb.core.action name="act02" org.eventb.core.label="MReceive_receive_a2" org.eventb.core.assignment="ctlNeighbours ≔ ctlNeighbours ∖ {pkt ↦ nb}"/>
+      <org.eventb.core.action name="act03" org.eventb.core.label="MFlood_seen_a" org.eventb.core.assignment="floodTbl(nb) ≔ floodTbl(nb) ∪ {pkt}"/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_rcvdup" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${dup}" org.eventb.core.comment="Tier A, DERIVED. MintRoute M1 receive_dup_pkt, guard for guard: a repeat is consumed off ctlNeighbours and goes no further -- it never reaches recvBuff, so fwdr_receive_pkt never re-queues it and nothing rebroadcasts it. ⚠ ADVISOR REVIEW (B7): in MintRoute this is a NEW event over state introduced in the SAME machine (M0 has neither ctlNeighbours nor floodTbl), so it refines skip freely. Here ctlNeighbours is abstract, declared in pM1, so this event modifies abstract state and needs either a witness or the pattern to expose the publication at this level.">
+      <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="nb"/>
+      <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="pkt"/>
+      <org.eventb.core.guard name="grd01" org.eventb.core.label="MFlood_dup_g1" org.eventb.core.predicate="nb ∈ ND ∧ pkt ∈ PKT" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd02" org.eventb.core.label="MFlood_dup_g2" org.eventb.core.predicate="pkt ↦ nb ∈ ctlNeighbours" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd03" org.eventb.core.label="MFlood_dup_g3" org.eventb.core.predicate="nb ∈ dom(floodTbl) ∧ pkt ∈ floodTbl(nb)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd04" org.eventb.core.label="MFlood_dup_g4" org.eventb.core.predicate="type(pkt) ∈ ${set}" org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act01" org.eventb.core.label="MFlood_dup_a1" org.eventb.core.assignment="ctlNeighbours ≔ ctlNeighbours ∖ {pkt ↦ nb}"/>
+   </org.eventb.core.event>`;
+
+  // Tier B's hook, layered the way MintRoute layers it: M1 floods, M3 adds the
+  // forwarder and queues the pair the route table drains. Extended events, so
+  // the flood guards above are inherited verbatim and only the table's own
+  // parameter, guards and action appear here.
+  //
+  // ⚠ THIS IS ALSO WHAT CLOSES B5. `update_nbr` drains `updateNbrs` and nothing
+  // filled it, so neither it nor `add_newEntry` was ever carried. B5's recorded
+  // worry -- that a DATA reception would queue a pair only a BEACON-guarded
+  // drain could remove -- does not arise: both sides guard the control set, so
+  // every pair queued here is drainable there.
+  const hook = (name: string, ev: string) =>
+    `   <org.eventb.core.event name="${name}" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="${ev}" org.eventb.core.comment="Tier B hook, mirroring MintRoute M3: the flood is where the route table learns who it heard from.">
+      <org.eventb.core.parameter name="prm09" org.eventb.core.identifier="f"/>
+      <org.eventb.core.guard name="grd21" org.eventb.core.label="MRouteTable_fwdr_g" org.eventb.core.predicate="pkt ∈ dom(pktFwdr) ∧ f = pktFwdr(pkt)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd22" org.eventb.core.label="MRouteTable_pending_g" org.eventb.core.predicate="f ∈ ND ∧ f ↦ nb ∉ updateNbrs" org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act11" org.eventb.core.label="MRouteTable_pending_a" org.eventb.core.assignment="updateNbrs ≔ updateNbrs ∪ {f ↦ nb}"/>
+   </org.eventb.core.event>`;
+
+  return { uM4, pM5: `${hook("evt_rcv5", fresh)}\n${hook("evt_rcvdup5", dup)}` };
+}
+
 // Splice the derived parts into the bundled uM4. Each anchor is the last line of
 // its kind, so the additions land in a well-formed place; a missing anchor is an
 // error rather than a silent no-op -- this file is ours, so it drifting is a bug.
 function instantiate(xml: string, raw: RawModel): string {
   const { vars, invs, inits, events } = deriveControlEvents(raw);
-  if (!vars && !events) return xml;      // no split declared: nothing to add
+  const flood = deriveFloodEvents(raw).uM4;
+  if (!vars && !events && !flood) return xml;   // nothing declared: nothing to add
   const at = (anchor: string, add: string, what: string) => {
+    if (!add) return;
     if (!xml.includes(anchor))
       throw new Error(`patternExtension: uM4.bum no longer contains the ${what} anchor `
         + `(${anchor.trim().slice(0, 48)}…), so the derived control events cannot be spliced in.`);
@@ -173,7 +295,27 @@ function instantiate(xml: string, raw: RawModel): string {
     + `org.eventb.core.theorem="false"/>`, invs, "invariant");
   at(`      <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" `
     + `org.eventb.core.assignment="pktSeqNo ≔ ∅"/>`, inits, "INITIALISATION");
-  return xml.replace("</org.eventb.core.machineFile>", `${events}\n</org.eventb.core.machineFile>`);
+  return xml.replace("</org.eventb.core.machineFile>",
+    `${[events, flood].filter(Boolean).join("\n")}\n</org.eventb.core.machineFile>`);
+}
+
+// The same treatment for pM5, which carries Tier B's hook onto the derived
+// flood events.
+//
+// ⚠ pM5 USED TO HARDCODE `create_routePkt` and `create_bconPkt` as extended
+// events -- MintRoute's leaf names, left behind when option A made the leaves
+// derived. On a project that declares no control split those refined events
+// that uM4 no longer contains, so the file did not open cleanly in Rodin; on
+// one that splits CONTROL differently they named leaves it does not have. They
+// are derived here now, from the same leaf list uM4's are.
+function instantiateB(xml: string, raw: RawModel): string {
+  const creating = creatingTargetsOf(raw).map(({ name: leaf }, i) =>
+    `   <org.eventb.core.event name="evt_ctl${i}" org.eventb.core.convergence="0" `
+    + `org.eventb.core.extended="true" org.eventb.core.label="create_${camel(leaf)}Pkt">\n`
+    + `   </org.eventb.core.event>`).join("\n");
+  const add = [creating, deriveFloodEvents(raw).pM5].filter(Boolean).join("\n");
+  if (!add) return xml;
+  return xml.replace("</org.eventb.core.machineFile>", `${add}\n</org.eventb.core.machineFile>`);
 }
 
 /**
@@ -202,6 +344,7 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
   // authored against the pattern's own `pM3`, and a project whose machine has
   // another name would leave that refinement dangling.
   const retarget = (f: { name: string; xml: string }) => {
+    if (f.name === "pM5.bum") return { ...f, xml: instantiateB(f.xml, raw) };
     if (f.name !== "uM4.bum") return f;
     const xml = base === AUTHORED_AGAINST ? f.xml : f.xml.replace(
       `<org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="${AUTHORED_AGAINST}"/>`,

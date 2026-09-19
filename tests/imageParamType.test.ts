@@ -22,6 +22,13 @@ const load = (d: string) =>
   readdirSync(d).filter((f) => /\.(bum|buc)$/.test(f))
     .map((f) => ({ name: f, xml: readFileSync(join(d, f), "utf8") }));
 
+// ⚠ THE CREATING EVENT IS `create_controlPkt`, NOT the abstract
+// `creatingControlPacket`. Once the extension derives a creating event for the
+// control set -- which it does even when nothing splits that set, because the
+// sequence number has to be stamped by whatever creates a control packet --
+// the derived event supersedes the abstract one, exactly as MintRoute's own
+// per-leaf events supersede it there. The behaviour asserted below moved with
+// it intact; only the method name changed.
 describe("a relational-image parameter is bound at its declared type, from the right storage", () => {
   const tree = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
@@ -31,11 +38,11 @@ describe("a relational-image parameter is bound at its declared type, from the r
     // If the creating event stops being schedulable the assertions below would
     // pass vacuously. Fail loudly instead. (This guard has already earned its
     // keep once: it is what caught the suite going stale.)
-    expect(cc).toContain("bool Pm3Wsn::try_creatingControlPacket()");
+    expect(cc).toContain("bool Pm3Wsn::try_create_controlPkt()");
   });
 
   it("binds a scalar-declared parameter as a scalar, not as a set", () => {
-    expect(h).toContain("bool creatingControlPacket(Node x, int des, PktId pkt, Data data);");
+    expect(h).toContain("bool create_controlPkt(Node x, int des, PktId pkt, Data data, int sno);");
     expect(cc).not.toContain("std::set<Node> des = relImage(");
   });
 

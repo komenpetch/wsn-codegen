@@ -16,9 +16,12 @@
    <org.eventb.core.variable name="var11" org.eventb.core.identifier="senseBuff"/>
    <org.eventb.core.variable name="var12" org.eventb.core.identifier="emergencyAlert"/>
    <org.eventb.core.variable name="var13" org.eventb.core.identifier="pktSeqNo"/>
+   <org.eventb.core.variable name="var14" org.eventb.core.identifier="floodTbl"/>
    <org.eventb.core.invariant name="inv01" org.eventb.core.label="MPacket_pktSeqNo_inv_1" org.eventb.core.predicate="pktSeqNo ∈ PKT ⇸ ℕ" org.eventb.core.comment="per-packet sequence number: serves duplicate detection and the missed count, both communication concerns" org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv02" org.eventb.core.label="MFlood_floodTbl_inv_1" org.eventb.core.predicate="floodTbl ∈ ND → ℙ(PKT)" org.eventb.core.comment="What each node has already seen: the flood&apos;s duplicate test, and the whole of what stops a rebroadcast becoming a storm. Declared here rather than invented: BOTH case studies that flood name it floodTbl and type it exactly this way -- MintRoute M1 and the advisor&apos;s WSN_Pattern M1." org.eventb.core.theorem="false"/>
    <org.eventb.core.event name="evt_init" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="INITIALISATION">
       <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" org.eventb.core.assignment="pktSeqNo ≔ ∅"/>
+      <org.eventb.core.action name="act02" org.eventb.core.label="MFlood_floodTbl_int_1" org.eventb.core.assignment="floodTbl ≔ ND × {∅}"/>
    </org.eventb.core.event>
    <org.eventb.core.event name="evt_sensing" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="sensing">
    </org.eventb.core.event>

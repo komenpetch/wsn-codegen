@@ -32,6 +32,13 @@ const load = (d: string) =>
   readdirSync(d).filter((f) => /\.(bum|buc)$/.test(f))
     .map((f) => ({ name: f, xml: readFileSync(join(d, f), "utf8") }));
 
+// ⚠ THE CREATING EVENT IS `create_controlPkt`, NOT the abstract
+// `creatingControlPacket`. Once the extension derives a creating event for the
+// control set -- which it does even when nothing splits that set, because the
+// sequence number has to be stamped by whatever creates a control packet --
+// the derived event supersedes the abstract one, exactly as MintRoute's own
+// per-leaf events supersede it there. The behaviour asserted below moved with
+// it intact; only the method name changed.
 describe("a packet field read in image form reaches the chunk, not the context map", () => {
   const cc = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3)
     .find((f) => f.path.endsWith(".cc"))!.content;
@@ -56,7 +63,7 @@ describe("a packet field read in image form reaches the chunk, not the context m
   it("puts the creating event back within reach of the scheduler", () => {
     // The consequence that matters: with binding and guard agreeing, the
     // module's only creating event is schedulable AND reachable again.
-    expect(cc).toContain("bool Pm3Wsn::try_creatingControlPacket()");
+    expect(cc).toContain("bool Pm3Wsn::try_create_controlPkt()");
     expect(cc).toContain("int des = pktOf(pkt)->getFinalDestAddr();");
   });
 

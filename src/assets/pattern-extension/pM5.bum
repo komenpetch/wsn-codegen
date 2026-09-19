@@ -57,10 +57,6 @@
    </org.eventb.core.event>
    <org.eventb.core.event name="evt_e9" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="final_tx_pkt">
    </org.eventb.core.event>
-   <org.eventb.core.event name="evt_route" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="create_routePkt">
-   </org.eventb.core.event>
-   <org.eventb.core.event name="evt_bcon" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="create_bconPkt">
-   </org.eventb.core.event>
    <org.eventb.core.event name="evt_addnbr" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="add_newEntry" org.eventb.core.comment="Tier B. ORIENTATION FLIP preserved rather than tidied: the pending pair is x |-&gt; y and the table entry is y |-&gt; x. That is MintRoute's own convention -- the entry is keyed by the neighbour observed FROM this node.">
       <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="x"/>
       <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="y"/>

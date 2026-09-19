@@ -31,17 +31,24 @@ const load = (d: string) =>
 
 const MINTROUTE = "../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck";
 
+// ⚠ THE CREATING EVENT IS `create_controlPkt`, NOT the abstract
+// `creatingControlPacket`. Once the extension derives a creating event for the
+// control set -- which it does even when nothing splits that set, because the
+// sequence number has to be stamped by whatever creates a control packet --
+// the derived event supersedes the abstract one, exactly as MintRoute's own
+// per-leaf events supersede it there. The behaviour asserted below moved with
+// it intact; only the method name changed.
 describe("a membership type guard stamps a tag when, and only when, it pins one", () => {
   const v3 = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
   const cc = v3.find((f) => f.path.endsWith(".cc"))!.content;
   const h = v3.find((f) => f.path.endsWith(".h"))!.content;
   const body = (() => {
-    const i = cc.indexOf("bool Pm3Wsn::try_creatingControlPacket()");
+    const i = cc.indexOf("bool Pm3Wsn::try_create_controlPkt()");
     return i < 0 ? "" : cc.slice(i, cc.indexOf("\n}", i));
   })();
 
   it("reaches the method at all — otherwise this suite proves nothing", () => {
-    expect(cc).toContain("bool Pm3Wsn::try_creatingControlPacket()");
+    expect(cc).toContain("bool Pm3Wsn::try_create_controlPkt()");
   });
 
   it("stamps the leaf the membership guard names", () => {

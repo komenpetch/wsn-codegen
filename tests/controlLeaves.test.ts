@@ -76,15 +76,56 @@ describe("per-leaf creating events are derived from the project's own split", ()
     expect(x).not.toContain("BEACON");
   });
 
-  it("derives NOTHING when the project does not split its control set", () => {
-    // C0_project's own shape. A model that draws no distinction between control
-    // subtypes does not get subtype events invented for it — the abstract
-    // creatingControlPacket is then what runs.
+  it("treats an UNSPLIT control set as its own single target", () => {
+    // C0_project's own shape, and ⚠ THIS ASSERTION IS THE REVERSE OF WHAT IT
+    // FIRST SAID. "A project that splits nothing gets nothing derived" sounded
+    // like the whole of option A, and it left Tier A with DEAD STATE: `pktSeqNo`
+    // is stamped only by a derived creating event, so with none derived nothing
+    // stamped it, `update_nbr` guarded `pkt ∈ dom(pktSeqNo)` and fired zero
+    // times, `updateNbrs` never drained, and every node accepted exactly one
+    // packet for a whole sixty-second run.
+    //
+    // The obligation belongs to "a control packet is created", not to "a control
+    // SUBTYPE is created". So an unsplit set is its own leaf — the same reading
+    // the type stamp and resolveTag both use — and the guard stays the
+    // MEMBERSHIP the model actually states rather than becoming an equality
+    // against a set.
+    //
+    // ✅ Nothing is invented: no packet subtype appears that the project does
+    // not declare, and MintRoute's own M1 calls this event `create_controlPkt`
+    // before its C3 splits CONTROL at all.
     const x = uM4Of([
       machine("pM3", "CONTROL"),
       ctx("C1", ["partition(TYPE, CONTROL, {DATA})"], ["DATA", "CONTROL", "type"]),
     ]);
-    expect(x).not.toContain("create_");
+    expect(x).toContain('label="create_controlPkt"');
+    expect(x).toContain('predicate="type(pkt) ∈ CONTROL"');
+    expect(x).not.toContain('predicate="type(pkt) = CONTROL"');
+    // And exactly one, not one per packet type in the lattice.
+    expect(x.match(/label="create_\w+"/g)).toEqual(['label="create_controlPkt"']);
+  });
+
+  it("still derives one per leaf when the project DOES split, and pins by equality", () => {
+    // The split case must not drift to membership: `type(pkt) = BEACON` is what
+    // a genuine leaf pins, and the two spellings are not interchangeable.
+    const x = uM4Of([
+      machine("pM3", "CONTROL"),
+      ctx("C1", ["partition(TYPE, CONTROL, {DATA})", "partition(CONTROL, {ROUTE}, {BEACON})"],
+        ["DATA", "CONTROL", "ROUTE", "BEACON", "type"]),
+    ]);
+    expect(x.match(/label="create_\w+"/g))
+      .toEqual(['label="create_routePkt"', 'label="create_beaconPkt"']);
+    expect(x).toContain('predicate="type(pkt) = ROUTE"');
+    // ⚠ Scoped to the CREATING event's own type guard. A blanket "no membership
+    // anywhere" assertion is wrong and was caught being wrong: the flood events
+    // guard `type(pkt) ∈ CONTROL` deliberately, because which control subtypes
+    // exist is per case study and the flood says only that a control packet is
+    // what floods.
+    const creating = x.match(/label="User_defined_guard_g2" org\.eventb\.core\.predicate="[^"]*"/g);
+    expect(creating).toEqual([
+      'label="User_defined_guard_g2" org.eventb.core.predicate="type(pkt) = ROUTE"',
+      'label="User_defined_guard_g2" org.eventb.core.predicate="type(pkt) = BEACON"',
+    ]);
   });
 
   it("reads the control set off the abstract event, so a differently NAMED one works", () => {
