@@ -1,14 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { setAliasesOf, applyAliases } from "../src/engine/setAlias";
+import { derivedSetEqualities, substituteEqualNames } from "../src/engine/setAlias";
 import type { RawContext, RawModel } from "../src/engine/types";
 
-// The two real contexts, transcribed from the projects they come from.
-//
 // `Update_wsn/C0_project/C1.buc` — the user's input — and
 // `Ex_WSN_Pattern/WSN_Pattern/C1.buc` — the pattern the tool bundles — declare
 // the SAME concept under two names. Every axiom matches except the one naming
 // it. The 2026-05-17 verification against raw XML settled `CONTROL` as the
-// authoritative name, so the pattern's `FLOOD` is what gets renamed.
+// authoritative name.
 const ctx = (name: string, sets: string[], constants: string[], axioms: string[]): RawContext => ({
   name, sets, constants,
   axioms: axioms.map((text, i) => ({ label: `axm${i + 1}`, text })),
@@ -28,82 +26,136 @@ const patternFlood = () => ctx("C1", ["TYPE"], ["DATA", "FLOOD", "type"], [
   "type ∈ PKT → TYPE",
 ]);
 
-const aliasesFor = (project: RawContext[], bundledPattern: RawContext[]) =>
-  setAliasesOf({ project, bundledPattern });
+const eqs = (project: RawContext[], bundledPattern: RawContext[]) =>
+  derivedSetEqualities({ project, bundledPattern });
+const pairs = (project: RawContext[], bundledPattern: RawContext[]) =>
+  eqs(project, bundledPattern).map((e) => [e.bundledName, e.projectName]);
 
-describe("setAliasesOf", () => {
-  it("reads FLOOD ≡ CONTROL off two partitions that differ in one position", () => {
-    expect(aliasesFor([projectCtl()], [patternFlood()]).get("FLOOD")).toBe("CONTROL");
+// ─────────────────────────────────────────────────────────────────────────
+// The warrant. `partition(S, P₁, …, Pₙ)` means `S = ⋃Pᵢ` with the parts
+// pairwise disjoint, so:
+//
+//     base:    S = A ⊎ R        pattern: S = X ⊎ R
+//     ⟹ A = S ∖ R = X
+//
+// valid for any arity ≥ 2, and requiring (a) the same S and (b) the rest
+// identical AS A SET OF PARTS. ⚠ The parts are unordered: `partition(S, A, B)`
+// and `partition(S, B, A)` are the same predicate.
+// ─────────────────────────────────────────────────────────────────────────
+describe("derivedSetEqualities — the truth table", () => {
+  it("row 1: one part differs, rest identical → equality derivable", () => {
+    expect(pairs([projectCtl()], [patternFlood()])).toEqual([["FLOOD", "CONTROL"]]);
   });
 
+  it("⚠ row 2: the SAME parts written in the other order still yields the equality", () => {
+    // partition is unordered, so this is the same shape as row 1. Comparing
+    // positions rather than sets would call this two differing positions and
+    // refuse a rename that follows from the axioms.
+    const reordered = ctx("C1", ["TYPE"], ["DATA", "FLOOD"], [
+      "partition(TYPE, {DATA}, FLOOD)",
+    ]);
+    expect(pairs([projectCtl()], [reordered])).toEqual([["FLOOD", "CONTROL"]]);
+  });
+
+  it("⚠ row 3: an identical partition written in the other order yields nothing", () => {
+    const reordered = ctx("C1", ["TYPE"], ["DATA", "CONTROL"], [
+      "partition(TYPE, {DATA}, CONTROL)",
+    ]);
+    expect(eqs([projectCtl()], [reordered])).toEqual([]);
+  });
+
+  it("row 4: two genuinely different parts → NOT derivable, refuse", () => {
+    // All that follows is CONTROL ∪ {DATA} = FLOOD ∪ {INFO}. Which name means
+    // which is a choice nobody has made.
+    const twoDiffer = ctx("C1", ["TYPE"], ["INFO", "FLOOD"], [
+      "partition(TYPE, FLOOD, {INFO})",
+    ]);
+    expect(() => eqs([projectCtl()], [twoDiffer])).toThrow(/FLOOD|INFO/);
+  });
+
+  it("row 5: arity 3, one part differs → equality derivable", () => {
+    const base = ctx("C3", ["S"], ["A", "B", "C"], ["partition(S, A, B, C)"]);
+    const pat = ctx("C3", ["S"], ["A", "B", "X"], ["partition(S, A, B, X)"]);
+    expect(pairs([base], [pat])).toEqual([["X", "C"]]);
+  });
+
+  it("⚠ row 6: arity 3, reordered AND renamed → still derivable", () => {
+    const base = ctx("C3", ["S"], ["A", "B", "C"], ["partition(S, A, B, C)"]);
+    const pat = ctx("C3", ["S"], ["A", "B", "X"], ["partition(S, X, B, A)"]);
+    expect(pairs([base], [pat])).toEqual([["X", "C"]]);
+  });
+
+  it("⚠ row 7: nothing follows when the project does not DECLARE the parent", () => {
+    // The derivation needs the same S. Across two projects the parent is only a
+    // NAME, and it is the merge that identifies names — so the rule may only be
+    // applied where the merge genuinely will identify them: the parent has to be
+    // declared on the project side too.
+    //
+    // ⚠ Note what this test has to do to be worth anything. The parent NAME must
+    // match — otherwise the parent/arity filter rejects the pair first and the
+    // test passes without the precondition ever running. An earlier version of
+    // this test used a different parent name and was inert: it passed with the
+    // precondition deleted.
+    const projectNoDecl = ctx("C1", [], ["CONTROL", "DATA"], [
+      "partition(TYPE, CONTROL, {DATA})",
+    ]);
+    const pat = ctx("C1", ["TYPE"], ["DATA", "FLOOD"], [
+      "partition(TYPE, FLOOD, {DATA})",
+    ]);
+    expect(eqs([projectNoDecl], [pat])).toEqual([]);
+  });
+
+  it("row 7 (converse): the same shapes DO reconcile once the project declares the parent", () => {
+    // The pair only differs from the test above by `TYPE` being declared, which
+    // is what makes that test about the precondition and not about the filter.
+    const projectDecl = ctx("C1", ["TYPE"], ["CONTROL", "DATA"], [
+      "partition(TYPE, CONTROL, {DATA})",
+    ]);
+    const pat = ctx("C1", ["TYPE"], ["DATA", "FLOOD"], [
+      "partition(TYPE, FLOOD, {DATA})",
+    ]);
+    expect(pairs([projectDecl], [pat])).toEqual([["FLOOD", "CONTROL"]]);
+  });
+
+  it("finds nothing when both sides already agree", () => {
+    expect(eqs([projectCtl()], [projectCtl()])).toEqual([]);
+  });
+
+  it("finds nothing across partitions of different arity", () => {
+    const other = ctx("C3", ["TYPE"], ["ROUTE"], ["partition(TYPE, CONTROL, {DATA}, {ROUTE})"]);
+    expect(eqs([projectCtl()], [other])).toEqual([]);
+  });
+});
+
+describe("derivedSetEqualities — direction, warrant and conflicts", () => {
   it("maps the BUNDLED name onto the PROJECT name, never the reverse", () => {
-    // Direction is load-bearing: the project is the user's input and its events
-    // guard on `CONTROL`. Renaming the other way would rewrite the user's own
-    // model to match a bundled fixture.
-    const aliases = aliasesFor([projectCtl()], [patternFlood()]);
-    expect(aliases.has("CONTROL")).toBe(false);
-    expect([...aliases]).toEqual([["FLOOD", "CONTROL"]]);
+    const [e] = eqs([projectCtl()], [patternFlood()]);
+    expect(e.bundledName).toBe("FLOOD");
+    expect(e.projectName).toBe("CONTROL");
   });
 
   it("⚠ takes its two sides by NAME, so they cannot be swapped by position", () => {
-    // The two sides are both RawContext[]. Passing them positionally would let a
-    // caller swap them and have it type-check, which would point the rename at
-    // the user's own model. Structure 3's packet-source slots were swappable in
-    // exactly this way and it cost 13 clang errors that named nothing useful.
-    expect(setAliasesOf.length).toBe(1);
-    const swapped = setAliasesOf({ project: [patternFlood()], bundledPattern: [projectCtl()] });
-    expect([...swapped]).toEqual([["CONTROL", "FLOOD"]]);
+    expect(derivedSetEqualities.length).toBe(1);
   });
 
-  it("finds nothing when both sides already agree on the name", () => {
-    expect(aliasesFor([projectCtl()], [projectCtl()]).size).toBe(0);
-  });
-
-  it("finds nothing when the partitions have different arity", () => {
-    // `partition(CONTROL, {ROUTE}, {BEACON})` is a DIFFERENT partition from
-    // `partition(TYPE, CONTROL, {DATA})`, not the same one renamed. Matching on
-    // parent alone would pair them and invent an alias.
-    const other = ctx("C3", [], ["ROUTE", "BEACON"], [
-      "partition(TYPE, CONTROL, {DATA}, {EXTRA})",
-    ]);
-    expect(aliasesFor([projectCtl()], [other]).size).toBe(0);
-  });
-
-  it("⚠ REFUSES rather than guessing when two positions differ", () => {
-    // One differing position is a rename. Two is a different partition wearing
-    // similar clothes, and picking a pairing would be a coin toss that compiles.
-    const twoDiffer = ctx("C1", ["TYPE"], ["INFO", "FLOOD", "type"], [
-      "partition(TYPE, FLOOD, {INFO})",
-    ]);
-    expect(() => aliasesFor([projectCtl()], [twoDiffer])).toThrow(/FLOOD|INFO/);
-  });
-
-  it("names both partitions in the refusal, because the pairing is the question", () => {
-    const twoDiffer = ctx("C1", ["TYPE"], ["INFO", "FLOOD", "type"], [
-      "partition(TYPE, FLOOD, {INFO})",
-    ]);
-    let message = "";
-    try { aliasesFor([projectCtl()], [twoDiffer]); } catch (e) { message = String(e); }
-    expect(message).toContain("partition(TYPE, CONTROL, {DATA})");
-    expect(message).toContain("partition(TYPE, FLOOD, {INFO})");
+  it("carries the WARRANT — the two axioms the equality was read off", () => {
+    // Without this the equality is an assertion. With it, a reader can check the
+    // derivation, and the emitted code can say why two names are one storage.
+    const [e] = eqs([projectCtl()], [patternFlood()]);
+    expect(e.warrant.project).toBe("partition(TYPE, CONTROL, {DATA})");
+    expect(e.warrant.bundled).toBe("partition(TYPE, FLOOD, {DATA})");
   });
 
   it("⚠ REFUSES when two bundled sets would collapse onto one project name", () => {
-    // FLOOD and SIGNAL are distinct sets in the pattern. Both sit one position
-    // from the project's CONTROL, so recording both would merge two sets the
-    // pattern keeps apart — and every guard over SIGNAL would silently become a
-    // guard over CONTROL.
     const twoOntoOne = ctx("C1", ["TYPE"], ["DATA", "FLOOD", "SIGNAL"], [
       "partition(TYPE, FLOOD, {DATA})",
       "partition(TYPE, SIGNAL, {DATA})",
     ]);
-    expect(() => aliasesFor([projectCtl()], [twoOntoOne]))
+    expect(() => eqs([projectCtl()], [twoOntoOne]))
       .toThrow(/FLOOD[\s\S]*SIGNAL|SIGNAL[\s\S]*FLOOD/);
   });
 
-  it("⚠ REFUSES when one bundled set would map to two different project names", () => {
-    // Two parents, so two independent candidate sets, each one position away.
-    // Last-write-wins would silently pick whichever came second.
+  it("⚠ REFUSES when one bundled set would equal two different project names", () => {
     const project = [ctx("C1", ["TYPE", "KIND"], ["DATA", "CONTROL", "SIGNAL"], [
       "partition(TYPE, CONTROL, {DATA})",
       "partition(KIND, SIGNAL, {DATA})",
@@ -112,11 +164,15 @@ describe("setAliasesOf", () => {
       "partition(TYPE, FLOOD, {DATA})",
       "partition(KIND, FLOOD, {DATA})",
     ])];
-    expect(() => aliasesFor(project, pattern)).toThrow(/FLOOD/);
+    expect(() => eqs(project, pattern)).toThrow(/FLOOD/);
   });
 });
 
-describe("applyAliases", () => {
+// ─────────────────────────────────────────────────────────────────────────
+// ⚠ Substitution is a SEPARATE DECISION from the equality, and a lossy one.
+// These tests pin that it is opt-in and that it is labelled for what it is.
+// ─────────────────────────────────────────────────────────────────────────
+describe("substituteEqualNames", () => {
   const model = (): RawModel => ({
     contexts: [patternFlood()],
     machines: [{
@@ -134,48 +190,37 @@ describe("applyAliases", () => {
     }],
   });
 
-  const aliases = new Map([["FLOOD", "CONTROL"]]);
+  const equalities = () => eqs([projectCtl()], [patternFlood()]);
 
   it("renames the constant where it is DECLARED", () => {
-    const out = applyAliases(model(), aliases);
+    const out = substituteEqualNames(model(), equalities());
     expect(out.contexts[0].constants).toContain("CONTROL");
     expect(out.contexts[0].constants).not.toContain("FLOOD");
   });
 
-  it("renames it inside axiom text", () => {
-    const out = applyAliases(model(), aliases);
-    const texts = out.contexts[0].axioms.map((a) => a.text);
-    expect(texts).toContain("partition(TYPE, CONTROL, {DATA})");
-    expect(texts.some((t) => t.includes("FLOOD"))).toBe(false);
-  });
-
-  it("renames it inside guards, actions and invariants", () => {
-    // ⚠ The rename must reach the MACHINE, not only the context. A context-only
-    // rename leaves every event guarding on a name nothing declares, which is a
-    // compile error at best and a silently-false guard at worst.
-    const out = applyAliases(model(), aliases);
-    const m = out.machines[0];
-    expect(m.invariants[0].text).toBe("floodedPkts ⊆ CONTROL");
-    expect(m.events[0].guards[0].text).toBe("type(pkt) ∈ CONTROL");
+  it("renames it inside guards, actions and invariants, not only the context", () => {
+    // A context-only rename leaves every event guarding on a name nothing
+    // declares — a compile error at best, a silently-false guard at worst.
+    const out = substituteEqualNames(model(), equalities());
+    expect(out.machines[0].invariants[0].text).toBe("floodedPkts ⊆ CONTROL");
+    expect(out.machines[0].events[0].guards[0].text).toBe("type(pkt) ∈ CONTROL");
   });
 
   it("matches whole identifiers only", () => {
-    // `FLOODED` and `preFLOOD` are different names. A substring replace would
-    // corrupt them into `CONTROLED` / `preCONTROL`.
     const m = model();
     m.machines[0].events[0].guards = [{ label: "grd1", text: "FLOODED ∪ FLOOD ∪ preFLOOD" }];
-    const out = applyAliases(m, aliases);
+    const out = substituteEqualNames(m, equalities());
     expect(out.machines[0].events[0].guards[0].text).toBe("FLOODED ∪ CONTROL ∪ preFLOOD");
   });
 
-  it("leaves the model untouched when there are no aliases", () => {
+  it("is a no-op with no equalities", () => {
     const before = model();
-    expect(applyAliases(before, new Map())).toEqual(before);
+    expect(substituteEqualNames(before, [])).toEqual(before);
   });
 
   it("does not mutate its input", () => {
     const before = model();
-    applyAliases(before, aliases);
+    substituteEqualNames(before, equalities());
     expect(before.machines[0].events[0].guards[0].text).toBe("type(pkt) ∈ FLOOD");
   });
 });
