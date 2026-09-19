@@ -30,6 +30,7 @@ import { INITIALISATION } from "./types";
 import { addsMaplet, addsTo, anyMapletAdded, removesFrom, variableAddedTo } from "./actionShapes";
 import type { EncodedMachine, FlatEvent, RawContext, RawModel, Labelled } from "./types";
 import { eventAncestry } from "./flattener";
+import { esc } from "./text";
 import type { PacketModel, PacketField } from "./packetModel";
 import { getterOf, setterOf } from "./packetModel";
 import { OVERRIDE_GLYPHS } from "./text";
@@ -140,6 +141,64 @@ export function transmitEventsOf(base: EncodedMachine, source: EncodedMachine,
   return source.events
     .filter((e) => [...observed].some((v) => e.actions.some((a) => addsMaplet(a, v))))
     .map((e) => e.label);
+}
+
+/**
+ * Variables a TRANSMIT event reads its own SENDER from — per-node queues, which
+ * an arrival must never stage.
+ *
+ * ⚠ THIS IS THE DEFECT `arrivalRequirementsOf` ALREADY DESCRIBED AND DID NOT
+ * CATCH. Its comment says staging `ndBuff` "would hand this node a buffer entry
+ * belonging to the SENDER, which its transmit events would then pick up and
+ * send on that node's behalf" — and that is exactly what happened, because the
+ * exclusion it implemented was "a receive event ADDS to it", and the event that
+ * dragged `ndBuff` in only GUARDS it.
+ *
+ * The arrival stages every pair as `{_f, _pkt}`, keyed by the previous hop.
+ * That is right for the MEDIUM — `sentDown`/`sentUp`/`WiMedium` are statements
+ * about a transmission, and the sender is who made it. It is wrong for a QUEUE:
+ * `start_tx` guards `x ↦ pkt ∈ ndBuff` and then stamps `pktFwdr ≔ pktFwdr ⊕
+ * {pkt ↦ x}`, so a staged entry keyed by the previous hop makes this module
+ * transmit a packet carrying ANOTHER NODE'S id as the forwarder.
+ *
+ * Measured on the nine-node field before this: `start_tx` fired with
+ * `x != myNodeId` between 6 and 69 times per node; the sink, which hears
+ * exactly one node, received frames claiming five distinct forwarders including
+ * itself; and every node's neighbour table was populated with nodes it had
+ * never heard from — up to all nine on a nine-node network.
+ *
+ * The discriminator is read off the model, not named: the parameter a transmit
+ * event puts into what `send_down` OBSERVES is that event's sender, and any
+ * variable it guards membership in under that same parameter is a queue it
+ * drains rather than a medium it rides.
+ */
+export function senderQueuesOf(base: EncodedMachine, source: EncodedMachine,
+  transmitLabels: readonly string[], sendDownLabel = "send_down"): string[] {
+  const sd = base.events.find((e) => e.label === sendDownLabel);
+  const observed = new Set<string>();
+  for (const g of sd?.guards ?? []) {
+    const m = /^\s*(\w+)\s*↦\s*(\w+)\s*∈\s*(\w+)\s*$/.exec(g.trim());
+    if (m && base.variableTypes.has(m[3])) observed.add(m[3]);
+  }
+  const wanted = new Set(transmitLabels);
+  const out = new Set<string>();
+  for (const ev of source.events) {
+    if (!wanted.has(ev.label)) continue;
+    let sender: string | null = null;
+    for (const a of ev.actions)
+      for (const v of observed) {
+        const m = new RegExp(
+          `^\\s*${esc(v)}\\s*≔\\s*${esc(v)}\\s*∪\\s*\\{\\s*(\\w+)\\s*↦\\s*\\w+\\s*\\}\\s*$`)
+          .exec(a.trim());
+        if (m) sender = m[1];
+      }
+    if (!sender) continue;
+    for (const g of ev.guards.flatMap((x) => x.split("∧"))) {
+      const m = new RegExp(`^\\s*${esc(sender)}\\s*↦\\s*\\w+\\s*∈\\s*(\\w+)\\s*$`).exec(g.trim());
+      if (m && base.variableTypes.has(m[1])) out.add(m[1]);
+    }
+  }
+  return [...out];
 }
 
 // The RECEIVE events, derived the mirror image of the transmit ones.
@@ -347,9 +406,13 @@ export function enablingEventsOf(model: EncodedMachine, source: EncodedMachine,
 // sentDown to sentUp as its own postcondition, and staging those here would
 // falsify its own guards (`x ↦ pkt ∉ sentUp`).
 export function arrivalRequirementsOf(base: EncodedMachine, source: EncodedMachine,
-  receiveLabels: readonly string[], sendUpLabel = "send_up"): string[] {
+  receiveLabels: readonly string[],
+  // Per-node queues, which are never medium — see senderQueuesOf. Passed in
+  // rather than recomputed because the caller already has the transmit labels.
+  senderQueues: readonly string[] = [],
+  sendUpLabel = "send_up"): string[] {
   const su = base.events.find((e) => e.label === sendUpLabel);
-  const written = new Set<string>();
+  const written = new Set<string>(senderQueues);
   for (const a of su?.actions ?? []) {
     const m = /^\s*(\w+)\s*≔/.exec(a.trim());
     if (m) written.add(m[1]);

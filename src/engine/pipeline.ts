@@ -8,7 +8,7 @@ import { installScheduler } from "./scheduler";
 import { bindNodeIdentity } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
-import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
+import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { patternExtensionFor } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
@@ -325,7 +325,8 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
         // state only exist once the packet source's events have been carried,
         // so asking `base` whether it has them answers no and stages nothing.
         insert: [...new Set([...need.mustContain,
-          ...arrivalRequirementsOf(model, pModel, receiveEventsOf(base, pModel))])],
+          ...arrivalRequirementsOf(model, pModel, receiveEventsOf(base, pModel),
+            senderQueuesOf(model, pModel, transmitEventsOf(base, pModel)))])],
         remove: need.mustNotContain,
       };
       tree = installAppReceive(tree, outputName, packetIdentityOf(model, pm),
