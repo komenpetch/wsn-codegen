@@ -343,7 +343,53 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // consume what send_up publishes, and the transmits that carry the result
     // on. NOT the creating events: an arrival that ran the whole set made every
     // reception produce another packet, at zero simulated time.
-    const delivery = [...receiveEventsOf(base, pModel), ...transmitEventsOf(base, pModel)];
+    //
+    // ⚠ AND THE DELIVERY PAIR'S OWN `send_down`, WHICH IS WHERE A TRANSMISSION
+    // IS REALISED. Without it this set stopped one step short of its own stated
+    // intent: `transmitEventsOf` returns the events that FEED `sentDown`
+    // (`start_tx`), while `send_down` is the OBSERVATION they feed and the point
+    // the binding puts a real frame on the air. So a forwarded packet was queued
+    // on the arrival and then waited for the next timer tick to leave.
+    //
+    // Measured: `send_down` pinned at 56-59 on every node -- one per tick over a
+    // 60 s run -- against 74-110 `start_tx`, leaving 76-112 packets still queued
+    // at the end.
+    //
+    // FORWARD IMMEDIATELY, ORIGINATE ON THE TIMER, and that split is read off
+    // the case studies rather than chosen:
+    //
+    //   - INET's own MintRoute.cc does the forwarding INSIDE the reception
+    //     handler -- `onReceiveSensingPkt` rewrites the header and calls
+    //     `sendDown(packet)` there and then -- while `handleSelfMessage` is what
+    //     originates, one beacon and one route broadcast per firing.
+    //   - The thesis's CommPattern process says the same of the model: (S6) a
+    //     receiver that is not the destination re-records the packet in the
+    //     waiting buffer, and "steps (S4)-(S6) will be repeated" -- S4 being
+    //     `send down`. The loop is driven by reception, not by a clock.
+    //   - And this generator's OWN network module already does it: its arrival
+    //     calls the full `runEnabledEvents()`, `send_down` included, which is the
+    //     configuration the recorded four-hop flood was measured in.
+    // ⚠ SO THE SET IS "EVERYTHING EXCEPT THE CREATING EVENTS", which is what the
+    // paragraph above always said and what the two derivations only approximated.
+    // Naming the two ENDS of the chain -- what consumes the publication, and what
+    // feeds the transmit -- left its MIDDLE out: `fwdr_receive_pkt` is the
+    // rebroadcast decision itself (recvBuff → ndBuff) and belongs to neither set,
+    // so an accepted packet waited for the timer before it was even queued.
+    // Measured with only `send_down` added: `fwdr_receive_pkt` pinned at 53-59,
+    // one per tick, against 291-348 packets accepted.
+    //
+    // ✅ And "run the whole reception path here" is what both references do:
+    // MintRoute.cc's `onReceiveSensingPkt` does the dedup, the table update, the
+    // destination test, the header rewrite AND the sendDown in one handler; this
+    // generator's network module runs the entire `runEnabledEvents()`. The ONLY
+    // thing held back is packet creation, and that exclusion is measured, not
+    // cautionary -- over a full IP stack the node hears its own broadcast, so an
+    // arrival that created a packet produced another arrival at zero simulated
+    // time: 52,034 events at one instant.
+    const creating = new Set(pm.leaves.map((l) => l.event));
+    const recv = receiveEventsOf(base, pModel);
+    const delivery = [...recv, ...model.events.map((e) => e.label)
+      .filter((l) => !creating.has(l) && !recv.includes(l))];
     // ⚠ The base model's ABSTRACT versions of what was just carried must stop
     // being scheduled. Carrying a refinement into a model that still holds the
     // abstraction leaves the module running two accounts of one story, and the
