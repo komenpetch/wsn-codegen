@@ -5,6 +5,7 @@ import { getterOf } from "./packetModel";
 import { nestedMapVars } from "./nestedMap";
 import { pairKeyedVars } from "./pairKeyed";
 import { emittedMethods, splitParams, implOf, headerOf, unreachableEvents, mustFind, mustReplace, packetTypeLeaves } from "./emitted";
+import { DELIVERED_BY } from "./packetModel";
 import { esc } from "./text";
 
 // A relational image, in either of the two spellings the corpus uses.
@@ -112,6 +113,9 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
   enc: (id: string) => string | undefined, nestedVars: Set<string>, pktField: Map<string, string>,
   // Leaves of the emitted packet-type lattice -- see typeOf.
   leaves: ReadonlySet<string>,
+  // The Event-B name of the field carrying the SENDER, from senderFieldOf.
+  // Null when the model stamps none, in which case nothing is delivery-scoped.
+  senderField: string | null,
   // Variables whose key is a MAPLET, not a scalar -- the two binding cases
   // below read them as `f.at({a, b})`.
   pairKeyed: Set<string>): Plan {
@@ -239,7 +243,21 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         // is the same trap as in the construction branch below, and it is what
         // stopped find_neighbours firing even once it became schedulable.
         const acc = pktField.get(f);
-        if (acc) {
+        if (acc && f === senderField) {
+          // ⚠ THE FORWARDER IS A PROPERTY OF THE DELIVERY, NOT OF THE PACKET,
+          // so it is read from what the ARRIVAL recorded and not off the shared
+          // chunk. This module processes a delivery lazily -- the publication
+          // outlives the arrival that made it -- while this node's own
+          // `start_tx` re-stamps that chunk with its own id, so a receive event
+          // binding here at scheduling time read ITSELF as the forwarder.
+          // Mirror of the transmit, which pins the wire copy from send_down's
+          // own `x`; the model names this one too, as send_up's `x`.
+          // The chunk is the fallback, for a packet this node created itself
+          // and was never delivered.
+          lines.push(`    if (pktStore.count(${x}) == 0) ${bail()}`);
+          lines.push(`    ${par.cppType} ${p} = ${DELIVERED_BY}.count(${x}) > 0`
+            + ` ? ${DELIVERED_BY}.at(${x}) : pktOf(${x})->get${acc}()${arith};`);
+        } else if (acc) {
           lines.push(`    if (pktStore.count(${x}) == 0) ${bail()}`);
           lines.push(`    ${par.cppType} ${p} = pktOf(${x})->get${acc}()${arith};`);
         } else {
@@ -539,7 +557,9 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // Events the ARRIVAL runs inline instead of the timer scheduling them.
   arrivalEvents: readonly string[] = [],
   // Leaves of the emitted packet-type lattice, read off the header -- see typeOf.
-  leaves: ReadonlySet<string> = new Set()): { decls: string; defs: string } {
+  leaves: ReadonlySet<string> = new Set(),
+  // See planFor.
+  senderField: string | null = null): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -576,7 +596,7 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
     if (notScheduled.has(ev.label)) continue;
     const sig = sigs.get(ev.label);
     if (!sig) continue;                          // not emitted as a bool method
-    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField, leaves, pairKeyed);
+    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField, leaves, senderField, pairKeyed);
     plan.method = sig.method;
     plans.push(plan);
   }
@@ -722,14 +742,16 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // ctlNeighbours -- masking it would make receive_controlPkt look unreachable.
   neverRuns: ReadonlySet<string> = new Set(),
   // Events the ARRIVAL runs inline -- see emitScheduler.
-  arrivalEvents: readonly string[] = []): GeneratedTree {
+  arrivalEvents: readonly string[] = [],
+  // See planFor.
+  senderField: string | null = null): GeneratedTree {
   const ccFile = implOf(tree);
   if (!ccFile)
     throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
   // The packet-type leaves come from the emitted HEADER, where the enum is.
   const hdr = headerOf(tree);
   const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets,
-    deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""));
+    deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""), senderField);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

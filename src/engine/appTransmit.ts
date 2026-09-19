@@ -32,7 +32,7 @@
 
 import type { GeneratedTree } from "./types";
 import type { PacketModel } from "./packetModel";
-import { broadcastMethodOf } from "./packetModel";
+import { broadcastMethodOf, DELIVERED_BY } from "./packetModel";
 import { headerOf, implOf } from "./emitted";
 import { esc } from "./text";
 import { emitLocalIdFor, identityMembers } from "./mediumBinding";
@@ -271,6 +271,10 @@ function arrival(deliverMethod: string, senderGetter: string,
     "    emit(packetReceivedSignal, packet);",
     "    receivedCount++;",
     "    PktId _pkt = localIdFor(_wire.get());",
+    // WHO DELIVERED IT -- recorded here because that is the only place it is
+    // known. The publication outlives this arrival and the shared chunk moves
+    // on; see DELIVERED_BY.
+    `    ${DELIVERED_BY}[_pkt] = _f;`,
     ...(deserialise.length === 0 ? [] : [
       "    // ⚠ DESERIALISE, because the model's own delivery event does not.",
       "    //",
@@ -355,7 +359,12 @@ export function installAppReceive(tree: GeneratedTree, cls: string,
     if (f.path.endsWith(".h"))
       return { ...f, content: f.content
         .replace("    // ── Transmit ──",
-          identityMembers
+          `    // Who delivered each packet to this node: a property of the DELIVERY,
+    // not of the packet, and not readable off the shared chunk once this
+    // node's own transmit has re-stamped it.
+    std::map<PktId, Node> ${DELIVERED_BY};
+`
+          + identityMembers
           + "\n    // True when the address is one of this node's own, loopback included."
           + "\n    bool isOwnAddress(const L3Address& addr) const;\n"
           + "\n    // ── Transmit ──")

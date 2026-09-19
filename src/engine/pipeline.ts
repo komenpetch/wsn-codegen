@@ -426,7 +426,10 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // updateNbrCounters() is called at the top of onReceiveBeaconPkt, never
       // from a timer. Scheduling them instead would give the module a second,
       // timer-driven account of one reception.
-      drainLabels);
+      drainLabels,
+      // The forwarder is a property of the DELIVERY, so a receive event binds
+      // it from what the arrival recorded rather than off the shared chunk.
+      fwdr ? fwdr.ebName : null);
   }
   if (version === 2) {
     // One model, whichever way this goes: tryNetworkLayer hands back the one it

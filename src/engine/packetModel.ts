@@ -29,6 +29,27 @@ export const setterOf = (f: PacketField): string => `set${cap(f.name)}`;
 // sendDown(packet), the application in socket->send(packet). The NAME is the
 // same question in both, and the advisor named these methods specifically.
 export const broadcastMethodOf = (tag: string): string => `send${capTag(tag)}Broadcast`;
+
+// The binding-layer record of WHO DELIVERED each packet to this node.
+//
+// The sender is a property of the TRANSMISSION, and the forwarder a property of
+// the DELIVERY -- not of the packet. The transmit already acts on that: it pins
+// the wire copy from send_down's own `x` rather than reading the shared chunk.
+// This is the same fact on the receive side, and the model names it the same
+// way: send_up(x, pkt, nbrs) takes the forwarder as `x`, and the arrival has it.
+//
+// It is needed because the per-node module processes a delivery LAZILY. The
+// publication `ctlNeighbours := ctlNeighbours u ({pkt} x nbrs)` outlives the
+// arrival that made it, while the chunk field moves on -- this node's own
+// start_tx re-stamps the shared chunk with its own id. A receive event binding
+// `f = pktFwdr(pkt)` at scheduling time then reads ITSELF as the forwarder. In
+// the global model that cannot happen: there is one pktFwdr, and the delivery
+// is consumed where it occurs.
+//
+// Measured: on the nine-node field three nodes recorded THEMSELVES as a
+// neighbour, and the count of `start_tx` re-stamping a packet still pending
+// delivery was non-zero on exactly those three and zero on the other six.
+export const DELIVERED_BY = "deliveredBy";
 export interface PacketLeaf { typeName: string; tag: string; event: string; }
 export interface PacketModel { fields: PacketField[]; leaves: PacketLeaf[]; lattice: TypeLattice; }
 
