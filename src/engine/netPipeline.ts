@@ -163,7 +163,7 @@ export function tryNetworkLayer(raw: RawModel, machine: string, name: string): N
   // provenance comment above it. Renaming afterwards would leave bindMedium
   // calling a method that no longer exists.
   tree = renameCommPatternPair(tree, name);
-  tree = bindNodeIdentity(tree, model, name);
+  tree = bindNodeIdentity(tree, model, raw.contexts, name);
   // The medium binding is planned against the FINAL emitted signatures (the
   // CommPattern rename and fixSetTypedParameters have both run by now), and it
   // must precede the scheduler: which events the simulator realises decides

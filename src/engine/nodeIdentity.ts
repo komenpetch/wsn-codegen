@@ -1,5 +1,5 @@
 import { INITIALISATION } from "./types";
-import type { EncodedMachine, GeneratedTree } from "./types";
+import type { EncodedMachine, GeneratedTree, RawContext } from "./types";
 import { mustFind } from "./emitted";
 
 // The node-level identity binding: bind the model's carrier set to the
@@ -27,20 +27,72 @@ import { mustFind } from "./emitted";
 // and reading `Sink` in the next is what makes the sink known to everyone. Doing
 // both in one stage would leave the answer dependent on module order.
 
-interface CartesianInit { target: string; overSink: boolean; value: string; }
+// WHICH constant names the distinguished node, derived rather than assumed.
+//
+// This used to be the literal name `Sink`, which is MintRoute's and RTMCS's
+// name for it -- the only two models that had ever reached this binding. A
+// model that does not declare it emitted `myNodeId = isSink ? Sink : ...`
+// against an undeclared identifier and did not compile.
+//
+// The discriminator is measured, not guessed: across the corpus the sink is the
+// only constant carrying BOTH a value axiom (`Sink = 0` -- the model fixes its
+// id, which is why the id is adopted rather than assigned) AND a membership
+// axiom placing it in the node set (`Sink ∈ ND`, or RTMCS's `Sink ∈ Destination`
+// with `Destination ⊆ ND`). Neither half alone is enough: `CTL_VAL = 0` is
+// pinned but is not a node, and `DATA ∈ TYPE` is typed but has no value.
+//
+// Null is a legitimate answer, not a failure. The app-layer pattern's own
+// vocabulary is `ND ∖ Dests` -- a SET of destinations, no single distinguished
+// node -- so there is no id to adopt and every node takes its module id.
+export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
+  const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
+
+  // Node sets: ND itself, plus anything a `S ⊆ ND` axiom places inside it.
+  // Resolved to a fixpoint so `A ⊆ B ⊆ ND` counts, whatever order they appear.
+  const nodeSets = new Set(["ND"]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const a of axioms) {
+      const m = /^(\w+)\s*⊆\s*(\w+)$/.exec(a);
+      if (m && nodeSets.has(m[2]) && !nodeSets.has(m[1])) { nodeSets.add(m[1]); grew = true; }
+    }
+  }
+
+  const pinned = new Set<string>();
+  const inNodeSet = new Set<string>();
+  for (const a of axioms) {
+    const v = /^(\w+)\s*=\s*-?\d+$/.exec(a);
+    if (v) pinned.add(v[1]);
+    const t = /^(\w+)\s*∈\s*(\w+)$/.exec(a);
+    if (t && nodeSets.has(t[2])) inNodeSet.add(t[1]);
+  }
+
+  const declared = new Set(contexts.flatMap((c) => c.constants));
+  const found = [...pinned].filter((c) => inNodeSet.has(c) && declared.has(c));
+  // Two would mean two distinguished nodes and no way to choose between them.
+  // Refusing beats adopting whichever the context order happened to yield.
+  if (found.length > 1)
+    throw new Error(`bindNodeIdentity: ${found.join(", ")} are all pinned node constants, so `
+      + "which one the simulation's sink adopts is ambiguous. Expected exactly one.");
+  return found[0] ?? null;
+}
+
+interface CartesianInit { target: string; excluded: string | null; value: string; }
 
 // `f ≔ ND × {v}` and `f ≔ (ND ∖ {Sink}) × {v}` from INITIALISATION. These could
 // not run at construction time -- ND was empty then -- so they are specialised
-// to this node once its id exists.
+// to this node once its id exists. The excluded name is CAPTURED rather than
+// assumed to be the sink: it is the model that says which node the assignment
+// skips.
 function cartesianInits(model: EncodedMachine): CartesianInit[] {
   const init = model.events.find((e) => e.label === INITIALISATION);
   if (!init) return [];
   const out: CartesianInit[] = [];
   for (const a of init.actions) {
-    const m = /^\s*(\w+)\s*≔\s*(\(?\s*\w+\s*(?:∖\s*\{\s*\w+\s*\})?\s*\)?)\s*×\s*\{\s*(∅|\w+)\s*\}\s*$/.exec(a);
+    const m = /^\s*(\w+)\s*≔\s*\(?\s*\w+\s*(?:∖\s*\{\s*(\w+)\s*\})?\s*\)?\s*×\s*\{\s*(∅|\w+)\s*\}\s*$/.exec(a);
     if (!m) continue;
     const cpp = m[3] === "∅" ? null : m[3] === "FALSE" ? "false" : m[3] === "TRUE" ? "true" : m[3];
-    out.push({ target: m[1], overSink: !/∖/.test(m[2]), value: cpp ?? "" });
+    out.push({ target: m[1], excluded: m[2] ?? null, value: cpp ?? "" });
   }
   return out;
 }
@@ -67,6 +119,8 @@ const IDENTITY_STAGE: Record<ShellKind, string> = {
   application: "INITSTAGE_APPLICATION_LAYER",
 };
 
+// Sink-ness is an ADDRESS COMPARISON, never a name test or a harness
+// convention. Emitted verbatim when the model names a distinguished node.
 const addressLines: Record<ShellKind, string[]> = {
   network: [
     "        // Both addresses are the network shell's own members, resolved just",
@@ -91,9 +145,41 @@ const addressLines: Record<ShellKind, string[]> = {
   ],
 };
 
-export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine, cls: string,
-  shell: ShellKind = "network"): GeneratedTree {
+// With no distinguished node there is nothing to compare an address AGAINST, so
+// the sink test is not emitted at all. The application still resolves its own
+// address: the arrival recognises this node's own broadcast coming back up the
+// stack by it, and that must be an address the SIMULATOR owns, since a model
+// field would be re-stamped.
+const selfAddressOnly: Record<ShellKind, string[]> = {
+  network: [],
+  application: [
+    "        // Kept as a member: the arrival needs it to recognise this node's own",
+    "        // broadcast coming back up the stack, and it must be an address the",
+    "        // SIMULATOR owns -- a model field would be re-stamped.",
+    "        L3AddressResolver().tryResolve(getContainingNode(this)->getFullName(), myNetwAddr);",
+  ],
+};
+
+export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
+  contexts: readonly RawContext[], cls: string, shell: ShellKind = "network"): GeneratedTree {
   const inits = cartesianInits(model);
+  const sink = sinkConstantOf(contexts);
+
+  const identity = sink
+    ? [
+      ...addressLines[shell],
+      `        // ${sink} is a CONTEXT CONSTANT: the model fixes its value, so the id is`,
+      "        // adopted rather than assigned. Every other node takes its module id,",
+      `        // which INET never issues as 0, so it cannot collide with ${sink}.`,
+      `        myNodeId = isSink ? ${sink} : getContainingNode(this)->getId();`,
+    ]
+    : [
+      ...selfAddressOnly[shell],
+      "        // This model names no distinguished node -- its vocabulary is a SET of",
+      "        // destinations (`ND ∖ Dests`), not a single sink -- so no id is fixed by",
+      "        // the context and every node simply takes its own module id.",
+      "        myNodeId = getContainingNode(this)->getId();",
+    ];
 
   const seed = [
     "",
@@ -102,20 +188,16 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine, cls
     "    // INET MintRoute's own approach: a node IS its address, and the sink is",
     "    // decided by comparing addresses -- never by a harness convention.",
     `    if (stage == ${IDENTITY_STAGE[shell]}) {`,
-    ...addressLines[shell],
-    "        // Sink is a CONTEXT CONSTANT: the model fixes its value, so the id is",
-    "        // adopted rather than assigned. Every other node takes its module id,",
-    "        // which INET never issues as 0, so it cannot collide with Sink.",
-    "        myNodeId = isSink ? Sink : getContainingNode(this)->getId();",
+    ...identity,
     "        ND.insert(myNodeId);",
     "    }",
-    "    // A LATER stage, so every node has registered and Sink is settled: INET",
+    `    // A LATER stage, so every node has registered and ${sink ?? "ND"} is settled: INET`,
     "    // runs all modules through one stage before any reaches the next.",
     "    if (stage == INITSTAGE_LAST) {",
     ...inits.map((i) =>
-      i.overSink
+      i.excluded === null
         ? `        ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // ${i.target} ≔ ND × {…}`
-        : `        if (myNodeId != Sink) ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // over ND ∖ {Sink}`),
+        : `        if (myNodeId != ${i.excluded}) ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // over ND ∖ {${i.excluded}}`),
     "    }",
   ].join("\n");
 

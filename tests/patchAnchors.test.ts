@@ -53,7 +53,7 @@ describe("a missing anchor is a precondition failure, not a no-op", () => {
   it("bindNodeIdentity refuses a .cc whose initialize() it cannot find", () => {
     expect(() => bindNodeIdentity(
       tree([["X.h", "    // ── Event-B machine state ──\n"], ["X.cc", "void X::somethingElse() {\n}\n"]]),
-      bareModel, "X"))
+      bareModel, [], "X"))
       .toThrow(/bindNodeIdentity/);
   });
 });

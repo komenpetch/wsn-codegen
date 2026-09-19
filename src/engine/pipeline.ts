@@ -241,7 +241,15 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
-    tree = bindNodeIdentity(tree, model, outputName, "application");
+    // ⚠ The UNMERGED contexts of both sides, not `mergedRaw.contexts`.
+    // mergeContexts is deduplicating for EMISSION and is lossy by design: for
+    // MintRoute it keeps `Sink = 0` but drops both `Sink ∈ ND` and the constant
+    // declaration itself, because neither is new. sinkConstantOf only READS, so
+    // it wants everything the two models say -- given the merged set it finds no
+    // sink here and silently stops emitting the sink test. (Caught by the byte
+    // gate; before it, structure 3 emitted that test correctly.)
+    tree = bindNodeIdentity(tree, model, [...raw.contexts, ...pRaw.contexts],
+      outputName, "application");
     // The receive half: an arrival runs the model's own send_up, which publishes
     // who received the packet; the carried receive events then consume that and
     // re-queue it for transmission. That loop is the rebroadcast.
