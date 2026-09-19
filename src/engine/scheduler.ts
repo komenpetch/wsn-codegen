@@ -5,6 +5,33 @@ import { getterOf } from "./packetModel";
 import { nestedMapVars } from "./nestedMap";
 import { pairKeyedVars } from "./pairKeyed";
 import { emittedMethods, splitParams, implOf, unreachableEvents, mustFind, mustReplace } from "./emitted";
+import { esc } from "./text";
+
+// A relational image, in either of the two spellings the corpus uses.
+//
+// `R[{x}]` is the direct one. `ran({x} ◁ R)` -- the range of a domain
+// restriction -- is the SAME SET by the identity `R[{x}] = ran({x} ◁ R)`, and
+// it is the spelling the CommPattern itself uses:
+//
+//     des = ran({pkt} ◁ finalDestAddr)      (creatingControlPacket, uM2)
+//
+// Only the direct spelling was recognised, so `des` was reported as having no
+// binding on every model that carries the pattern's creating events -- although
+// it is fully DETERMINED once `pkt` is known, which is a lookup and not a
+// search. Both forms resolve to the same emitted `relImage(R, x)`.
+//
+// ⚠ Deliberately narrow: `ran(R)` is the whole range, `ran(S ◁ R)` over a set
+// variable is an image over many points, and `▷` restricts the range instead of
+// the domain. None of those is `R[{x}]`, so none is claimed here.
+export function relationalImageOf(clause: string, p: string): { R: string; x: string } | null {
+  const c = clause.trim();
+  const direct = new RegExp(`^${esc(p)}\\s*=\\s*(\\w+)\\s*\\[\\s*\\{\\s*(\\w+)\\s*\\}\\s*\\]$`).exec(c);
+  if (direct) return { R: direct[1], x: direct[2] };
+  const ranDom = new RegExp(
+    `^${esc(p)}\\s*=\\s*ran\\s*\\(\\s*\\{\\s*(\\w+)\\s*\\}\\s*◁\\s*(\\w+)\\s*\\)$`).exec(c);
+  if (ranDom) return { R: ranDom[2], x: ranDom[1] };
+  return null;
+}
 
 // A generic event scheduler.
 //
@@ -224,15 +251,13 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         lines.push(`    ${par.cppType} ${p} = ${q} - ${f}.at({${a}, ${b}})${n ? ` - ${n}` : ""};`);
         resolved.add(p); progress = true; continue;
       }
-      // determined: p = R[{x}] -- a relational image. Set-valued, but still
-      // COMPUTED rather than searched: once x is known the image is a lookup,
-      // which is what makes a set-typed parameter bindable at all.
-      const img = clauses.map((c) =>
-        new RegExp(`^${p}\\s*=\\s*(\\w+)\\s*\\[\\s*\\{\\s*(\\w+)\\s*\\}\\s*\\]$`).exec(c.trim())
-      ).find(Boolean);
-      if (img && known(img[2])) {
-        const [, R, x] = img;
-        lines.push(`    std::set<Node> ${p} = relImage(${R}, ${x});`);
+      // determined: a relational image. Set-valued, but still COMPUTED rather
+      // than searched: once x is known the image is a lookup, which is what
+      // makes a set-typed parameter bindable at all. Both spellings -- see
+      // relationalImageOf.
+      const img = clauses.map((c) => relationalImageOf(c, p)).find(Boolean);
+      if (img && known(img.x)) {
+        lines.push(`    std::set<Node> ${p} = relImage(${img.R}, ${img.x});`);
         resolved.add(p); progress = true; continue;
       }
       // determined: p = <bare name already known, or a context constant>

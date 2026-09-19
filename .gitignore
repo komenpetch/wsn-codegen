@@ -32,7 +32,7 @@ dist-ssr
 /out-*/
 
 # Local diagnostic probes (never published).
-scripts/_*.ts
+scripts/_*
 
 # Local benchmark output (scripts/benchmark.ts, scripts/measure-*). Regenerable,
 # and not the paper's measurement data — that lives frozen in paper2/data/.
