@@ -50,8 +50,11 @@ const decls = (tags: string[], once: boolean): string => [
   "    // One method per packet type, named as MintRoute names its own. The",
   "    // application hands the frame to its socket where the network protocol",
   "    // would hand it to sendDown(); everything else is the same three steps.",
-  `    void ${DISPATCH}(PktId pkt);`,
-  ...tags.map((t) => `    virtual void ${broadcastMethodOf(t)}(PktId pkt);`),
+  "    //",
+  "    // `x` is send_down's own sender parameter — see the wire copy below for",
+  "    // why the transmit takes it rather than reading it back off the chunk.",
+  `    void ${DISPATCH}(Node x, PktId pkt);`,
+  ...tags.map((t) => `    virtual void ${broadcastMethodOf(t)}(Node x, PktId pkt);`),
   "    L3Address broadcastAddress() const;",
   ...(once ? [
     "    // Transmissions this module has already realised. The model's own",
@@ -62,15 +65,36 @@ const decls = (tags: string[], once: boolean): string => [
   ] : []),
 ].join("\n");
 
-const defs = (cls: string, tags: string[]): string => {
+const defs = (cls: string, tags: string[], senderSetter: string | null): string => {
   const one = (tag: string) => [
     `// Event-B: the model's own transmit, for a packet of type ${tag}.`,
     `// Shaped after MintRoute::${broadcastMethodOf(tag)}: build the frame from the`,
     "// packet the model made, address it to the broadcast address, send it, count it.",
-    `void ${cls}::${broadcastMethodOf(tag)}(PktId pkt) {`,
+    `void ${cls}::${broadcastMethodOf(tag)}(Node x, PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",
     "    if (held == nullptr || socket == nullptr) return;",
     "    auto chunk = makeShared<PPkt>(*held);",
+    ...(senderSetter ? [
+      "    // ⚠ THE SENDER IS PINNED FROM THE MODEL, NOT READ BACK OFF THE CHUNK.",
+      "    //",
+      "    // There is ONE local chunk per packet identity (localIdFor), and both",
+      "    // the arrival and this transmit path use it. So between start_tx",
+      "    // stamping the forwarder and this method copying the chunk, another",
+      "    // arrival of the SAME packet from a different neighbour can overwrite",
+      "    // that stamp -- and the frame then goes out carrying the neighbour's",
+      "    // id. Receivers record a neighbour they have never heard from.",
+      "    //",
+      "    // The model already says who is sending: send_down observes",
+      "    // `x ↦ pkt ∈ sentDown`, and that `x` is this transmission's sender.",
+      "    // Pinning the wire copy from it closes the race without the local",
+      "    // chunk having to be race-free -- the chunk is the model's state and",
+      "    // stays as the model left it; only the copy on the wire is fixed.",
+      "    //",
+      "    // Measured before this: 15 frames across a nine-node field left with",
+      "    // the wrong forwarder, which cost every node up to three neighbour",
+      "    // table entries for nodes outside its radio range.",
+      `    chunk->${senderSetter}(x);`,
+    ] : []),
     "    chunk->setChunkLength(B(payloadLength));",
     `    Packet *packet = new Packet("eb-${tag.toLowerCase()}", chunk);`,
     "    packet->addTag<PacketProtocolTag>()->setProtocol(&Protocol::manet);",
@@ -90,11 +114,11 @@ const defs = (cls: string, tags: string[]): string => {
     "}",
     "",
     "// Dispatch on the packet's OWN type, as the model recorded it.",
-    `void ${cls}::${DISPATCH}(PktId pkt) {`,
+    `void ${cls}::${DISPATCH}(Node x, PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",
     "    if (held == nullptr) return;",
     "    switch (held->getType()) {",
-    ...tags.map((t) => `        case PktType::${t}: ${broadcastMethodOf(t)}(pkt); break;`),
+    ...tags.map((t) => `        case PktType::${t}: ${broadcastMethodOf(t)}(x, pkt); break;`),
     "        default:",
     `            EV_WARN << "${cls}: packet " << pkt << " has no transmit method for its type" << endl;`,
     "            break;",
@@ -138,7 +162,7 @@ function rewriteSendDown(cc: string, once: boolean): string {
       `    if (!${TX_DONE}.insert({x, pkt}).second)`,
       "        return false;",
     ] : []),
-    `    ${DISPATCH}(pkt);`,
+    `    ${DISPATCH}(x, pkt);`,
     "    sendSeqNo++;",
   ].join("\n") + cc.slice(end);
 }
@@ -146,7 +170,11 @@ function rewriteSendDown(cc: string, once: boolean): string {
 export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketModel,
   // True when the model's transmit event does NOT record its own firing, so the
   // module must. See transmitRecordsItsOwnFiring.
-  once = false): GeneratedTree {
+  once = false,
+  // The chunk setter for the field that carries the sender, from senderFieldOf.
+  // Null when the model stamps no such field, in which case the wire copy is
+  // left exactly as the model made it.
+  senderSetter: string | null = null): GeneratedTree {
   // Ordered by tag value, the same order the PktType enum is emitted in.
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t);
   if (tags.length === 0) return tree;
@@ -169,7 +197,7 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
       const body = rewriteSendDown(f.content, once);
       const at = body.search(new RegExp(`^bool ${esc(cls)}::`, "m"));
       if (at < 0) throw new Error("appTransmit: no event method to place the transmit definitions before.");
-      return { ...f, content: body.slice(0, at) + defs(cls, tags) + "\n\n" + body.slice(at) };
+      return { ...f, content: body.slice(0, at) + defs(cls, tags, senderSetter) + "\n\n" + body.slice(at) };
     }
     return f;
   });

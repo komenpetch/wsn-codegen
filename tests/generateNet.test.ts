@@ -561,8 +561,8 @@ describe("v5 carries the packet pattern's operations", () => {
 
   it("emits one transmit method per packet type, named as MintRoute names its own", () => {
     for (const m of ["sendDataBroadcast", "sendRouteBroadcast", "sendBeaconBroadcast"]) {
-      expect(cc).toContain(`void Pm3Wsn::${m}(PktId pkt)`);
-      expect(h).toContain(`virtual void ${m}(PktId pkt);`);
+      expect(cc).toContain(`void Pm3Wsn::${m}(Node x, PktId pkt)`);
+      expect(h).toContain(`virtual void ${m}(Node x, PktId pkt);`);
     }
   });
 
@@ -581,7 +581,10 @@ describe("v5 carries the packet pattern's operations", () => {
     // packet of its own; now it has one.
     const fn = cc.slice(cc.indexOf("bool Pm3Wsn::sendSensorPacket(Node x, PktId pkt)"));
     const body = fn.slice(0, fn.indexOf("\n}"));
-    expect(body).toContain("transmitPacket(pkt);");
+    // ⚠ WITH THE SENDER. The transmit pins the wire copy from send_down's own
+    // `x` rather than reading it back off the shared local chunk, which an
+    // arrival of the same packet can overwrite between the stamp and the send.
+    expect(body).toContain("transmitPacket(x, pkt);");
     // The CONSTRUCTION, not the word -- the comment left behind names what was
     // replaced, and asserting on the word matched that instead.
     expect(body).not.toContain("makeShared<ByteCountChunk>");

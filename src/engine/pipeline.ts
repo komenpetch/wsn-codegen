@@ -12,7 +12,7 @@ import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablin
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { patternExtensionFor } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
-import { getterOf } from "./packetModel";
+import { getterOf, setterOf } from "./packetModel";
 import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
 import { capTag, carrierSetsOf } from "./text";
@@ -255,12 +255,16 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // in send_down; the scheduler then fires the events that reach it. Without
     // the scheduler the creating events are emitted and never called, so the
     // module compiles and does nothing -- which is what v5 was until now.
+    // Derived BEFORE the transmit, because the transmit pins the wire copy
+    // from send_down's own sender parameter rather than reading it back off
+    // the shared local chunk. See senderFieldOf.
+    const fwdr = senderFieldOf(pModel, pm, transmitEventsOf(base, pModel));
     tree = installAppTransmit(tree, outputName, pm,
       // This model's send_down is a pure OBSERVATION and nothing clears the
       // pair it observes on the SENDER, so the module records which
       // transmissions it has already realised. A model that keeps that record
       // itself gets nothing. See transmitRecordsItsOwnFiring.
-      !transmitRecordsItsOwnFiring(base));
+      !transmitRecordsItsOwnFiring(base), fwdr ? setterOf(fwdr) : null);
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
@@ -283,7 +287,6 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // binding if it missed, so a packet source with a differently named sender
     // field would have produced a module that compiles, runs and never
     // receives. See senderFieldOf.
-    const fwdr = senderFieldOf(pModel, pm, transmitEventsOf(base, pModel));
     if (!sendUp || !fwdr)
       throw new Error(
         "The packet pattern cannot be bound to an arrival: "
