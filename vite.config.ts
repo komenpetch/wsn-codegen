@@ -28,6 +28,9 @@ const needsModels = [
   "tests/packetModel.test.ts",
   "tests/packetRulesEvidence.test.ts",
   "tests/packetTypes.test.ts",
+  // Reads C0_project and MintRoute to construct the one scenario in which an
+  // image-bound parameter is actually reached.
+  "tests/imageParamType.test.ts",
 ];
 if (!haveModels)
   console.warn(

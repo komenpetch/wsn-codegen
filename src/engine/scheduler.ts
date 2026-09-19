@@ -257,7 +257,35 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
       // relationalImageOf.
       const img = clauses.map((c) => relationalImageOf(c, p)).find(Boolean);
       if (img && known(img.x)) {
-        lines.push(`    std::set<Node> ${p} = relImage(${img.R}, ${img.x});`);
+        // ⚠ BIND AT THE PARAMETER'S DECLARED TYPE, not always as a set.
+        //
+        // `std::set<Node>` was hardcoded here, which is right for a parameter
+        // the model types as a set (`nbs`, declared `const std::set<Node>&`)
+        // and wrong for one it does not. The CommPattern's `des` has no typing
+        // guard of its own -- only the defining `des = ran({pkt} ◁
+        // finalDestAddr)` -- so it is declared `int`, and binding a set to it
+        // does not compile. That was invisible until the creating events
+        // became schedulable.
+        //
+        // The scalar branch agrees with what the rest of the module already
+        // says: the rule catalog translates that same guard as `des ==
+        // finalDestAddr.at(pkt)`. Over a total function the image is a
+        // SINGLETON, so the element and the one-element set carry the same
+        // information and the guard is equally true either way.
+        //
+        // ⚠ Recorded rather than hidden: the model makes `des` a SET, and
+        // typing it scalar is a simplification the catalog made first. Making
+        // it a genuine set means changing the parameter's inferred type AND
+        // that catalog rule together -- both, or neither, or the two halves
+        // disagree exactly as they did here.
+        if (/set</.test(par.cppType)) {
+          lines.push(`    std::set<Node> ${p} = relImage(${img.R}, ${img.x});`);
+        } else {
+          // `.at` throws on a missing key, and an Event-B guard is an unordered
+          // conjunction, so the domain check cannot be assumed to precede it.
+          lines.push(`    if (${img.R}.count(${img.x}) == 0) ${bail()}`);
+          lines.push(`    ${par.cppType} ${p} = ${img.R}.at(${img.x});`);
+        }
         resolved.add(p); progress = true; continue;
       }
       // determined: p = <bare name already known, or a context constant>

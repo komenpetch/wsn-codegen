@@ -470,8 +470,15 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" });
     const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
+    // ⚠ `/^creat/`, not `/^create_/`. The property is "only a CREATING event
+    // mints", and the two models spell that differently: MintRoute's are
+    // `create_bconPkt`/`create_routePkt`, the CommPattern's abstract one is
+    // `creatingControlPacket`. The narrower pattern passed only while
+    // `creatingControlPacket` was being dropped by the reachability pass for a
+    // reason that turned out to be false (`nothing fills Dests`, when the guard
+    // `x ∈ ND ∖ Dests` wants x OUTSIDE it) -- so the test was resting on a bug.
     for (const m of cc.matchAll(/bool Pm3Wsn::try_(\w+)\(\)\n\{([\s\S]*?)\n\}/g))
-      if (m[2].includes("newPktId()")) expect(m[1]).toMatch(/^create_/);
+      if (m[2].includes("newPktId()")) expect(m[1]).toMatch(/^creat/);
     // ⚠ And the arrival mints nothing at all. The drain events are emitted
     // inline there rather than as try_ methods, so scanning only try_ methods
     // would have missed final_tx_controlPkt -- the event this narrowing is

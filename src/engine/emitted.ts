@@ -226,16 +226,68 @@ function producedBy(text: string): Produced {
   return { containers, types, scalars };
 }
 
+// Drop every `!( … )` group, parens balanced.
+//
+// ⚠ A container named inside a negation is NOT required to be non-empty — the
+// guard wants the parameter to be OUTSIDE it, which says nothing about whether
+// it has members. The CommPattern's own originator guard is exactly this shape:
+//
+//     x ∈ ND ∖ Dests   ->   (ND.count(x) > 0 && !(Dests.count(x) > 0))
+//
+// and `Dests` was being recorded as required, so every creating event was
+// dropped for a reason that is false. `Dests` is a context constant the harness
+// populates; nothing in the emitted code fills it, and nothing needs to.
+//
+// The whole group goes, including anything positive inside it: `!(a && b)` is
+// an absence claim about the conjunction, so neither term is required.
+// Conservative in the safe direction — under-removing leaves a dead method,
+// over-removing breaks behaviour.
+function stripNegatedGroups(expr: string): string {
+  // Past a balanced parenthesised group starting at `k`.
+  const past = (k: number): number => {
+    let depth = 0, j = k;
+    for (; j < expr.length; j++) {
+      if (expr[j] === "(") depth++;
+      else if (expr[j] === ")" && --depth === 0) return j + 1;
+    }
+    return j;
+  };
+
+  let out = "";
+  for (let i = 0; i < expr.length;) {
+    // `!=` is a comparison, not a negation; the second character decides.
+    if (expr[i] !== "!" || expr[i + 1] === "=") { out += expr[i++]; continue; }
+
+    let j = i + 1;
+    if (expr[j] === "(") {
+      j = past(j);                       // !( … )
+    } else {
+      // A bare negated term: `!inRan(a, b)`, `!X.count(y)`, `!X.empty()`.
+      // Measured, not hypothetical -- the corpus has three `!inRan(` with no
+      // parentheses of their own, and leaving them would record the very
+      // container the guard wants the parameter to be OUTSIDE of.
+      while (j < expr.length && /[A-Za-z0-9_.:]/.test(expr[j])) j++;
+      if (expr[j] === "(") j = past(j);
+    }
+    i = j;
+  }
+  return out;
+}
+
 function requiredBy(body: string): Produced {
   const containers = new Set<string>(), types = new Set<string>(), scalars = new Set<string>();
   for (const line of body.split("\n")) {
     const g = /^\s*if \(!\((.*)\)\)\s*$/.exec(line);
     if (!g) continue;
     const expr = g[1];
-    if (expr.startsWith("!")) continue;   // a negated guard asserts ABSENCE
-    for (const m of expr.matchAll(/inRan\((\w+),/g)) containers.add(m[1]);
-    for (const m of expr.matchAll(/(\w+)\.count\([^)]*\)\s*>\s*0/g)) containers.add(m[1]);
-    for (const m of expr.matchAll(/getType\(\)\s*==\s*PktType::(\w+)/g)) types.add(m[1]);
+    // ⚠ No `startsWith("!")` short-circuit any more. It skipped the WHOLE line
+    // when the expression merely BEGAN with a negation, so a positive
+    // requirement after it (`!(a) && floodTbl.count(x) > 0`) was missed too.
+    // The stripper removes the negated terms and leaves the rest.
+    const positive = stripNegatedGroups(expr);
+    for (const m of positive.matchAll(/inRan\((\w+),/g)) containers.add(m[1]);
+    for (const m of positive.matchAll(/(\w+)\.count\([^)]*\)\s*>\s*0/g)) containers.add(m[1]);
+    for (const m of positive.matchAll(/getType\(\)\s*==\s*PktType::(\w+)/g)) types.add(m[1]);
     const sc = /^(\w+) == (?:TRUE|FALSE)$/.exec(expr);
     if (sc) scalars.add(sc[1]);
   }
