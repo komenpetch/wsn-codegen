@@ -27,7 +27,7 @@
 // Those are the Specific layer in the class diagram and were never in scope.
 
 import { INITIALISATION } from "./types";
-import { addsMaplet, addsTo, anyMapletAdded, removesFrom, variableAddedTo } from "./actionShapes";
+import { addsMaplet, addsTo, anyMapletAdded, mapletAddedTo, removesFrom, variableAddedTo } from "./actionShapes";
 import type { EncodedMachine, FlatEvent, RawContext, RawModel, Labelled } from "./types";
 import { eventAncestry } from "./flattener";
 import { esc } from "./text";
@@ -187,10 +187,12 @@ export function senderQueuesOf(base: EncodedMachine, source: EncodedMachine,
     let sender: string | null = null;
     for (const a of ev.actions)
       for (const v of observed) {
-        const m = new RegExp(
-          `^\\s*${esc(v)}\\s*≔\\s*${esc(v)}\\s*∪\\s*\\{\\s*(\\w+)\\s*↦\\s*\\w+\\s*\\}\\s*$`)
-          .exec(a.trim());
-        if (m) sender = m[1];
+        // The maplet form specifically: `V ≔ V ∪ {x ↦ pkt}` files ONE packet
+        // under ONE node, and the first half is this transmission's sender.
+        // actionShapes owns the shape; this was an eleventh hand-written copy
+        // of it, and the de-duplication guard could not see it.
+        const maplet = mapletAddedTo(a, v);
+        if (maplet) sender = maplet[0];
       }
     if (!sender) continue;
     for (const g of ev.guards.flatMap((x) => x.split("∧"))) {

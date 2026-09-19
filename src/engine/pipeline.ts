@@ -5,14 +5,14 @@ import { resolveEncodings } from "./encodingResolver";
 import { emit, type EmitVersion } from "./codeEmitter";
 import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
 import { installScheduler } from "./scheduler";
-import { bindNodeIdentity } from "./nodeIdentity";
+import { bindNodeIdentity, nodeSetsOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
+import { routeTableOf, bindRoutingTable } from "./routingTable";
 import { patternExtensionFor } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
-import { getterOf, setterOf } from "./packetModel";
 import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
 import { capTag, carrierSetsOf } from "./text";
@@ -264,7 +264,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // pair it observes on the SENDER, so the module records which
       // transmissions it has already realised. A model that keeps that record
       // itself gets nothing. See transmitRecordsItsOwnFiring.
-      !transmitRecordsItsOwnFiring(base), fwdr ? setterOf(fwdr) : null);
+      !transmitRecordsItsOwnFiring(base), fwdr);
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
@@ -333,7 +333,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
         remove: need.mustNotContain,
       };
       tree = installAppReceive(tree, outputName, packetIdentityOf(model, pm),
-        sendUp.method, getterOf(fwdr), staged,
+        sendUp.method, fwdr, staged,
         // Nothing restores the packet's fields on a receiving node otherwise:
         // this model's delivery event is the ABSTRACT one. See
         // deserialiseFieldsOf.
@@ -417,7 +417,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // unreachableEvents.
     const neverRuns = new Set(superseded.keys());
     superseded.set("send_up", "the socket arrival realises it, on a real reception");
-    return installScheduler(tree, model, outputName, pm.fields, superseded, true,
+    const scheduled = installScheduler(tree, model, outputName, pm.fields, superseded, true,
       carrierSetsOf(raw, pRaw), delivery,
       "the model's own\n    //  transmit event is the transmit path now", neverRuns,
       // ⚠ The drain events run ON THE ARRIVAL, not on the timer. They undo what
@@ -429,7 +429,14 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       drainLabels,
       // The forwarder is a property of the DELIVERY, so a receive event binds
       // it from what the arrival recorded rather than off the shared chunk.
-      fwdr ? fwdr.ebName : null);
+      fwdr);
+    // PRouteTable published to INET, when the model has a route table to
+    // publish. Null is a legitimate answer -- a model with no node-relation
+    // carrying per-entry data has no table, and one with TWO (RTMCS M5's
+    // forward and backward routes) needs a modelling decision this pass must
+    // not make for it.
+    const table = routeTableOf(model, nodeSetsOf([...raw.contexts, ...pRaw.contexts]));
+    return table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
   }
   if (version === 2) {
     // One model, whichever way this goes: tryNetworkLayer hands back the one it

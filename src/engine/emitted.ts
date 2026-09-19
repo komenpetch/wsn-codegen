@@ -367,7 +367,17 @@ export function unreachableEvents(cc: string, cls: string,
 export function packetTypeLeaves(h: string): Set<string> {
   const at = h.indexOf("enum class PktType");
   if (at < 0) return new Set();
-  const body = h.slice(at, h.indexOf("};", at));
+  // ⚠ `indexOf` returns -1 on a miss and `slice(at, -1)` then hands back most
+  // of the header, so every `NAME = 0,` line in it would read as a packet-type
+  // leaf. That set feeds the scheduler's `typeOf`, which decides whether a
+  // creating event stamps a type at all -- and a wrong or absent stamp is the
+  // "scheduled, reachable, called every tick, never once firing" failure. A
+  // truncated enum is not a case to degrade through.
+  const end = h.indexOf("};", at);
+  if (end < 0)
+    throw new Error("packetTypeLeaves: the emitted `enum class PktType` has no closing `};`. "
+      + "The emitter's output shape changed; reading past it would invent leaves.");
+  const body = h.slice(at, end);
   return new Set((body.match(/^\s*(\w+)\s*=\s*\d+\s*,?\s*$/gm) ?? [])
     .map((l) => /(\w+)\s*=/.exec(l)![1]));
 }

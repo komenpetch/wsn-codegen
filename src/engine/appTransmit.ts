@@ -31,8 +31,8 @@
 // resolveBroadcast() returns.
 
 import type { GeneratedTree } from "./types";
-import type { PacketModel } from "./packetModel";
-import { broadcastMethodOf, DELIVERED_BY } from "./packetModel";
+import type { PacketModel, PacketField } from "./packetModel";
+import { broadcastMethodOf, getterOf, setterOf, DELIVERED_BY } from "./packetModel";
 import { headerOf, implOf } from "./emitted";
 import { esc } from "./text";
 import { emitLocalIdFor, identityMembers } from "./mediumBinding";
@@ -171,10 +171,13 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
   // True when the model's transmit event does NOT record its own firing, so the
   // module must. See transmitRecordsItsOwnFiring.
   once = false,
-  // The chunk setter for the field that carries the sender, from senderFieldOf.
+  // The field that carries the sender, from senderFieldOf. The FIELD, not one
+  // of its spellings: this used to take a pre-derived setter name while the
+  // arrival took a pre-derived getter and the scheduler took the Event-B name,
+  // three primitive shapes of one concept crossing three boundaries.
   // Null when the model stamps no such field, in which case the wire copy is
   // left exactly as the model made it.
-  senderSetter: string | null = null): GeneratedTree {
+  senderField: PacketField | null = null): GeneratedTree {
   // Ordered by tag value, the same order the PktType enum is emitted in.
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t);
   if (tags.length === 0) return tree;
@@ -197,7 +200,7 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
       const body = rewriteSendDown(f.content, once);
       const at = body.search(new RegExp(`^bool ${esc(cls)}::`, "m"));
       if (at < 0) throw new Error("appTransmit: no event method to place the transmit definitions before.");
-      return { ...f, content: body.slice(0, at) + defs(cls, tags, senderSetter) + "\n\n" + body.slice(at) };
+      return { ...f, content: body.slice(0, at) + defs(cls, tags, senderField ? setterOf(senderField) : null) + "\n\n" + body.slice(at) };
     }
     return f;
   });
@@ -352,7 +355,7 @@ const isOwnAddressFn = (cls: string): string => [
 ].join("\n");
 
 export function installAppReceive(tree: GeneratedTree, cls: string,
-  id: PacketIdentity, deliverMethod: string, senderGetter: string,
+  id: PacketIdentity, deliverMethod: string, senderField: PacketField,
   staged: MediumStaging = { insert: [], remove: [] },
   deserialise: readonly { setter: string; getter: string }[] = []): GeneratedTree {
   return tree.map((f) => {
@@ -378,7 +381,7 @@ export function installAppReceive(tree: GeneratedTree, cls: string,
       const end = f.content.indexOf("\n}", at);
       if (end < 0) throw new Error("appTransmit: the arrival callback has no closing brace.");
       const body = f.content.slice(0, at)
-        + arrival(deliverMethod, senderGetter, staged, deserialise).join("\n")
+        + arrival(deliverMethod, getterOf(senderField), staged, deserialise).join("\n")
         + f.content.slice(end + 2);
       // localIdFor and isOwnAddress go beside the transmit methods.
       const defAt = body.indexOf("// The broadcast address of whatever address type");

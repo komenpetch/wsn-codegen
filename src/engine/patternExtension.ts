@@ -43,6 +43,25 @@ export const PATTERN_EXTENSION_LEAF = "pM5";
 // The machine `uM4` is authored against the app-layer pattern's own leaf name.
 const AUTHORED_AGAINST = "pM3";
 
+// The closing tag every derived event is spliced in front of.
+//
+// ⚠ A bare `.replace` here is the silent-failure shape this project has paid
+// for repeatedly: if the bundled .bum's closing tag ever drifts, the derived
+// control events are dropped WITHOUT a word, the machine ships with no way to
+// create a control packet, and the flood dies somewhere far from the cause.
+// The sibling `at()` helper below already refuses on a missing anchor; these
+// two splices were the ones that did not, which is two policies for one job in
+// one file. Named so both use the same one.
+const MACHINE_END = "</org.eventb.core.machineFile>";
+
+function spliceBeforeEnd(xml: string, add: string, what: string): string {
+  if (!xml.includes(MACHINE_END))
+    throw new Error(`patternExtension: the bundled ${what} has no ${MACHINE_END} to splice `
+      + `the derived events in front of. The extension's own files changed shape; this `
+      + `needs revisiting rather than silently emitting a machine without them.`);
+  return xml.replace(MACHINE_END, `${add}\n${MACHINE_END}`);
+}
+
 // What the extension's events actually read and write in the base. Derived by
 // reading uM4/pM5: the creating events rebuild the abstract event's actions
 // (createdPkts, pktFwdr, pktData, ndBuff) and `update_nbr` reads `pktFwdr` and
@@ -93,7 +112,10 @@ function controlLeavesOf(raw: RawModel): string[] {
   return out;
 }
 
-const camel = (s: string) => s.toLowerCase();
+// An Event-B packet-type constant is SHOUTED (`BEACON`, `RREQ`); the event and
+// variable names derived from it are not (`create_beaconPkt`, `rreqSeqNo`).
+// Named for what it does: it was called `camel`, which it never was.
+const lowerTag = (s: string) => s.toLowerCase();
 
 /**
  * What the per-control creating events are derived FOR: the leaves of the
@@ -146,7 +168,7 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
   const vars: string[] = [], invs: string[] = [], inits: string[] = [], events: string[] = [];
 
   targets.forEach(({ name: leaf, isSet }, i) => {
-    const ctr = `${camel(leaf)}SeqNo`;
+    const ctr = `${lowerTag(leaf)}SeqNo`;
     vars.push(`   <org.eventb.core.variable name="varc${i}" org.eventb.core.identifier="${ctr}"/>`);
     invs.push(`   <org.eventb.core.invariant name="invc${i}" org.eventb.core.label="MPacket_${ctr}_inv" `
       + `org.eventb.core.predicate="${ctr} ∈ ND → ℕ" `
@@ -155,7 +177,7 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
     inits.push(`      <org.eventb.core.action name="actc${i}" org.eventb.core.label="MPacket_${ctr}_int" `
       + `org.eventb.core.assignment="${ctr} ≔ ND × {0}"/>`);
     events.push(`   <org.eventb.core.event name="evtc${i}" org.eventb.core.convergence="0" `
-      + `org.eventb.core.extended="false" org.eventb.core.label="create_${camel(leaf)}Pkt" `
+      + `org.eventb.core.extended="false" org.eventb.core.label="create_${lowerTag(leaf)}Pkt" `
       + `org.eventb.core.comment="Tier A, DERIVED from partition(&lt;control set&gt;, ... {${leaf}} ...). `
       + `Guards 1-6 and actions 1-4 are the abstract creatingControlPacket verbatim.">
       <org.eventb.core.refinesEvent name="refc${i}" org.eventb.core.target="creatingControlPacket"/>
@@ -262,7 +284,7 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
 function deriveTransmitEvents(raw: RawModel): { uM4: string; labels: string[] } {
   const set = controlSetOf(raw);
   if (!set) return { uM4: "", labels: [] };
-  const ctl = `start_tx_${camel(set)}Pkt`, other = "start_tx_otherPkt";
+  const ctl = `start_tx_${lowerTag(set)}Pkt`, other = "start_tx_otherPkt";
   // The abstract `start_tx` verbatim — pM1's own guards and actions.
   const base = (i: string) => `
       <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="x"/>
@@ -297,7 +319,7 @@ function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
   // `receive_controlPkt` for CONTROL, `receive_floodPkt` for FLOOD — the
   // derivation reproduces each case study's own spelling rather than imposing
   // one. MintRoute names these events exactly this.
-  const fresh = `receive_${camel(set)}Pkt`, dup = `receive_dup_${camel(set)}Pkt`;
+  const fresh = `receive_${lowerTag(set)}Pkt`, dup = `receive_dup_${lowerTag(set)}Pkt`;
 
   const uM4 = `   <org.eventb.core.event name="evt_rcv" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${fresh}" org.eventb.core.comment="Tier A, DERIVED from the control set the abstract creatingControlPacket names. Guards 1-4 and actions 1-2 are the abstract receive verbatim; 5-9 are MintRoute&apos;s own flooding guards, cited individually.">
       <org.eventb.core.refinesEvent name="refrcv" org.eventb.core.target="receive"/>
@@ -369,8 +391,7 @@ function instantiate(xml: string, raw: RawModel): string {
     + `org.eventb.core.theorem="false"/>`, invs, "invariant");
   at(`      <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" `
     + `org.eventb.core.assignment="pktSeqNo ≔ ∅"/>`, inits, "INITIALISATION");
-  return xml.replace("</org.eventb.core.machineFile>",
-    `${[events, flood, tx].filter(Boolean).join("\n")}\n</org.eventb.core.machineFile>`);
+  return spliceBeforeEnd(xml, [events, flood, tx].filter(Boolean).join("\n"), "uM4.bum");
 }
 
 // The same treatment for pM5, which carries Tier B's hook onto the derived
@@ -385,7 +406,7 @@ function instantiate(xml: string, raw: RawModel): string {
 function instantiateB(xml: string, raw: RawModel): string {
   const creating = creatingTargetsOf(raw).map(({ name: leaf }, i) =>
     `   <org.eventb.core.event name="evt_ctl${i}" org.eventb.core.convergence="0" `
-    + `org.eventb.core.extended="true" org.eventb.core.label="create_${camel(leaf)}Pkt">\n`
+    + `org.eventb.core.extended="true" org.eventb.core.label="create_${lowerTag(leaf)}Pkt">\n`
     + `   </org.eventb.core.event>`).join("\n");
   // The derived transmit refinements must be carried forward too: uM4 splits
   // `start_tx`, so a pM5 that still extended the abstract event would refine one
@@ -396,7 +417,7 @@ function instantiateB(xml: string, raw: RawModel): string {
     .join("\n");
   const add = [creating, deriveFloodEvents(raw).pM5, txStubs].filter(Boolean).join("\n");
   if (!add) return xml;
-  return xml.replace("</org.eventb.core.machineFile>", `${add}\n</org.eventb.core.machineFile>`);
+  return spliceBeforeEnd(xml, add, "pM5.bum");
 }
 
 /**
@@ -427,9 +448,18 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
   const retarget = (f: { name: string; xml: string }) => {
     if (f.name === "pM5.bum") return { ...f, xml: instantiateB(f.xml, raw) };
     if (f.name !== "uM4.bum") return f;
-    const xml = base === AUTHORED_AGAINST ? f.xml : f.xml.replace(
-      `<org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="${AUTHORED_AGAINST}"/>`,
-      `<org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="${base}"/>`);
+    // ⚠ Loud, because a silent miss here is invisible until Rodin: uM4 would
+    // keep refining `pM3`, a machine the user's project does not contain, and
+    // the generated C++ would be fine while the Event-B would not open.
+    const refines = (m: string) =>
+      `<org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="${m}"/>`;
+    let xml = f.xml;
+    if (base !== AUTHORED_AGAINST) {
+      if (!xml.includes(refines(AUTHORED_AGAINST)))
+        throw new Error(`patternExtension: uM4.bum no longer refines ${AUTHORED_AGAINST}, so it `
+          + `cannot be retargeted onto ${base}. The bundled extension changed shape.`);
+      xml = xml.replace(refines(AUTHORED_AGAINST), refines(base));
+    }
     return { ...f, xml: instantiate(xml, raw) };
   };
 

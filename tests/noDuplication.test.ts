@@ -99,7 +99,13 @@ describe("shared helpers have exactly one home", () => {
     //
     // (ii) CODE ONLY. Every one of these modules explains the Event-B shape in
     // prose above the function, so matching comments would flag documentation.
-    const selfUpdate = /≔\\{1,2}s\*(?:\$\{\w+\}|\\{1,2}1|\w+)\\{1,2}s\*[∪∖]/;
+    // (iii) ANY INTERPOLATION, not just a bare name. The eleventh copy —
+    // senderQueuesOf in packetOps.ts — wrote `${esc(v)}`, and `\w` excludes
+    // parentheses, so the `\$\{\w+\}` branch could not match it. That is the
+    // SECOND time this guard has been inert: a variable name passed through a
+    // helper is the normal way to write this regex, so the narrow branch was
+    // missing the likeliest spelling rather than an exotic one.
+    const selfUpdate = /≔\\{1,2}s\*(?:\$\{[^}]+\}|\\{1,2}1|\w+)\\{1,2}s\*[∪∖]/;
 
     // ⚠ Not a single-owner check, and the exceptions are the interesting part.
     // Three other modules write this shape for a DIFFERENT question:

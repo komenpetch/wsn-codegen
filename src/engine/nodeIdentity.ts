@@ -44,11 +44,16 @@ import { mustFind } from "./emitted";
 // Null is a legitimate answer, not a failure. The app-layer pattern's own
 // vocabulary is `ND ∖ Dests` -- a SET of destinations, no single distinguished
 // node -- so there is no id to adopt and every node takes its module id.
-export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
+// Which carrier sets hold NODES: ND itself, plus anything a `S ⊆ ND` axiom
+// places inside it, to a fixpoint so `A ⊆ B ⊆ ND` counts whatever order the
+// axioms appear in.
+//
+// Extracted because TWO questions need it and only one was asking. Finding the
+// distinguished node needs it; so does deciding whether a `V ≔ C × {v}`
+// initialisation is node-keyed at all -- and that second caller had no notion
+// of it, so it specialised `netSeqNo ≔ PKT × {0}` as though PKT were ND.
+export function nodeSetsOf(contexts: readonly RawContext[]): Set<string> {
   const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
-
-  // Node sets: ND itself, plus anything a `S ⊆ ND` axiom places inside it.
-  // Resolved to a fixpoint so `A ⊆ B ⊆ ND` counts, whatever order they appear.
   const nodeSets = new Set(["ND"]);
   for (let grew = true; grew;) {
     grew = false;
@@ -57,6 +62,13 @@ export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
       if (m && nodeSets.has(m[2]) && !nodeSets.has(m[1])) { nodeSets.add(m[1]); grew = true; }
     }
   }
+  return nodeSets;
+}
+
+export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
+  const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
+
+  const nodeSets = nodeSetsOf(contexts);
 
   const pinned = new Set<string>();
   const inNodeSet = new Set<string>();
@@ -77,22 +89,30 @@ export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
   return found[0] ?? null;
 }
 
-interface CartesianInit { target: string; excluded: string | null; value: string; }
+interface CartesianInit { target: string; carrier: string; excluded: string | null; value: string; }
 
 // `f ≔ ND × {v}` and `f ≔ (ND ∖ {Sink}) × {v}` from INITIALISATION. These could
 // not run at construction time -- ND was empty then -- so they are specialised
 // to this node once its id exists. The excluded name is CAPTURED rather than
 // assumed to be the sink: it is the model that says which node the assignment
 // skips.
-function cartesianInits(model: EncodedMachine): CartesianInit[] {
+// ⚠ The CARRIER is captured and checked, not skipped over. It used to be a
+// bare uncaptured `\w+`, so ANY `V ≔ C × {v}` counted as node-keyed: MintRoute
+// and the bundled extension both write `netSeqNo ≔ PKT × {0}` for a variable
+// the model types `netSeqNo ∈ PKT → ℕ`, and that emitted
+// `netSeqNo[myNodeId] = 0;` -- a node id used as a key in a PKT-keyed map --
+// under a comment that read `≔ ND × {…}` when the model had said PKT. The
+// comment was the visible half of the matcher being too loose.
+function cartesianInits(model: EncodedMachine, nodeSets: ReadonlySet<string>): CartesianInit[] {
   const init = model.events.find((e) => e.label === INITIALISATION);
   if (!init) return [];
   const out: CartesianInit[] = [];
   for (const a of init.actions) {
-    const m = /^\s*(\w+)\s*≔\s*\(?\s*\w+\s*(?:∖\s*\{\s*(\w+)\s*\})?\s*\)?\s*×\s*\{\s*(∅|\w+)\s*\}\s*$/.exec(a);
+    const m = /^\s*(\w+)\s*≔\s*\(?\s*(\w+)\s*(?:∖\s*\{\s*(\w+)\s*\})?\s*\)?\s*×\s*\{\s*(∅|\w+)\s*\}\s*$/.exec(a);
     if (!m) continue;
-    const cpp = m[3] === "∅" ? null : m[3] === "FALSE" ? "false" : m[3] === "TRUE" ? "true" : m[3];
-    out.push({ target: m[1], excluded: m[2] ?? null, value: cpp ?? "" });
+    if (!nodeSets.has(m[2])) continue;   // keyed by something that is not a node
+    const cpp = m[4] === "∅" ? null : m[4] === "FALSE" ? "false" : m[4] === "TRUE" ? "true" : m[4];
+    out.push({ target: m[1], carrier: m[2], excluded: m[3] ?? null, value: cpp ?? "" });
   }
   return out;
 }
@@ -162,7 +182,7 @@ const selfAddressOnly: Record<ShellKind, string[]> = {
 
 export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
   contexts: readonly RawContext[], cls: string, shell: ShellKind = "network"): GeneratedTree {
-  const inits = cartesianInits(model);
+  const inits = cartesianInits(model, nodeSetsOf(contexts));
   const sink = sinkConstantOf(contexts);
 
   const identity = sink
@@ -196,7 +216,7 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
     "    if (stage == INITSTAGE_LAST) {",
     ...inits.map((i) =>
       i.excluded === null
-        ? `        ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // ${i.target} ≔ ND × {…}`
+        ? `        ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // ${i.target} ≔ ${i.carrier} × {…}`
         : `        if (myNodeId != ${i.excluded}) ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // over ND ∖ {${i.excluded}}`),
     "    }",
   ].join("\n");

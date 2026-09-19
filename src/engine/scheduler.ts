@@ -109,16 +109,36 @@ function signatures(cc: string, cls: string): Map<string, { params: Param[]; met
   return out;
 }
 
-function planFor(label: string, params: Param[], guards: string[], carriers: Set<string>,
-  enc: (id: string) => string | undefined, nestedVars: Set<string>, pktField: Map<string, string>,
-  // Leaves of the emitted packet-type lattice -- see typeOf.
-  leaves: ReadonlySet<string>,
-  // The Event-B name of the field carrying the SENDER, from senderFieldOf.
-  // Null when the model stamps none, in which case nothing is delivery-scoped.
-  senderField: string | null,
-  // Variables whose key is a MAPLET, not a scalar -- the two binding cases
-  // below read them as `f.at({a, b})`.
-  pairKeyed: Set<string>): Plan {
+/**
+ * Everything a plan needs that is a property of the MODEL rather than of the
+ * event being planned. It is built once per module and read by every event.
+ *
+ * ⚠ These seven travelled as seven positional parameters, and the structure-3
+ * work pushed the signature to ten -- `leaves` and `senderField` were threaded
+ * through three functions to reach here, and at ten arguments an extra one is
+ * added by counting commas. They are one thing: the context a plan is made in.
+ */
+interface PlanContext {
+  carriers: Set<string>;
+  enc: (id: string) => string | undefined;
+  nestedVars: Set<string>;
+  pktField: Map<string, string>;
+  /** Leaves of the emitted packet-type lattice -- see typeOf. */
+  leaves: ReadonlySet<string>;
+  /**
+   * The Event-B name of the field carrying the SENDER, from senderFieldOf.
+   * Null when the model stamps none, in which case nothing is delivery-scoped.
+   */
+  senderField: string | null;
+  /**
+   * Variables whose key is a MAPLET, not a scalar -- the two binding cases
+   * below read them as `f.at({a, b})`.
+   */
+  pairKeyed: Set<string>;
+}
+
+function planFor(label: string, params: Param[], guards: string[], ctx: PlanContext): Plan {
+  const { carriers, enc, nestedVars, pktField, leaves, senderField, pairKeyed } = ctx;
   const clauses = guards.flatMap((g) => splitConjuncts(g));
   const lines: string[] = [];
   const rollback: string[] = [];
@@ -559,7 +579,7 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // Leaves of the emitted packet-type lattice, read off the header -- see typeOf.
   leaves: ReadonlySet<string> = new Set(),
   // See planFor.
-  senderField: string | null = null): { decls: string; defs: string } {
+  senderField: PacketField | null = null): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -584,6 +604,11 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // `p ∈ CTL_STATUS` failed the enumeration test below and its event was
   // reported unschedulable with a binding that was in fact available.
   const carriers = new Set([...carrierSets, ...Object.keys(CARRIER_ALIAS)]);
+  // Built once: none of it varies by event.
+  const planContext: PlanContext = {
+    carriers, enc: (id) => model.encodings.get(id),
+    nestedVars, pktField, leaves, senderField: senderField ? senderField.ebName : null, pairKeyed,
+  };
   const plans: Plan[] = [];
   for (const ev of model.events) {
     if (ev.label === "INITIALISATION") continue;
@@ -596,7 +621,7 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
     if (notScheduled.has(ev.label)) continue;
     const sig = sigs.get(ev.label);
     if (!sig) continue;                          // not emitted as a bool method
-    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField, leaves, senderField, pairKeyed);
+    const plan = planFor(ev.label, sig.params, ev.guards, planContext);
     plan.method = sig.method;
     plans.push(plan);
   }
@@ -744,7 +769,7 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // Events the ARRIVAL runs inline -- see emitScheduler.
   arrivalEvents: readonly string[] = [],
   // See planFor.
-  senderField: string | null = null): GeneratedTree {
+  senderField: PacketField | null = null): GeneratedTree {
   const ccFile = implOf(tree);
   if (!ccFile)
     throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
@@ -823,10 +848,27 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
       // the two lines above it and reads as an unfinished seam in a module that
       // is finished -- the same stale-doc-comment class as the generated header
       // that carried a SensorApp description above a NetworkProtocolBase class.
-      if (modelDrivesTransmit)
+      //
+      // ⚠ Checked as a POST-condition, not with mustReplace. `mustReplace`
+      // would be wrong here: `modelDrivesTransmit` does not imply the note
+      // exists -- codeEmitter emits this variant only on the `parity &&
+      // hasSendDown` branch, and the other branch that carries a
+      // `sendSensorPacket();` for the timer hook to rewrite carries no note at
+      // all. So requiring a match would throw on a legitimate module. What IS
+      // required is that a note which WAS there is gone once this pass has
+      // run; that catches the wording drifting out of sync with the regex,
+      // which is the failure worth being loud about.
+      const NOTE = "// EXTENSION POINT (send-down flow): to drive the transmission from the";
+      if (modelDrivesTransmit) {
+        const had = content.includes(NOTE);
         content = content.replace(
           /^[ \t]*\/\/ EXTENSION POINT \(send-down flow\): to drive the transmission from the\n(?:[ \t]*\/\/.*\n)*/m,
           "");
+        if (had && content.includes(NOTE))
+          throw new Error("installScheduler (send-down note): the note is still present after "
+            + "the strip, so codeEmitter's wording and this regex have drifted apart. The "
+            + "module would ship describing an unfinished seam this pass has just finished.");
+      }
       return { ...f, content };
     }
     return f;
