@@ -31,7 +31,11 @@ describe("patternExtensionFor", () => {
     expect(names).toContain("pM3.bum");
     expect(names).toContain("uM4.bum");
     expect(names).toContain("pM5.bum");
-    expect(names).toContain("C2_ctl.buc");
+    // ⚠ And NOT a context declaring a control split. There used to be a
+    // `C2_ctl.buc` holding `partition(CONTROL, {ROUTE}, {BEACON})` — MintRoute's
+    // split, which contradicts RTMCS's rather than extending it. The leaves come
+    // from the uploaded project now; see controlLeaves.test.ts.
+    expect(names).not.toContain("C2_ctl.buc");
   });
 
   it("targets the extension's own leaf, so the table machine is what is read", () => {

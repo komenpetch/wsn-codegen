@@ -357,12 +357,19 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
   it("needs no second project: the bundled extension is the default", () => {
     const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
     const h = t.find((f) => f.path.endsWith(".h"))!.content;
-    // Tier A: the sub-partition's leaves, each with a chunk class of its own.
-    expect(h).toContain("class RoutePkt : public PPkt");
-    expect(h).toContain("class BeaconPkt : public PPkt");
-    // Tier B: the table, with its metrics keyed by a MAPLET rather than a scalar.
-    expect(h).toContain("std::map<std::pair<Node, Node>, int> lastSeqno;");
-    expect(h).toContain("neighbourTbl;");
+    // PPkt is carried: the chunk, and the sequence number the extension adds.
+    expect(h).toContain("class PPkt : public inet::FieldsChunk");
+    expect(h).toMatch(/int seqNum = 0;\s*\/\/ Event-B: pktSeqNo/);
+    // ⚠ AND NO CONTROL LEAF IS INVENTED. This used to assert RoutePkt and
+    // BeaconPkt, because the extension bundled MintRoute's
+    // `partition(CONTROL, {ROUTE}, {BEACON})`. The leaves come from the
+    // uploaded project now, and this one declares no control split at all —
+    // so a model that draws no distinction between control subtypes correctly
+    // gets none invented for it. controlLeaves.test.ts covers the projects
+    // that do declare one.
+    expect(h).not.toContain("class RoutePkt");
+    expect(h).not.toContain("class BeaconPkt");
+    expect(h).toContain("class DataPkt : public PPkt");
   });
 });
 

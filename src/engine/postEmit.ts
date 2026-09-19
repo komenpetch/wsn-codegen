@@ -214,8 +214,18 @@ export function addMissingPacketTypeConstants(tree: GeneratedTree, tagOf: Map<st
     const at = f.content.indexOf(marker);
     if (at < 0) return f;
     const before = f.content.slice(0, at);
+    // ⚠ BOTH spellings the context emitter can produce, not just the int. A
+    // partition's SINGLETON part becomes `inline const int DATA = 0;` and its
+    // NON-SINGLETON part becomes `inline std::set<int> CONTROL = {1};`. With
+    // nothing splitting CONTROL further it is a set by its axiom AND a lattice
+    // leaf by having no children, so checking only the int spelling declared it
+    // a second time: `redefinition of 'CONTROL' … 'const int' vs 'std::set<int>'`.
+    // The bare int is dead there anyway -- the emitted code reaches the enum as
+    // `PktType::CONTROL` and the set as `CONTROL.count(...)`, never the constant.
     const missing = [...tagOf.entries()]
-      .filter(([tag]) => !new RegExp(`\\binline const int ${tag}\\b`).test(before));
+      .filter(([tag]) =>
+        !new RegExp(`\\binline const int ${tag}\\b`).test(before)
+        && !new RegExp(`\\binline std::set<int> ${tag}\\b`).test(before));
     if (missing.length === 0) return f;
     const decls = missing.map(([tag, value]) =>
       `inline const int ${tag} = ${value};  // packet-type tag (netlayer packetTypeLattice; ` +

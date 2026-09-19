@@ -278,8 +278,18 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
         // it a genuine set means changing the parameter's inferred type AND
         // that catalog rule together -- both, or neither, or the two halves
         // disagree exactly as they did here.
+        const imgAcc = pktField.get(img.R);
         if (/set</.test(par.cppType)) {
           lines.push(`    std::set<Node> ${p} = relImage(${img.R}, ${img.x});`);
+        } else if (imgAcc) {
+          // ⚠ ENC7 MAY HAVE MOVED THIS ATTRIBUTE ONTO THE CHUNK, exactly as in
+          // the `p = f(x)` branch above. `finalDestAddr` is a PPkt field AND a
+          // context map that nothing populates, so reading the map made the
+          // domain check fail on every candidate and `creatingControlPacket`
+          // fired zero times while looking perfectly schedulable -- the same
+          // two-storage trap as the 2026-09-08 `type(pkt)` defect.
+          lines.push(`    if (pktStore.count(${img.x}) == 0) ${bail()}`);
+          lines.push(`    ${par.cppType} ${p} = pktOf(${img.x})->get${imgAcc}();`);
         } else {
           // `.at` throws on a missing key, and an Event-B guard is an unordered
           // conjunction, so the domain check cannot be assumed to precede it.

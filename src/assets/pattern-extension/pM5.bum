@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <org.eventb.core.machineFile org.eventb.core.configuration="org.eventb.core.fwd" version="5">
-   <org.eventb.core.seesContext name="sees1" org.eventb.core.target="C2_ctl"/>
+   <org.eventb.core.seesContext name="sees1" org.eventb.core.target="C1"/>
    <org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="uM4"/>
    <org.eventb.core.variable name="var0" org.eventb.core.identifier="pktFwdr"/>
    <org.eventb.core.variable name="var1" org.eventb.core.identifier="pktData"/>
@@ -88,7 +88,7 @@
       <org.eventb.core.guard name="grd05" org.eventb.core.label="MRouteTable_upd_g5" org.eventb.core.predicate="pkt ∈ dom(pktSeqNo) ∧ sNo = pktSeqNo(pkt)" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd06" org.eventb.core.label="MRouteTable_upd_g6" org.eventb.core.predicate="delta = sNo − lastSeqno(y ↦ x) − 1" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd07" org.eventb.core.label="MRouteTable_upd_g7" org.eventb.core.predicate="delta ≥ 0" org.eventb.core.theorem="false"/>
-      <org.eventb.core.guard name="grd08" org.eventb.core.label="MRouteTable_upd_g8" org.eventb.core.predicate="type(pkt) = BEACON" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd08" org.eventb.core.label="MRouteTable_upd_g8" org.eventb.core.predicate="type(pkt) ∈ CONTROL" org.eventb.core.comment="LEAF-INDEPENDENT. MintRoute writes type(pkt) = BEACON here because its beacon is what its tree is built from -- which control subtypes exist is per case study, so the pattern says only that a CONTROL packet is what updates the table. A case study that wants one specific leaf strengthens this in its own refinement." org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd09" org.eventb.core.label="MRouteTable_upd_g9" org.eventb.core.predicate="pkt ∈ ran(sentUp)" org.eventb.core.theorem="false"/>
       <org.eventb.core.action name="act01" org.eventb.core.label="MRouteTable_upd_a1" org.eventb.core.assignment="received ≔ received ⊕ {y ↦ x ↦ (received(y ↦ x) + 1)}"/>
       <org.eventb.core.action name="act02" org.eventb.core.label="MRouteTable_upd_a2" org.eventb.core.assignment="lastSeqno ≔ lastSeqno ⊕ {y ↦ x ↦ sNo}"/>
