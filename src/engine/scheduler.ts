@@ -4,7 +4,7 @@ import type { PacketField } from "./packetModel";
 import { getterOf } from "./packetModel";
 import { nestedMapVars } from "./nestedMap";
 import { pairKeyedVars } from "./pairKeyed";
-import { emittedMethods, splitParams, implOf, unreachableEvents, mustFind, mustReplace } from "./emitted";
+import { emittedMethods, splitParams, implOf, headerOf, unreachableEvents, mustFind, mustReplace, packetTypeLeaves } from "./emitted";
 import { esc } from "./text";
 
 // A relational image, in either of the two spellings the corpus uses.
@@ -110,6 +110,8 @@ function signatures(cc: string, cls: string): Map<string, { params: Param[]; met
 
 function planFor(label: string, params: Param[], guards: string[], carriers: Set<string>,
   enc: (id: string) => string | undefined, nestedVars: Set<string>, pktField: Map<string, string>,
+  // Leaves of the emitted packet-type lattice -- see typeOf.
+  leaves: ReadonlySet<string>,
   // Variables whose key is a MAPLET, not a scalar -- the two binding cases
   // below read them as `f.at({a, b})`.
   pairKeyed: Set<string>): Plan {
@@ -152,10 +154,34 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
     (expr.match(/[A-Za-z_]\w*/g) ?? []).every((t) => !params.some((p) => p.name === t) || resolved.has(t));
 
   // The type tag a fresh packet must carry, if the event pins one.
+  //
+  // Two spellings pin one, and only reading the first left the pattern's own
+  // creating event unable to fire. `type(p) = BEACON` is MintRoute's: a leaf
+  // named outright. `type(p) ∈ CONTROL` is the CommPattern's, and whether it
+  // pins a tag depends on the lattice rather than on the shape:
+  //
+  //   - the pattern declares `partition(TYPE, CONTROL, {DATA})` and nothing
+  //     further, so CONTROL is itself a LEAF -- membership in a one-element set
+  //     determines the value, and the emitted enum has a `CONTROL` member;
+  //   - MintRoute declares `partition(CONTROL, {ROUTE}, {BEACON})` on top, so
+  //     CONTROL is an intermediate group with no enum member of its own.
+  //     Membership says "one of two" and determines nothing, which is correct:
+  //     a model that distinguishes control subtypes supplies a creating event
+  //     per leaf, and each of those names its own tag in the first spelling.
+  //
+  // So the discriminator is exactly "is this name a leaf", and `leaves` is read
+  // off the emitted enum, which is where that decision was already made.
+  //
+  // ⚠ Without this, `creatingControlPacket` minted a packet whose type stayed
+  // at the enum's default (DATA = 0) and then declined on its own
+  // `CONTROL.count(...)` guard -- scheduled, reachable, called every tick, and
+  // never once firing.
   const typeOf = (p: string): string | undefined => {
     for (const c of clauses) {
-      const m = new RegExp(`^type\\(\\s*${p}\\s*\\)\\s*=\\s*(\\w+)$`).exec(c.trim());
-      if (m) return m[1];
+      const eq = new RegExp(`^type\\(\\s*${p}\\s*\\)\\s*=\\s*(\\w+)$`).exec(c.trim());
+      if (eq) return eq[1];
+      const mem = new RegExp(`^type\\(\\s*${p}\\s*\\)\\s*∈\\s*(\\w+)$`).exec(c.trim());
+      if (mem && leaves.has(mem[1])) return mem[1];
     }
     return undefined;
   };
@@ -511,7 +537,9 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // which also holds send_up, an event the arrival calls on every reception.
   neverRuns: ReadonlySet<string> = new Set(),
   // Events the ARRIVAL runs inline instead of the timer scheduling them.
-  arrivalEvents: readonly string[] = []): { decls: string; defs: string } {
+  arrivalEvents: readonly string[] = [],
+  // Leaves of the emitted packet-type lattice, read off the header -- see typeOf.
+  leaves: ReadonlySet<string> = new Set()): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -548,7 +576,7 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
     if (notScheduled.has(ev.label)) continue;
     const sig = sigs.get(ev.label);
     if (!sig) continue;                          // not emitted as a bool method
-    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField, pairKeyed);
+    const plan = planFor(ev.label, sig.params, ev.guards, carriers, (id) => model.encodings.get(id), nestedVars, pktField, leaves, pairKeyed);
     plan.method = sig.method;
     plans.push(plan);
   }
@@ -698,7 +726,10 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   const ccFile = implOf(tree);
   if (!ccFile)
     throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
-  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets, deliveryLabels, neverRuns, arrivalEvents);
+  // The packet-type leaves come from the emitted HEADER, where the enum is.
+  const hdr = headerOf(tree);
+  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets,
+    deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""));
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

@@ -352,3 +352,22 @@ export function unreachableEvents(cc: string, cls: string,
     if (!changed) return dropped;
   }
 }
+
+// The LEAVES of the emitted packet-type lattice, read off the enum the emitter
+// produced rather than off the model.
+//
+// Two reasons it is read here and not derived from the RawModel's contexts.
+// First, what a stamp must name is an enum member that EXISTS in this module --
+// `PktType::X` for an X the emitter never declared does not compile -- so
+// reading the enum tests exactly the thing that has to be true. Second, the
+// emitter already made the leaf/non-leaf decision when it built the enum:
+// MintRoute's is `DATA, ROUTE, BEACON` with no CONTROL member, because CONTROL
+// is partitioned further and only a leaf carries a packet type. Re-deriving
+// that from the axioms would be a second answer to a settled question.
+export function packetTypeLeaves(h: string): Set<string> {
+  const at = h.indexOf("enum class PktType");
+  if (at < 0) return new Set();
+  const body = h.slice(at, h.indexOf("};", at));
+  return new Set((body.match(/^\s*(\w+)\s*=\s*\d+\s*,?\s*$/gm) ?? [])
+    .map((l) => /(\w+)\s*=/.exec(l)![1]));
+}
