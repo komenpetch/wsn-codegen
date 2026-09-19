@@ -17,11 +17,17 @@
    <org.eventb.core.variable name="var12" org.eventb.core.identifier="emergencyAlert"/>
    <org.eventb.core.variable name="var13" org.eventb.core.identifier="pktSeqNo"/>
    <org.eventb.core.variable name="var14" org.eventb.core.identifier="floodTbl"/>
+   <org.eventb.core.variable name="var15" org.eventb.core.identifier="netSeqNo"/>
+   <org.eventb.core.variable name="var16" org.eventb.core.identifier="linkSeqNo"/>
    <org.eventb.core.invariant name="inv01" org.eventb.core.label="MPacket_pktSeqNo_inv_1" org.eventb.core.predicate="pktSeqNo ∈ PKT ⇸ ℕ" org.eventb.core.comment="per-packet sequence number: serves duplicate detection and the missed count, both communication concerns" org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv03" org.eventb.core.label="MPacket_netSeqNo_inv_1" org.eventb.core.predicate="netSeqNo ∈ PKT → ℕ" org.eventb.core.comment="The PER-HOP sequence number, stamped by the transmit. ⚠ NOT the same thing as pktSeqNo, and MintRoute carries BOTH for exactly this reason: pktSeqNo is set once at CREATION and identifies the packet across the network, while netSeqNo is re-stamped at every hop and is what a loss count is measured against. Reading pktSeqNo for the loss count compares an ORIGINATOR&apos;s sequence against a PER-LINK baseline; measured, that made `missed` identically zero on every link, because update_nbr&apos;s packet is existentially quantified and there is always some originator whose number makes delta = 0." org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv04" org.eventb.core.label="MPacket_linkSeqNo_inv_1" org.eventb.core.predicate="linkSeqNo ∈ ND → ℕ" org.eventb.core.comment="Each node&apos;s own count of control packets it has put on the air. Verbatim from MintRoute M3, where start_tx_bconPkt guards `lsno = linkSeqNo(x) + 1` and then overrides it. ⚠ Maintained on the CONTROL branch only, as MintRoute maintains it for BEACONs only: a number consumed by traffic the receiver does not count would leave a gap, and delta is a loss count only while the sequence it sees is contiguous." org.eventb.core.theorem="false"/>
    <org.eventb.core.invariant name="inv02" org.eventb.core.label="MFlood_floodTbl_inv_1" org.eventb.core.predicate="floodTbl ∈ ND → ℙ(PKT)" org.eventb.core.comment="What each node has already seen: the flood&apos;s duplicate test, and the whole of what stops a rebroadcast becoming a storm. Declared here rather than invented: BOTH case studies that flood name it floodTbl and type it exactly this way -- MintRoute M1 and the advisor&apos;s WSN_Pattern M1." org.eventb.core.theorem="false"/>
    <org.eventb.core.event name="evt_init" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="INITIALISATION">
       <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" org.eventb.core.assignment="pktSeqNo ≔ ∅"/>
       <org.eventb.core.action name="act02" org.eventb.core.label="MFlood_floodTbl_int_1" org.eventb.core.assignment="floodTbl ≔ ND × {∅}"/>
+      <org.eventb.core.action name="act03" org.eventb.core.label="MPacket_netSeqNo_int_1" org.eventb.core.assignment="netSeqNo ≔ PKT × {0}"/>
+      <org.eventb.core.action name="act04" org.eventb.core.label="MPacket_linkSeqNo_int_1" org.eventb.core.assignment="linkSeqNo ≔ ND × {0}"/>
    </org.eventb.core.event>
    <org.eventb.core.event name="evt_sensing" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="sensing">
    </org.eventb.core.event>

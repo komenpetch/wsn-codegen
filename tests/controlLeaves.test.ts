@@ -72,8 +72,13 @@ describe("per-leaf creating events are derived from the project's own split", ()
         ["DATA", "CONTROL", "RREQ", "RREP", "RRER", "type"]),
     ]);
     for (const leaf of ["RREQ", "RREP", "RRER"]) expect(x).toContain(`predicate="type(pkt) = ${leaf}"`);
-    expect(x).not.toContain("ROUTE");
-    expect(x).not.toContain("BEACON");
+    // ⚠ Scoped to the derived TYPE GUARDS. A blanket "does not contain BEACON"
+    // was too broad and started failing on PROSE: the transmit derivation cites
+    // MintRoute's own `start_tx_bconPkt` in its comment. What must not appear is
+    // a guard pinning a leaf this project does not declare.
+    expect(x.match(/predicate="type\(pkt\) = (\w+)"/g))
+      .toEqual(['predicate="type(pkt) = RREQ"', 'predicate="type(pkt) = RREP"',
+        'predicate="type(pkt) = RRER"']);
   });
 
   it("treats an UNSPLIT control set as its own single target", () => {

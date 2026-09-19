@@ -218,6 +218,79 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
  * published again, anywhere. A node that merely declines a duplicate leaves
  * exactly such an entry, and the flood stops after two hops.
  */
+/**
+ * The transmit, split so the PER-HOP sequence number is stamped where MintRoute
+ * stamps it — and the per-node counter is consumed only by the traffic whose
+ * loss is being counted.
+ *
+ * ⚠ WHY THIS EXISTS: `missed` WAS IDENTICALLY ZERO ON EVERY LINK. `update_nbr`
+ * read `pktSeqNo`, which the creating event sets ONCE, per ORIGINATOR, while
+ * `lastSeqno(y ↦ x)` is keyed by the (neighbour, me) pair — a per-LINK baseline.
+ * `delta = sNo − lastSeqno − 1` therefore compared two different sequences, and
+ * because `update_nbr`'s packet is existentially quantified the scheduler simply
+ * searched `pktStore` until it found one giving delta = 0. Self-fulfilling
+ * guard, no information. Measured across the nine-node field: missedTotal 0 on
+ * all 33 table entries, while `received` counted correctly.
+ *
+ * ✅ MintRoute does not have this problem and its files say why — it carries BOTH
+ * numbers and reads the right one:
+ *
+ *     pktSeqNo ∈ PKT ⇸ ℕ    (M2)  set once at creation; identifies the packet
+ *     netSeqNo ∈ PKT → ℕ    (M3)  re-stamped every hop; what loss is measured on
+ *     linkSeqNo ∈ ND → ℕ    (M3)  the transmitting node's own count
+ *
+ *     start_tx_bconPkt:  lsno = linkSeqNo(x) + 1
+ *                        linkSeqNo ≔ linkSeqNo ⊕ {x ↦ lsno}
+ *                        netSeqNo(pkt) ≔ lsno
+ *
+ * ⚠ TWO BRANCHES, NOT ONE, and the reason is B6's own: a shared counter leaves a
+ * gap wherever traffic the receiver does not count consumed a number, and delta
+ * is a loss count only while the sequence the receiver sees is contiguous.
+ * MintRoute maintains `linkSeqNo` for BEACONs only and gives its non-beacon
+ * branch an unconstrained `lsno ∈ ℕ`. We maintain it on the control branch only,
+ * and the other branch stamps nothing at all — ⚠ a deliberate difference from
+ * MintRoute, because an unconstrained ℕ has no binding and is exactly the
+ * defect B6 was raised about.
+ *
+ * ⚠ IN SCOPE, argued from the chain rather than from judgement: both variables
+ * are declared at M3, and the generated/Specific line is the M4/M5 boundary (M4
+ * adds neighbourTbl/lastSeqno/liveliness/sentEst, M5 adds parent/cost/
+ * cRouteTree). `totalSentBcon`, which MintRoute increments in the same event, is
+ * NOT brought across: it is the denominator of the ETX estimate, and
+ * receiveEst/sentEst are deliberately out.
+ */
+function deriveTransmitEvents(raw: RawModel): { uM4: string; labels: string[] } {
+  const set = controlSetOf(raw);
+  if (!set) return { uM4: "", labels: [] };
+  const ctl = `start_tx_${camel(set)}Pkt`, other = "start_tx_otherPkt";
+  // The abstract `start_tx` verbatim — pM1's own guards and actions.
+  const base = (i: string) => `
+      <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="x"/>
+      <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="pkt"/>${i}
+      <org.eventb.core.guard name="grd01" org.eventb.core.label="MSend_start_tx_g1" org.eventb.core.predicate="x ∈ ND ∧ pkt ∈ PKT" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd02" org.eventb.core.label="MSend_start_tx_g2" org.eventb.core.predicate="x ↦ pkt ∉ sentDown" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd03" org.eventb.core.label="MSend_start_tx_g3" org.eventb.core.predicate="x ↦ pkt ∉ sentUp" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd04" org.eventb.core.label="MPacket_start_tx_g4" org.eventb.core.predicate="pkt ∈ dom(pktFwdr)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd05" org.eventb.core.label="MNDbuffMgt_start_tx_g5" org.eventb.core.predicate="x ↦ pkt ∈ ndBuff" org.eventb.core.theorem="false"/>`;
+  const acts = `
+      <org.eventb.core.action name="act01" org.eventb.core.label="MSend_start_tx_a1" org.eventb.core.assignment="sentDown ≔ sentDown ∪ {x ↦ pkt}"/>
+      <org.eventb.core.action name="act02" org.eventb.core.label="MPacket_set_pktFwdr_a2" org.eventb.core.assignment="pktFwdr ≔ pktFwdr ⊕ {pkt ↦ x}"/>
+      <org.eventb.core.action name="act03" org.eventb.core.label="MNDbuffMgt_start_tx_a3" org.eventb.core.assignment="ndBuff ≔ ndBuff ∖ {x ↦ pkt}"/>`;
+  const uM4 = `   <org.eventb.core.event name="evt_tx_ctl" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${ctl}" org.eventb.core.comment="Tier A, DERIVED. The abstract start_tx with MintRoute M3 start_tx_bconPkt&apos;s sequence maintenance: take the next number off this node&apos;s own counter and stamp it on the packet. Guards 1-5 and actions 1-3 are the abstract event verbatim.">
+      <org.eventb.core.refinesEvent name="reftxc" org.eventb.core.target="start_tx"/>${base(`
+      <org.eventb.core.parameter name="prm03" org.eventb.core.identifier="lsno"/>`)}
+      <org.eventb.core.guard name="grd06" org.eventb.core.label="MPacket_start_tx_ctl_g" org.eventb.core.predicate="type(pkt) ∈ ${set}" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd07" org.eventb.core.label="MPacket_linkSeqNo_g" org.eventb.core.predicate="x ∈ dom(linkSeqNo) ∧ lsno = linkSeqNo(x) + 1" org.eventb.core.theorem="false"/>${acts}
+      <org.eventb.core.action name="act04" org.eventb.core.label="MPacket_linkSeqNo_a" org.eventb.core.assignment="linkSeqNo ≔ linkSeqNo ⊕ {x ↦ lsno}"/>
+      <org.eventb.core.action name="act05" org.eventb.core.label="MPacket_netSeqNo_a" org.eventb.core.assignment="netSeqNo(pkt) ≔ lsno"/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_tx_oth" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${other}" org.eventb.core.comment="Tier A, DERIVED. The other half of the partition, so refining the control branch does not narrow what the abstract start_tx could transmit. ⚠ It stamps NOTHING: MintRoute&apos;s own non-beacon branch stamps netSeqNo from an unconstrained lsno in N, which has no binding and is the defect B6 was raised about. A packet transmitted here keeps netSeqNo at its initial 0, which is sound because update_nbr only reads it for control packets.">
+      <org.eventb.core.refinesEvent name="reftxo" org.eventb.core.target="start_tx"/>${base("")}
+      <org.eventb.core.guard name="grd06" org.eventb.core.label="MPacket_start_tx_oth_g" org.eventb.core.predicate="type(pkt) ∉ ${set}" org.eventb.core.theorem="false"/>${acts}
+   </org.eventb.core.event>`;
+  return { uM4, labels: [ctl, other] };
+}
+
 function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
   const set = controlSetOf(raw);
   if (!set) return { uM4: "", pM5: "" };
@@ -281,7 +354,8 @@ function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
 function instantiate(xml: string, raw: RawModel): string {
   const { vars, invs, inits, events } = deriveControlEvents(raw);
   const flood = deriveFloodEvents(raw).uM4;
-  if (!vars && !events && !flood) return xml;   // nothing declared: nothing to add
+  const tx = deriveTransmitEvents(raw).uM4;
+  if (!vars && !events && !flood && !tx) return xml;   // nothing declared: nothing to add
   const at = (anchor: string, add: string, what: string) => {
     if (!add) return;
     if (!xml.includes(anchor))
@@ -296,7 +370,7 @@ function instantiate(xml: string, raw: RawModel): string {
   at(`      <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" `
     + `org.eventb.core.assignment="pktSeqNo ≔ ∅"/>`, inits, "INITIALISATION");
   return xml.replace("</org.eventb.core.machineFile>",
-    `${[events, flood].filter(Boolean).join("\n")}\n</org.eventb.core.machineFile>`);
+    `${[events, flood, tx].filter(Boolean).join("\n")}\n</org.eventb.core.machineFile>`);
 }
 
 // The same treatment for pM5, which carries Tier B's hook onto the derived
@@ -313,7 +387,14 @@ function instantiateB(xml: string, raw: RawModel): string {
     `   <org.eventb.core.event name="evt_ctl${i}" org.eventb.core.convergence="0" `
     + `org.eventb.core.extended="true" org.eventb.core.label="create_${camel(leaf)}Pkt">\n`
     + `   </org.eventb.core.event>`).join("\n");
-  const add = [creating, deriveFloodEvents(raw).pM5].filter(Boolean).join("\n");
+  // The derived transmit refinements must be carried forward too: uM4 splits
+  // `start_tx`, so a pM5 that still extended the abstract event would refine one
+  // uM4 no longer contains.
+  const txStubs = deriveTransmitEvents(raw).labels.map((l, i) =>
+    `   <org.eventb.core.event name="evt_tx${i}" org.eventb.core.convergence="0" `
+    + `org.eventb.core.extended="true" org.eventb.core.label="${l}">\n   </org.eventb.core.event>`)
+    .join("\n");
+  const add = [creating, deriveFloodEvents(raw).pM5, txStubs].filter(Boolean).join("\n");
   if (!add) return xml;
   return xml.replace("</org.eventb.core.machineFile>", `${add}\n</org.eventb.core.machineFile>`);
 }
