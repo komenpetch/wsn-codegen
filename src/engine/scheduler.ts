@@ -68,6 +68,41 @@ export function relationalImageOf(clause: string, p: string): { R: string; x: st
 
 const CARRIER_ALIAS: Record<string, string> = { ND: "Node", PKT: "PktId", "ℤ": "Data" };
 
+/**
+ * Is the right-hand side of a membership the parameter's TYPE rather than a
+ * claim that it already exists?
+ *
+ * ⚠ THIS USED TO ACCEPT ONLY THE BARE CARRIER NAME, and that read one of the
+ * corpus's guards as the exact reverse of what it says:
+ *
+ *     pkt ∈ PKT ∖ (xmittedPkts ∪ middleware)        (RTMCS M0)
+ *
+ * which is the freshest statement that model makes — in PKT, not yet
+ * transmitted, not in the middleware. Read as "already exists", it denied every
+ * RTMCS creating event its mint, hence its type stamp, hence its place in the
+ * reachability pass: the whole RREQ/RREP/RRER chain dropped on a guard that
+ * means the opposite of how it was read. MintRoute writes the bare `pkt ∈ PKT`
+ * and was never affected, which is why this survived three case studies.
+ *
+ * The operators are NOT interchangeable, so the test is on them and not just on
+ * the head name:
+ *
+ *     C ∖ S    in C and NOT in S    a restriction — no existence claim
+ *     C ∪ S    in C or in S         a widening    — no existence claim
+ *     C ∩ S    in C AND in S        CARRIES an existence claim — not typing
+ *
+ * Measured against the raw `.bum` XML of all three case studies: `∖` and `∪`
+ * both occur (`ND ∖ Destination`, `ND ∪ {BROADCAST}`); `∩` does not occur at
+ * all. It is refused anyway, and refusal is the SAFE direction — a parameter
+ * wrongly held to exist makes its event report as unschedulable with a stated
+ * reason, whereas one wrongly held fresh mints a packet that should not exist.
+ */
+export function isTypingSet(rhs: string, carriers: ReadonlySet<string>): boolean {
+  if (rhs.includes("∩")) return false;
+  const head = /^\s*(\w+)/.exec(rhs);
+  return head !== null && carriers.has(head[1]);
+}
+
 interface Param { name: string; cppType: string; }
 interface Plan {
   label: string;
@@ -221,7 +256,8 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
   // So a positive membership naming the parameter settles it: in a set, in a
   // pair, in a function's domain -- whichever spelling, the model is saying the
   // packet is already there. Membership in a CARRIER set is excluded, because
-  // that clause is the parameter's TYPE and every parameter has one.
+  // that clause is the parameter's TYPE and every parameter has one -- and so is
+  // membership in a carrier RESTRICTED or WIDENED, which is `isTypingSet`.
   const existsAlready = (p: string) => clauses.some((c) => {
     const t = c.trim();
     if (t.includes("∉")) return false;
@@ -233,7 +269,7 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
     // whole flood with it, which is how this narrowing was found.
     const lhs = m[1].replace(/\w+\s*\([^)]*\)/g, " ");
     if (!new RegExp(`\\b${p}\\b`).test(lhs)) return false;
-    return !(lhs.trim() === p && carriers.has(m[2].trim()));
+    return !(lhs.trim() === p && isTypingSet(m[2], carriers));
   });
   const isFresh = (p: string) =>
     clauses.some((c) => new RegExp(`^${p}\\s*∉`).test(c.trim())) && !existsAlready(p);
