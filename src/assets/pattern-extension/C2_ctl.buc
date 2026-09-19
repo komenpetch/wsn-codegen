@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<org.eventb.core.contextFile org.eventb.core.configuration="org.eventb.core.fwd" version="3">
+   <org.eventb.core.extendsContext name="ext1" org.eventb.core.target="C1"/>
+   <org.eventb.core.constant name="cst0" org.eventb.core.identifier="ROUTE"/>
+   <org.eventb.core.constant name="cst1" org.eventb.core.identifier="BEACON"/>
+   <org.eventb.core.axiom name="axm01" org.eventb.core.label="axm3_1" org.eventb.core.predicate="ROUTE ∈ TYPE" org.eventb.core.comment="a control packet subtype: route advertisement" org.eventb.core.theorem="false"/>
+   <org.eventb.core.axiom name="axm02" org.eventb.core.label="axm3_2" org.eventb.core.predicate="BEACON ∈ TYPE" org.eventb.core.comment="a control packet subtype: beacon" org.eventb.core.theorem="false"/>
+   <org.eventb.core.axiom name="axm03" org.eventb.core.label="axm3_3" org.eventb.core.predicate="partition(CONTROL, {ROUTE}, {BEACON})" org.eventb.core.comment="CONTROL stays a SET; this splits it, so type(pkt) ∈ CONTROL in the abstract event and type(pkt) = BEACON in the refinement stay consistent" org.eventb.core.theorem="false"/>
+</org.eventb.core.contextFile>

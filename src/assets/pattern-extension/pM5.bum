@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<org.eventb.core.machineFile org.eventb.core.configuration="org.eventb.core.fwd" version="5">
+   <org.eventb.core.seesContext name="sees1" org.eventb.core.target="C2_ctl"/>
+   <org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="uM4"/>
+   <org.eventb.core.variable name="var0" org.eventb.core.identifier="pktFwdr"/>
+   <org.eventb.core.variable name="var1" org.eventb.core.identifier="pktData"/>
+   <org.eventb.core.variable name="var2" org.eventb.core.identifier="createdPkts"/>
+   <org.eventb.core.variable name="var3" org.eventb.core.identifier="ndBuff"/>
+   <org.eventb.core.variable name="var4" org.eventb.core.identifier="sentDown"/>
+   <org.eventb.core.variable name="var5" org.eventb.core.identifier="sentUp"/>
+   <org.eventb.core.variable name="var6" org.eventb.core.identifier="ctlNeighbours"/>
+   <org.eventb.core.variable name="var7" org.eventb.core.identifier="destBuff"/>
+   <org.eventb.core.variable name="var8" org.eventb.core.identifier="recvBuff"/>
+   <org.eventb.core.variable name="var9" org.eventb.core.identifier="clrRecvBuffFlg"/>
+   <org.eventb.core.variable name="var10" org.eventb.core.identifier="ctlSensedFlg"/>
+   <org.eventb.core.variable name="var11" org.eventb.core.identifier="senseBuff"/>
+   <org.eventb.core.variable name="var12" org.eventb.core.identifier="emergencyAlert"/>
+   <org.eventb.core.variable name="var13" org.eventb.core.identifier="pktSeqNo"/>
+   <org.eventb.core.variable name="var14" org.eventb.core.identifier="neighbourTbl"/>
+   <org.eventb.core.variable name="var15" org.eventb.core.identifier="updateNbrs"/>
+   <org.eventb.core.variable name="var16" org.eventb.core.identifier="lastSeqno"/>
+   <org.eventb.core.variable name="var17" org.eventb.core.identifier="missed"/>
+   <org.eventb.core.variable name="var18" org.eventb.core.identifier="received"/>
+   <org.eventb.core.invariant name="inv01" org.eventb.core.label="MRouteTable_inv_1" org.eventb.core.predicate="neighbourTbl ∈ ND ↔ ND" org.eventb.core.comment="who this node has heard from" org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv02" org.eventb.core.label="MRouteTable_inv_2" org.eventb.core.predicate="updateNbrs ∈ ND ↔ ND" org.eventb.core.comment="pending updates, drained by add_newEntry and update_nbr" org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv03" org.eventb.core.label="MRouteTable_inv_3" org.eventb.core.predicate="lastSeqno ∈ neighbourTbl → ℕ" org.eventb.core.comment="PAIR-KEYED: the domain is a variable that is itself a relation, so each key is a maplet y |-&gt; x, not a scalar" org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv04" org.eventb.core.label="MRouteTable_inv_4" org.eventb.core.predicate="missed ∈ neighbourTbl → ℕ" org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv05" org.eventb.core.label="MRouteTable_inv_5" org.eventb.core.predicate="received ∈ neighbourTbl → ℕ" org.eventb.core.theorem="false"/>
+   <org.eventb.core.event name="evt_init" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="INITIALISATION">
+      <org.eventb.core.action name="act01" org.eventb.core.label="MRouteTable_int_1" org.eventb.core.assignment="neighbourTbl ≔ ∅"/>
+      <org.eventb.core.action name="act02" org.eventb.core.label="MRouteTable_int_2" org.eventb.core.assignment="updateNbrs ≔ ∅"/>
+      <org.eventb.core.action name="act03" org.eventb.core.label="MRouteTable_int_3" org.eventb.core.assignment="lastSeqno ≔ ∅"/>
+      <org.eventb.core.action name="act04" org.eventb.core.label="MRouteTable_int_4" org.eventb.core.assignment="missed ≔ ∅"/>
+      <org.eventb.core.action name="act05" org.eventb.core.label="MRouteTable_int_5" org.eventb.core.assignment="received ≔ ∅"/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_sensing" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="sensing">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_activate" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="activate">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e0" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="creatingDataPacket">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e1" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="start_tx">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e2" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="send_down">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e3" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="send_up">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e4" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="receive">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e5" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="clear_recvdBuff">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e6" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="fwdr_receive_pkt">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e7" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="dest_recv_pkt">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e8" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="finish_tx_pkt">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_e9" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="final_tx_pkt">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_route" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="create_routePkt">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_bcon" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="create_bconPkt">
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_addnbr" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="add_newEntry" org.eventb.core.comment="Tier B. ORIENTATION FLIP preserved rather than tidied: the pending pair is x |-&gt; y and the table entry is y |-&gt; x. That is MintRoute's own convention -- the entry is keyed by the neighbour observed FROM this node.">
+      <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="x"/>
+      <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="y"/>
+      <org.eventb.core.guard name="grd01" org.eventb.core.label="MRouteTable_add_g1" org.eventb.core.predicate="updateNbrs ≠ ∅" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd02" org.eventb.core.label="MRouteTable_add_g2" org.eventb.core.predicate="x ∈ ND ∧ y ∈ ND ∧ x ↦ y ∈ updateNbrs" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd03" org.eventb.core.label="MRouteTable_add_g3" org.eventb.core.predicate="y ↦ x ∉ neighbourTbl" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd04" org.eventb.core.label="MRouteTable_add_g4" org.eventb.core.predicate="y ↦ x ↦ 0 ∉ lastSeqno" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd05" org.eventb.core.label="MRouteTable_add_g5" org.eventb.core.predicate="y ↦ x ↦ 0 ∉ missed" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd06" org.eventb.core.label="MRouteTable_add_g6" org.eventb.core.predicate="y ↦ x ↦ 0 ∉ received" org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act01" org.eventb.core.label="MRouteTable_add_a1" org.eventb.core.assignment="neighbourTbl ≔ neighbourTbl ∪ {y ↦ x}"/>
+      <org.eventb.core.action name="act02" org.eventb.core.label="MRouteTable_add_a2" org.eventb.core.assignment="lastSeqno ≔ lastSeqno ∪ {y ↦ x ↦ 0}"/>
+      <org.eventb.core.action name="act03" org.eventb.core.label="MRouteTable_add_a3" org.eventb.core.assignment="missed ≔ missed ∪ {y ↦ x ↦ 0}"/>
+      <org.eventb.core.action name="act04" org.eventb.core.label="MRouteTable_add_a4" org.eventb.core.assignment="received ≔ received ∪ {y ↦ x ↦ 0}"/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_updnbr" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="update_nbr" org.eventb.core.comment="Tier B. delta is MintRoute's sDelta: how many of this neighbour's packets were missed between the last one seen and this one. The sequence number comes from pktSeqNo, the PPkt field added in uM4.">
+      <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="x"/>
+      <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="y"/>
+      <org.eventb.core.parameter name="prm03" org.eventb.core.identifier="sNo"/>
+      <org.eventb.core.parameter name="prm04" org.eventb.core.identifier="delta"/>
+      <org.eventb.core.parameter name="prm05" org.eventb.core.identifier="pkt"/>
+      <org.eventb.core.guard name="grd01" org.eventb.core.label="MRouteTable_upd_g1" org.eventb.core.predicate="updateNbrs ≠ ∅" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd02" org.eventb.core.label="MRouteTable_upd_g2" org.eventb.core.predicate="x ∈ ND ∧ y ∈ ND ∧ x ↦ y ∈ updateNbrs" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd03" org.eventb.core.label="MRouteTable_upd_g3" org.eventb.core.predicate="y ↦ x ∈ neighbourTbl" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd04" org.eventb.core.label="MRouteTable_upd_g4" org.eventb.core.predicate="pkt ↦ x ∈ pktFwdr" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd05" org.eventb.core.label="MRouteTable_upd_g5" org.eventb.core.predicate="pkt ∈ dom(pktSeqNo) ∧ sNo = pktSeqNo(pkt)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd06" org.eventb.core.label="MRouteTable_upd_g6" org.eventb.core.predicate="delta = sNo − lastSeqno(y ↦ x) − 1" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd07" org.eventb.core.label="MRouteTable_upd_g7" org.eventb.core.predicate="delta ≥ 0" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd08" org.eventb.core.label="MRouteTable_upd_g8" org.eventb.core.predicate="type(pkt) = BEACON" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd09" org.eventb.core.label="MRouteTable_upd_g9" org.eventb.core.predicate="pkt ∈ ran(sentUp)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act01" org.eventb.core.label="MRouteTable_upd_a1" org.eventb.core.assignment="received ≔ received ⊕ {y ↦ x ↦ (received(y ↦ x) + 1)}"/>
+      <org.eventb.core.action name="act02" org.eventb.core.label="MRouteTable_upd_a2" org.eventb.core.assignment="lastSeqno ≔ lastSeqno ⊕ {y ↦ x ↦ sNo}"/>
+      <org.eventb.core.action name="act03" org.eventb.core.label="MRouteTable_upd_a3" org.eventb.core.assignment="missed ≔ missed ⊕ {y ↦ x ↦ delta}"/>
+      <org.eventb.core.action name="act04" org.eventb.core.label="MRouteTable_upd_a4" org.eventb.core.assignment="updateNbrs ≔ updateNbrs ∖ {x ↦ y}"/>
+   </org.eventb.core.event>
+</org.eventb.core.machineFile>

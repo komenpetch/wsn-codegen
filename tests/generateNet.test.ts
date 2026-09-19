@@ -350,9 +350,19 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
     expect(h).toContain("namespace eb_pm3wsn {");
   });
 
-  it("refuses without a packet source rather than silently emitting structure 2", () => {
-    expect(() => generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3))
-      .toThrow(/needs a packet source/);
+  // ⚠ This used to refuse: "structure 3 needs a packet source". The pattern was
+  // an INPUT then — handed in through `--ppkt-from`, so the user supplied two
+  // projects and the generator knew nothing about the pattern it embodies. It
+  // now ships inside the tool, and one project is enough.
+  it("needs no second project: the bundled extension is the default", () => {
+    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
+    const h = t.find((f) => f.path.endsWith(".h"))!.content;
+    // Tier A: the sub-partition's leaves, each with a chunk class of its own.
+    expect(h).toContain("class RoutePkt : public PPkt");
+    expect(h).toContain("class BeaconPkt : public PPkt");
+    // Tier B: the table, with its metrics keyed by a MAPLET rather than a scalar.
+    expect(h).toContain("std::map<std::pair<Node, Node>, int> lastSeqno;");
+    expect(h).toContain("neighbourTbl;");
   });
 });
 

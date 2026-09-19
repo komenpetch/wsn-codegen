@@ -19,12 +19,7 @@ export default function App() {
   const [target, setTarget] = useState("");
   // The emitted structure, numbered as the paper numbers them.
   const [structure, setStructure] = useState<EmitVersion>(2);
-  // Structure 3 carries a packet pattern class read off a SECOND project.
-  const [pktFiles, setPktFiles] = useState<EbFiles>([]);
-  const [pktMachines, setPktMachines] = useState<string[]>([]);
-  const [pktTarget, setPktTarget] = useState("");
   const zipInput = useRef<HTMLInputElement>(null);
-  const pktInput = useRef<HTMLInputElement>(null);
   const append = (s: string) => setLog((l) => [...l, s]);
 
   // Load Event-B files from any source (folder picker, zip button, drag-drop)
@@ -85,22 +80,16 @@ export default function App() {
       // campaign (paper2/data/MEASURING.md), which has a sub-microsecond clock
       // and an exact post-GC heap baseline. The caveat travels with the number,
       // in the console object below, so it cannot be quoted out of context.
-      // Structure 3 needs a packet source, and refuses rather than silently
-      // emitting structure 2 without one — the CLI refuses the same way.
-      if (structure === 3 && !pktFiles.length) {
-        setBusy(false);
-        return append("Structure 3 carries PPkt from a second project — load a packet source first.");
-      }
-      const packetSource = pktFiles.length
-        ? { files: pktFiles, machine: pktTarget }
-        : undefined;
-
       const t0 = performance.now();
       // `generate` when a machine is chosen, `generateMerged` for the leaf —
       // the same two entry points the CLI uses.
+      //
+      // ⚠ Structure 3 no longer takes a second project. It carries the pattern
+      // extension — PPkt and PRouteTable — and that ships inside the tool, so
+      // one project in, one module out.
       const tree = target && target !== leafMachine(files)
-        ? generate(files, target, outputName.trim(), structure, packetSource)
-        : generateMerged(files, outputName.trim(), structure, packetSource);
+        ? generate(files, target, outputName.trim(), structure)
+        : generateMerged(files, outputName.trim(), structure);
       const genMs = performance.now() - t0;
 
       const outLines = tree.reduce(
@@ -150,29 +139,6 @@ export default function App() {
     if (!file) return;
     append(`Reading ${file.name}…`);
     void loadWith(() => readZip(file));
-  }
-
-  // The packet source for structure 3: a SECOND Rodin project, whose packet-type
-  // partition supplies PPkt. Separate on purpose — a pattern is not owned by the
-  // protocol it was read off.
-  function pickPacketZip(file: File | undefined) {
-    if (!file) return;
-    append(`Reading packet source ${file.name}…`);
-    setBusy(true);
-    void (async () => {
-      try {
-        const f = await readZip(file);
-        const names = f.length ? machineNames(f) : [];
-        setPktFiles(f);
-        setPktMachines(names);
-        setPktTarget(names.length ? leafMachine(f) : "");
-        append(names.length
-          ? `Packet source: ${names.join(" → ")}. PPkt will be read from ${leafMachine(f)}.`
-          : "That zip holds no Event-B machine (.bum).");
-      } catch (e) {
-        append(`Error: ${(e as Error).message}`);
-      } finally { setBusy(false); }
-    })();
   }
 
   function onDrop(e: DragEvent) {
@@ -296,45 +262,10 @@ export default function App() {
           {structure === 3 && (
             <div className="w-full rounded border border-amber-300 bg-amber-50 p-3 text-sm">
               <p className="text-gray-700">
-                <strong>Packet source</strong> — structure 3 carries the packet pattern class
-                from a <em>second</em> Rodin project (a pattern is not owned by the protocol it
-                was read off).
-                {pktMachines.length > 0 && (
-                  <> Loaded: {pktMachines.join(" → ")}.</>
-                )}
+                <strong>Pattern extension</strong> — structure 3 is structure 2's module
+                carrying <em>PPkt</em> and <em>PRouteTable</em>. The extension ships inside
+                the tool, so there is nothing more to upload: one project in, one module out.
               </p>
-              <div className="mt-2 flex flex-wrap items-end gap-3">
-                <button
-                  onClick={() => pktInput.current?.click()}
-                  disabled={busy}
-                  className="rounded border border-gray-400 px-3 py-1 disabled:opacity-50"
-                >
-                  Pick packet-source .zip
-                </button>
-                <input
-                  ref={pktInput}
-                  type="file"
-                  accept=".zip"
-                  className="hidden"
-                  onChange={(e) => {
-                    pickPacketZip(e.target.files?.[0]);
-                    e.target.value = "";
-                  }}
-                />
-                {pktMachines.length > 0 && (
-                  <label className="flex flex-col gap-1 text-gray-700">
-                    PPkt from
-                    <select
-                      value={pktTarget}
-                      disabled={busy}
-                      onChange={(e) => setPktTarget(e.target.value)}
-                      className="rounded border border-gray-300 px-2 py-1"
-                    >
-                      {pktMachines.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </label>
-                )}
-              </div>
             </div>
           )}
           <button

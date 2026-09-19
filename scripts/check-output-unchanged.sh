@@ -22,7 +22,7 @@ npm run generate -- RTMCS out-m6 --machine M6  >/dev/null 2>&1 || { echo "FAIL: 
 # the app shell carrying PPkt from a second project is what the simulation
 # harness actually runs, so a refactor could change the module under test while
 # all nine files above stayed byte-identical.
-npm run generate -- AppLayer out-v3 --v3 --ppkt-from MintRoute --ppkt-machine M4 \
+npm run generate -- AppLayer out-v3 --v3 \
   >/dev/null 2>&1 || { echo "FAIL: structure 3 did not generate"; exit 1; }
 
 rc=0

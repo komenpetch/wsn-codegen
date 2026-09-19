@@ -11,7 +11,7 @@
 //   npm run generate                              # tests/fixtures/shdecom → out/
 //   npm run generate -- <dir|project> <outDir>
 //   npm run generate -- MintRoute out-m4 --machine M4
-//   npm run generate -- AppLayer out-v5 --v5 --ppkt-from MintRoute --ppkt-machine M4
+//   npm run generate -- AppLayer out-v3 --v3          # + the bundled pattern extension
 //   npm run generate -- <dir|project> <outDir> --v1     # emitted-structure version
 //
 // <dir|project> is a path, or one of the labels in scripts/projects.ts
@@ -19,10 +19,10 @@
 // (pM1/uM2/pM3/uM4/M0…M6/…) works.
 //
 // --v1/--v2/--v3 selects the emitted structure for the report's compare table
-// (1 = original RoutingProtocolBase, 2 = only the CommPattern pair changed,
-// 3 = full SensorApp shell, 4 = default). v5 is v4's shell carrying the packet
-// pattern class PPkt, taken from --ppkt-from. Only v4 can carry a network layer;
-// v1–v4 are frozen evidence.
+// (1 = SensorApp shell with the transmit behind an extension point, 2 = the
+// default, SensorApp behavioural parity). Structure 3 is 2's shell carrying the
+// pattern extension -- PPkt and PRouteTable -- which ships INSIDE the tool, so
+// it needs no second project: one project in, one module out.
 //
 // Run via vite-node so TS + engine imports resolve without a build step.
 import { writeFileSync, mkdirSync, copyFileSync } from "node:fs";
@@ -34,18 +34,13 @@ import type { EmitVersion } from "../src/engine/codeEmitter";
 const argv = process.argv.slice(2);
 const flag = argv.find((a) => /^--v[123]$/.test(a));
 const version = (flag ? Number(flag.slice(3)) : 2) as EmitVersion;
-// Structure 3 carries PPkt from another project's packet-type partition.
-const pIdx = argv.indexOf("--ppkt-from");
-const ppktProject = pIdx >= 0 ? argv[pIdx + 1] : undefined;
-const pmIdx = argv.indexOf("--ppkt-machine");
-const ppktMachine = pmIdx >= 0 ? argv[pmIdx + 1] : undefined;
 const mIdx = argv.indexOf("--machine");
 const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
 // `mIdx + 1` is only a real index to skip when --machine was actually given.
 // Without that guard mIdx is -1, mIdx + 1 is 0, and the FIRST positional
 // argument silently disappears.
-const named = new Set(["--machine", "--ppkt-from", "--ppkt-machine"]);
-const valueAt = new Set([mIdx, pIdx, pmIdx].filter((i) => i >= 0).map((i) => i + 1));
+const named = new Set(["--machine"]);
+const valueAt = new Set([mIdx].filter((i) => i >= 0).map((i) => i + 1));
 const positional = argv.filter((a, i) =>
   !/^--v[12345]$/.test(a) && !named.has(a) && !valueAt.has(i));
 
@@ -70,19 +65,15 @@ try { files = loadProject(resolveInput(input)); } catch (e) { refuse(e); }
 mkdirSync(outDir, { recursive: true });
 let tree;
 try {
-  // A packet source given to a version that cannot carry one is a silent no-op:
-  // the run reports success and the output simply has no PPkt in it, which is
-  // exactly what the user asked for and did not get.
-  if (ppktProject && version !== 3)
-    refuse(new Error(`--ppkt-from only applies to --v3; v${version} cannot carry a packet pattern class.`));
-  if (version === 3 && !ppktProject)
-    refuse(new Error("--v3 needs --ppkt-from <dir|project> [--ppkt-machine <M>]: which project's packet-type partition PPkt comes from. --ppkt-machine defaults to that project's leaf machine."));
-  const packetSource = ppktProject
-    ? { files: loadProject(resolveInput(ppktProject)), machine: ppktMachine ?? "" }
-    : undefined;
+  // ⚠ No packet-source flag any more. Structure 3 carries the pattern
+  // extension -- PPkt and PRouteTable -- and that extension ships INSIDE the
+  // tool (src/assets/pattern-extension), the way the rule catalog does. It used
+  // to be `--ppkt-from <project>`, which made the pattern an INPUT the user had
+  // to supply: two projects in, and a generator that knew nothing about the
+  // pattern it is meant to embody.
   tree = machine
-    ? generate(files, machine, defaultName(machine), version, packetSource)
-    : generateMerged(files, undefined, version, packetSource);
+    ? generate(files, machine, defaultName(machine), version)
+    : generateMerged(files, undefined, version);
 } catch (e) { refuse(e); }
 for (const f of tree) writeFileSync(resolve(outDir, f.path), f.content, "utf8");
 

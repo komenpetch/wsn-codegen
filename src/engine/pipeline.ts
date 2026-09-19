@@ -10,6 +10,7 @@ import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
+import { patternExtensionFor } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
 import { getterOf } from "./packetModel";
 import { methodForLabel, implText, splitParams } from "./emitted";
@@ -87,9 +88,10 @@ export function leafMachine(files: EbFiles): string {
 
 // Generate one class for a single target machine, flattened over its refines
 // chain (base first). `outputName` is the emitted class/file name.
-export function generate(files: EbFiles, target: string, outputName: string, version: EmitVersion = 2,
-  packetSource?: PacketSource): GeneratedTree {
-  return emitOne(parsedMachines(files), target, outputName, version, packetSource);
+export function generate(files: EbFiles, target: string, outputName: string,
+  version: EmitVersion = 2, packetSource?: PacketSource): GeneratedTree {
+  return emitOne(parsedMachines(files), target, outputName, version,
+    packetSourceFor(files, target, version, packetSource));
 }
 
 // The one place the two halves of the generator meet.
@@ -109,6 +111,27 @@ export function generate(files: EbFiles, target: string, outputName: string, ver
 // from another. MintRoute's partition gives DATA/ROUTE/BEACON and seven fields;
 // the app-layer chain's gives DATA/CONTROL and four.
 export interface PacketSource { files: EbFiles; machine: string; }
+
+// What structure 3 carries, and where it comes from.
+//
+// THE DEFAULT IS THE BUNDLED PATTERN EXTENSION — PPkt and PRouteTable ship
+// inside the tool (src/assets/pattern-extension), the way the rule catalog
+// does. That is the product's contract: ONE project in, one module out. Before
+// this the extension was an INPUT the user had to supply through `--ppkt-from`,
+// so the generator knew nothing about the pattern it is meant to embody.
+//
+// ⚠ The explicit override is kept, and is deliberately NOT exposed by the CLI
+// or the web app. It is the seam the structure-3 regression tests use to carry
+// a RICHER packet source than the extension (MintRoute's, with its medium,
+// flood state and Sink constant) — which is what exercises the carry machinery:
+// supersession, drain-on-arrival, the mint rollback, deserialise-in-arrival.
+// Removing the parameter outright would have deleted the cover for four
+// hard-won fixes along with it.
+function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
+  override?: PacketSource): PacketSource | undefined {
+  if (version !== 3) return override;
+  return override ?? patternExtensionFor(files, base);
+}
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
   packetSource?: PacketSource): GeneratedTree {
@@ -371,9 +394,10 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
 // machine, whose flattened form subsumes the entire refinement chain. Emits
 // exactly three files (<name>.h/.cc/.ned). `outputName` defaults to the leaf's
 // derived name. `version` selects the emitted structure (see EmitVersion).
-export function generateMerged(files: EbFiles, outputName?: string, version: EmitVersion = 2,
-  packetSource?: PacketSource): GeneratedTree {
+export function generateMerged(files: EbFiles, outputName?: string,
+  version: EmitVersion = 2, packetSource?: PacketSource): GeneratedTree {
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
-  return emitOne(raw, leaf, outputName ?? defaultName(leaf), version, packetSource);
+  return emitOne(raw, leaf, outputName ?? defaultName(leaf), version,
+    packetSourceFor(files, leaf, version, packetSource));
 }
