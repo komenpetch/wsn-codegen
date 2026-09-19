@@ -439,6 +439,32 @@ function planFor(label: string, params: Param[], guards: string[], carriers: Set
           resolved.add(p); progress = true; continue;
         }
       }
+      // enumerated over a finite carrier MINUS a subtracted set.
+      //
+      // ⚠ The difference is still an enumeration, and missing that was what
+      // stopped the CommPattern's own creating event. It types its originator
+      // `x ∈ ND ∖ Dests`; the plain matcher below does not match a difference,
+      // so `x` was unresolvable on the first pass, the packet got minted
+      // first, and `x` then fell through to `x = initialSrcAddr(pkt)` -- READ
+      // off the fresh chunk, where that field is still −1. `ND.count(-1) > 0`
+      // is false, so the event declined on its first guard every tick and the
+      // module ran its full sixty seconds firing nothing.
+      //
+      // Resolving it HERE, before the packet exists, is what puts it on
+      // MintRoute's working path: `s = Sink` resolves that model's originator
+      // independently and `s = initialSrcAddr(pkt)` is then satisfied by
+      // CONSTRUCTION, with the fresh-packet branch stamping the field. Nothing
+      // is invented -- `initialSrcAddr` is never assigned in any model.
+      //
+      // The subtraction is load-bearing and is emitted, not dropped: the
+      // pattern says control packets originate AWAY from the destinations.
+      const inDiff = clauses.map((c) =>
+        new RegExp(`^${p}\\s*∈\\s*(\\w+)\\s*∖\\s*(\\w+)$`).exec(c.trim())).find(Boolean);
+      if (inDiff && carriers.has(inDiff[1]) && inDiff[1] !== "PKT") {
+        lines.push(`    for (${par.cppType} ${p} : ${inDiff[1]}) {`); depth++;
+        lines.push(`    if (${inDiff[2]}.count(${p}) > 0) continue;`);
+        resolved.add(p); progress = true; continue;
+      }
       // enumerated over a finite carrier
       const inSet = clauses.map((c) => new RegExp(`^${p}\\s*∈\\s*(\\w+)$`).exec(c.trim())).find(Boolean);
       if (inSet && carriers.has(inSet[1]) && inSet[1] !== "PKT") {
@@ -737,6 +763,17 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
             `$1// (the shell's own sendSensorPacket() is not called: ${transmitOwner})`
           : `$1sendSensorPacket();\n$1runEnabledEvents();   // Event-B events enabled at this tick`,
         "installScheduler (timer hook)");
+      // ⚠ And take the comment that described the call we just replaced.
+      // codeEmitter emits an `EXTENSION POINT (send-down flow)` note beneath
+      // `sendSensorPacket();` explaining how one WOULD drive the transmit chain
+      // from the model. Once this pass has done exactly that, the note contradicts
+      // the two lines above it and reads as an unfinished seam in a module that
+      // is finished -- the same stale-doc-comment class as the generated header
+      // that carried a SensorApp description above a NetworkProtocolBase class.
+      if (modelDrivesTransmit)
+        content = content.replace(
+          /^[ \t]*\/\/ EXTENSION POINT \(send-down flow\): to drive the transmission from the\n(?:[ \t]*\/\/.*\n)*/m,
+          "");
       return { ...f, content };
     }
     return f;

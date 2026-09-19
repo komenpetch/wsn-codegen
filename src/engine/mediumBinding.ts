@@ -163,6 +163,20 @@ export type MediumCore = {
 // variable names. That is what makes a model a NETWORK-layer model, and it is
 // READ OFF the model rather than configured — the same discipline as the rest
 // of the binding.
+//
+// ⚠ IT RECOGNISES ONE OF THE CORPUS'S TWO MEDIUM DESIGNS, and that is a fact
+// about this test rather than about the models. Measured 2026-09-19:
+//
+//   MintRoute          moves five fields into `vPkt*` on send and back on
+//                      receive — the wire-copy mirror this test looks for.
+//   WSN_Pattern        crosses a packet with `channel` + `envNeighbours` and a
+//   (flooding study)   `recvNbrFlg` handshake, with NO field-by-field copy.
+//
+// So a model with a perfectly good medium of the second shape reads FALSE here
+// and is given the application shell. Nothing depends on that today — the
+// medium is deferred to the topology step, where a second shape would have to
+// be recognised before it could be bound. Recorded so the next reader does not
+// mistake a false for "this model has no medium".
 export const modelHasMedium = (model: EncodedMachine, pm: PacketModel): boolean =>
   mediumCore(model, pm) !== null;
 
