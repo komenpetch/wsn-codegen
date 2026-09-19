@@ -374,7 +374,7 @@ bool Pm1App::creatingPkt(Node x, int des, PktId pkt, Data data) {
         return false;
     if (!(x == initialSrcAddr.at(pkt)))
         return false;
-    if (!(des == finalDestAddr.at(pkt)))
+    if (!((finalDestAddr.count(pkt) > 0 && des == finalDestAddr.at(pkt))))
         return false;
     if (!(pktFwdr.count(pkt) == 0))
         return false;
@@ -957,7 +957,7 @@ bool Pm3App::creatingDataPacket(Node x, int des, PktId pkt, Data data) {
         return false;
     if (!(x == initialSrcAddr.at(pkt)))
         return false;
-    if (!(des == finalDestAddr.at(pkt)))
+    if (!((finalDestAddr.count(pkt) > 0 && des == finalDestAddr.at(pkt))))
         return false;
     if (!(pktFwdr.count(pkt) == 0))
         return false;
@@ -984,7 +984,7 @@ bool Pm3App::creatingControlPacket(Node x, int des, PktId pkt, Data data) {
         return false;
     if (!(x == initialSrcAddr.at(pkt)))
         return false;
-    if (!(des == finalDestAddr.at(pkt)))
+    if (!((finalDestAddr.count(pkt) > 0 && des == finalDestAddr.at(pkt))))
         return false;
     if (!(pktFwdr.count(pkt) == 0))
         return false;
@@ -1554,7 +1554,7 @@ bool Um2App::creatingControlPacket(Node x, int des, PktId pkt, Data data) {
         return false;
     if (!(x == initialSrcAddr.at(pkt)))
         return false;
-    if (!(des == finalDestAddr.at(pkt)))
+    if (!((finalDestAddr.count(pkt) > 0 && des == finalDestAddr.at(pkt))))
         return false;
     if (!(pktFwdr.count(pkt) == 0))
         return false;
@@ -1712,7 +1712,7 @@ bool Um2App::creatingDataPacket(Node x, int des, PktId pkt, Data data) {
         return false;
     if (!(x == initialSrcAddr.at(pkt)))
         return false;
-    if (!(des == finalDestAddr.at(pkt)))
+    if (!((finalDestAddr.count(pkt) > 0 && des == finalDestAddr.at(pkt))))
         return false;
     if (!(pktFwdr.count(pkt) == 0))
         return false;

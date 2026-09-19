@@ -101,8 +101,19 @@ export const RULES: Rule[] = [
                         : `(${M}.count(${k}) > 0 && !${M}.at(${k}).empty())`; } },
 
   // ── MS6 range of key restriction (equality guard): d = ran({k} ◁ M) ──
+  // ⚠ Domain-checked. `.at` THROWS on a missing key, and an Event-B guard is an
+  // unordered CONJUNCTION -- `d = ran({k} ◁ M)` may be written before whatever
+  // establishes `k ∈ dom(M)`, while the emitter turns guards into a SEQUENCE.
+  // The 2026-09-07 round replaced FN1/FN1-cmp/FN1-SET1 with domain-checked
+  // forms for exactly this reason and MS6 was missed; it stayed harmless only
+  // while nothing reached it, then surfaced as `std::out_of_range: map::at` at
+  // event #19 the moment the CommPattern's creating event became schedulable.
+  //
+  // A key outside the domain makes this guard FALSE, not an exception:
+  // `ran({k} ◁ M)` is `∅` there, and no scalar equals the empty set.
   { id: "MS6", match: re(/^(?<d>\w+)\s*=\s*ran\(\s*\{\s*(?<k>\w+)\s*\}\s*◁\s*(?<M>\w+)\s*\)$/),
-    emit: (m) => { const { d, k, M } = c(m); return `${d} == ${M}.at(${k})`; } },
+    emit: (m) => { const { d, k, M } = c(m);
+      return `(${M}.count(${k}) > 0 && ${d} == ${M}.at(${k}))`; } },
 
   // ── MS1 per-key membership: x ∈ M(k) / ∉  (map-of-sets; M is not dom/ran) ──
   { id: "MS1", match: re(/^(?<x>\w+)\s*(?<op>∈|∉)\s*(?!dom\(|ran\()(?<M>\w+)\(\s*(?<k>\w+)\s*\)$/),

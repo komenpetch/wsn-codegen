@@ -52,13 +52,28 @@ describe("a parameter ranged over a set difference is enumerated, not read back"
     expect(body).not.toContain("Node x = pktOf(pkt)->getInitialSrcAddr();");
   });
 
-  it("leaves MintRoute's own originator path alone", () => {
-    // MintRoute resolves `s` from a context constant, not an enumeration, and
+  it("holds for a second model, on a parameter that is not a packet source", () => {
+    // MintRoute's `est_due` types `x ∈ ND ∖ estNDs` — the same shape with no
+    // packet anywhere near it, so this is the enumeration alone rather than the
+    // enumeration plus the mint. It became schedulable for the first time with
+    // this fix; before it the generator reported "no binding for x".
+    const m4 = generate(load("../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck"),
+      "M4", "M4Wsn", 2).find((f) => f.path.endsWith(".cc"))!.content;
+    const est = m4.slice(m4.indexOf("bool M4Wsn::try_est_due()"));
+    const b = est.slice(0, est.indexOf("\n}"));
+    expect(m4).toContain("bool M4Wsn::try_est_due()");
+    expect(b).toContain("for (Node x : ND) {");
+    expect(b).toContain("if (estNDs.count(x) > 0) continue;");
+  });
+
+  it("leaves MintRoute's context-constant originator path alone", () => {
+    // `create_bconPkt` resolves `s` from `s = Sink`, not an enumeration, and
     // that path already worked. It must not change.
     const m4 = generate(load("../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck"),
       "M4", "M4Wsn", 2).find((f) => f.path.endsWith(".cc"))!.content;
     const bcon = m4.slice(m4.indexOf("bool M4Wsn::try_create_bconPkt()"));
-    expect(bcon.slice(0, bcon.indexOf("\n}"))).toContain("int s = Sink;");
-    expect(bcon.slice(0, bcon.indexOf("\n}"))).toContain("ensurePkt(pkt)->setInitialSrcAddr(s);");
+    const b = bcon.slice(0, bcon.indexOf("\n}"));
+    expect(b).toContain("int s = Sink;");
+    expect(b).toContain("ensurePkt(pkt)->setInitialSrcAddr(s);");
   });
 });

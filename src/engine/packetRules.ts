@@ -48,12 +48,32 @@ const re = (p: RegExp) => (expr: string): RuleMatch | null => {
 // rule -- e.g. initialSrcAddr is guarded `∈ dom(...)` four times across both
 // corpora and `∉` never; envDestAddr and pktErrND are guarded `∉ dom(...)`
 // exactly once each (their own creation site) and `∈` never.
-type Kind = "GET" | "SET" | "SET_KEY" | "DOM" | "DOM_NOT" | "DEL" | "MEM" | "ARITH";
+type Kind = "GET" | "IMG" | "SET" | "SET_KEY" | "DOM" | "DOM_NOT" | "DEL" | "MEM" | "ARITH";
 const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
   // Context-sourced: a fixed per-packet identity, never written or removed.
   initialSrcAddr: {
     GET: ["MintRoute.create_dataPkt", "RTMCS.create_dataPkt"],
     DOM: ["RTMCS.create_rrer"],
+  },
+  // finalDestAddr's sibling, and the one field whose reads were left to the
+  // base catalog -- because the corpus this table was first built from spells
+  // them `des = finalDestAddr(pkt)` (GET's form, and RTMCS's own variable), and
+  // the pattern spells the SAME read as a relational image.
+  //
+  // ⚠ WITH NO RULE HERE, `des = ran({pkt} ◁ finalDestAddr)` fell through to the
+  // base catalog's MS6 and read `finalDestAddr` -- the CONTEXT MAP that ENC7
+  // replaced. In the pattern that name is a context CONSTANT with a property
+  // axiom and no elements, so the map is emitted DECLARED AND EMPTY and nothing
+  // can ever fill it. Both creating events guarded against it: before MS6 was
+  // domain-checked that was `std::out_of_range` thrown at runtime; after, a
+  // guard that is false on every candidate. Fourth occurrence of the
+  // two-storage trap (2026-09-08 `type(pkt)`, 2026-09-13 `netSeqNo`, the
+  // scheduler's own image binding, and now its guard).
+  //
+  // ⚠ And the dead map survived `stripDeadPacketFieldMaps` because these very
+  // guards referenced it -- the stale read is what kept its own storage alive.
+  finalDestAddr: {
+    IMG: ["AppLayer.creatingControlPacket", "AppLayer.creatingDataPacket"],
   },
   // The core attribute family every case study carries (pM1's ENC7 chunk
   // fields): established by the create_* events, read back and handed off
@@ -216,6 +236,29 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-GET-${f.ebName}`, tier: 1, evidence: ev.GET,
       match: re(new RegExp(`^(?<y>\\w+)\\s*=\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)$`)),
       emit: (m) => `${m.captures.y} == pktOf(${m.captures.p})->${G}()`,
+    });
+    // `y = ran({p} ◁ F)`: GET's read, written as a relational image. The two
+    // are the same clause -- `F[{p}] = ran({p} ◁ F)`, and for a function that
+    // singleton carries exactly `F(p)` -- so they must reach the same storage,
+    // and under ENC7 that is the chunk.
+    //
+    // ⚠ The SCHEDULER already binds this form off the chunk (`des = pktOf(pkt)
+    // ->getFinalDestAddr()`). Without this rule the guard went to the machine
+    // map instead, so the binding and the guard read two different storages for
+    // one name and the event declined on a value it had just computed itself.
+    //
+    // `≠ nullptr` rather than a domain check: for a TOTAL function the domain
+    // is all of PKT by axiom, so what the guard is really asking is whether
+    // this module has a chunk for `p` at all -- the same question PKT-ARITH
+    // asks, and the same one the scheduler's own `pktStore.count(p)` bail asks.
+    if (ev.IMG) out.push({
+      id: `PKT-IMG-${f.ebName}`, tier: 1, evidence: ev.IMG,
+      match: re(new RegExp(
+        `^(?<y>\\w+)\\s*=\\s*ran\\(\\s*\\{\\s*(?<p>\\w+)\\s*\\}\\s*◁\\s*${F}\\s*\\)$`)),
+      emit: (m) => {
+        const { y, p } = m.captures;
+        return `(pktOf(${p}) != nullptr && ${y} == pktOf(${p})->${G}())`;
+      },
     });
     // `y = F(p) ± n`: the same chunk read as GET, with arithmetic on it. Kept
     // separate from GET because it is a different clause shape, and because

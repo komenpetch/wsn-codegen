@@ -42,7 +42,14 @@ describe("38-rule catalog", () => {
   it("MS5 per-key emptiness, MS6 ran({k}◁M), MS7 product join, MS3 per-key remove", () => {
     expect(emit("{pkt} ◁ctlNeighbours = ∅", buffers))
       .toBe("(ctlNeighbours.count(pkt) == 0 || ctlNeighbours.at(pkt).empty())");
-    expect(emit("des = ran({pkt} ◁ finalDestAddr)", buffers)).toBe("des == finalDestAddr.at(pkt)");
+    // ⚠ DOMAIN-CHECKED. `.at` throws on a missing key and an Event-B guard is an
+    // unordered conjunction, so nothing guarantees the domain check precedes it.
+    // Every sibling rule was given one in the 2026-09-07 round; MS6 was missed,
+    // and it surfaced as `std::out_of_range: map::at` the moment the
+    // CommPattern's creating event became schedulable. A key outside the domain
+    // makes the guard FALSE -- `ran(∅) = ∅` -- rather than an exception.
+    expect(emit("des = ran({pkt} ◁ finalDestAddr)", buffers))
+      .toBe("(finalDestAddr.count(pkt) > 0 && des == finalDestAddr.at(pkt))");
     expect(emit("ctlNeighbours ≔ ctlNeighbours ∪({pkt}× nbrs)", buffers))
       .toBe("for (auto _v : nbrs) ctlNeighbours[pkt].insert(_v);");
     expect(emit("ctlNeighbours ≔ ctlNeighbours  ∖ {pkt ↦nb}", buffers))
