@@ -239,6 +239,68 @@ export function receiveEventsOf(base: EncodedMachine, source: EncodedMachine,
     .map((e) => e.label);
 }
 
+// Which of the receive events must NOT be hoisted to the front of the delivery
+// batch, because something later in that batch is what fills what they need?
+//
+// ⚠ THE BATCH ORDER IS BEHAVIOUR -- `runDeliveryEvents()` attempts each event
+// once per arrival, in order, and each attempt sees what the earlier ones left.
+// The delivery batch is assembled as `[...recv, ...model order]`, and the hoist
+// is load-bearing: flattening puts a CARRIED refinement after every pM1 event,
+// so `receive_controlPkt` would otherwise run last and nothing would be
+// consumed on the arrival that delivered it.
+//
+// ⚠ But the hoist is too blunt on its own. `send_up` publishes TWO variables --
+// `ctlNeighbours` AND `sentUp` -- so receiveEventsOf claims anything guarding
+// membership in either, and `finish_tx_pkt` guards `x ↦ pkt ∈ sentUp`. It is not
+// a reception in any useful sense: it is the CLEANUP that runs once a delivery
+// has been consumed, and its own guard `pkt ∈ ran(ndBuff)` is filled by
+// `fwdr_receive_pkt`, which sits six places further down the batch. Hoisted to
+// the front it is tried before its precondition exists and after the previous
+// arrival's `start_tx` has already drained ndBuff again.
+//
+// MEASURED on the nine-node field, 60 s, by probing the batch at five points:
+// candidates for `finish_tx_pkt` at the top of the batch 0, after the receive
+// events 0, AFTER `fwdr_receive_pkt` 652, after `final_tx_pkt` 652 (its guard is
+// the complement, so it cannot take them), after `start_tx_controlPkt` 0. So a
+// candidate existed on 652 of the 655 arrivals that forwarded a packet, in a
+// window the event was never tried in: it fired 0 times in a whole run, and
+// 24532 calls never once saw `pkt ∈ ran(ndBuff)` true.
+//
+// The rule is deliberately narrow, and narrow for a recorded reason: a full
+// read/write dependency graph CYCLES on this corpus (see phaseFlags, which
+// settles two checkable cases and leaves everything else in model order). This
+// asks one question -- does an event EARLIER in the batch than its own producer
+// get hoisted past it -- and answers it only for the hoist this function feeds.
+export function starvedByHoisting(model: EncodedMachine, recv: readonly string[],
+  deliverySet: readonly string[]): Set<string> {
+  const byLabel = new Map(model.events.map((e) => [e.label, e]));
+  const hoisted = new Set(recv);
+  const out = new Set<string>();
+  for (const label of recv) {
+    const ev = byLabel.get(label);
+    if (!ev) continue;
+    // What this event requires to be NON-EMPTY: `p ∈ ran(V)` or `a ↦ b ∈ V`.
+    // Positive positions only — a `∉` guard states an absence and needs no
+    // producer at all.
+    const needs = new Set<string>();
+    for (const g of ev.guards) {
+      const t = g.trim();
+      const m = /∈\s*ran\s*\(\s*(\w+)\s*\)$/.exec(t) ?? /↦\s*\w+\s*∈\s*(\w+)$/.exec(t);
+      if (m && model.variableTypes.has(m[1])) needs.add(m[1]);
+    }
+    if (needs.size === 0) continue;
+    // Filled by an event that is NOT itself hoisted — so hoisting jumps ahead
+    // of the only thing in this batch that could have enabled it.
+    const filledByLaterEvent = deliverySet.some((other) => {
+      if (hoisted.has(other)) return false;
+      const oe = byLabel.get(other);
+      return !!oe && oe.actions.some((a) => [...needs].some((v) => addsTo(a, v)));
+    });
+    if (filledByLaterEvent) out.add(label);
+  }
+  return out;
+}
+
 // Carry named events plus the state they need, on the same terms as the
 // creating ones: the base model's typing wins every collision.
 export function carryEvents(base: EncodedMachine, source: EncodedMachine,

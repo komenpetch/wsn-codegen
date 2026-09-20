@@ -8,7 +8,7 @@ import { installScheduler } from "./scheduler";
 import { bindNodeIdentity, nodeSetsOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
-import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, senderFieldOf, mergeContexts } from "./packetOps";
+import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, starvedByHoisting, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { routeTableOf, bindRoutingTable } from "./routingTable";
 import { patternExtensionFor } from "./patternExtension";
@@ -392,8 +392,6 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // time: 52,034 events at one instant.
     const creating = new Set(pm.leaves.map((l) => l.event));
     const recv = receiveEventsOf(base, pModel);
-    const delivery = [...recv, ...model.events.map((e) => e.label)
-      .filter((l) => !creating.has(l) && !recv.includes(l))];
     // ⚠ The base model's ABSTRACT versions of what was just carried must stop
     // being scheduled. Carrying a refinement into a model that still holds the
     // abstraction leaves the module running two accounts of one story, and the
@@ -421,6 +419,26 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // unreachableEvents.
     const neverRuns = new Set(superseded.keys());
     superseded.set("send_up", "the socket arrival realises it, on a real reception");
+    // The batch is the receive events FIRST — flattening puts a carried
+    // refinement after every pM1 event, so `receive_controlPkt` would otherwise
+    // run last and an arrival would consume nothing — then everything else in
+    // model order.
+    //
+    // ⚠ Except an event the hoist would STARVE: `send_up` publishes `sentUp` as
+    // well as `ctlNeighbours`, so the cleanup `finish_tx_pkt` is swept into the
+    // receive class and lands ahead of the `fwdr_receive_pkt` that fills its
+    // `ndBuff` guard. Measured: a candidate existed on 652 of the 655 arrivals
+    // that forwarded a packet, and the event fired 0 times in a whole run.
+    //
+    // ⚠ Built HERE, below `superseded`, and that placement is load-bearing: an
+    // event that will not be scheduled cannot be the thing that fills a guard
+    // "later in the batch". Computed above it, `send_up` — which the arrival
+    // realises and which is what fills `ctlNeighbours` — counted as a filler and
+    // demoted every receive event to the end, which is the opposite of the fix.
+    const inBatch = model.events.map((e) => e.label)
+      .filter((l) => !creating.has(l) && !superseded.has(l));
+    const hoisted = recv.filter((l) => !starvedByHoisting(model, recv, inBatch).has(l));
+    const delivery = [...hoisted, ...inBatch.filter((l) => !hoisted.includes(l))];
     const scheduled = installScheduler(tree, model, outputName, pm.fields, superseded, true,
       carrierSetsOf(raw, pRaw), delivery,
       "the model's own\n    //  transmit event is the transmit path now", neverRuns,
