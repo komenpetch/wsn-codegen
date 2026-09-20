@@ -103,6 +103,50 @@ export function isTypingSet(rhs: string, carriers: ReadonlySet<string>): boolean
   return head !== null && carriers.has(head[1]);
 }
 
+/**
+ * Which of an event's parameters are node-valued attributes of a packet it is
+ * MINTING, and so must be chosen rather than read.
+ *
+ * ⚠ RTMCS's `create_rreq` determines its originator as `s = initialSrcAddr(pkt)`
+ * and gives `s` no other binding. Read off a chunk being minted, that yields the
+ * field's default -1, and the event declines on `floodSeqNo.count(-1)` every
+ * tick on every node -- schedulable and firing zero times. For a creating event
+ * the source is not something to look up: the creator IS the source.
+ *
+ * Each condition earns its place, and one of them is NOT exercised by the
+ * corpus, which is said plainly rather than left to be discovered:
+ *
+ *   resolved      a parameter bound another way is left alone -- MintRoute's
+ *                 `s = Sink` and the pattern's `x ∈ ND ∖ Dests` already resolve
+ *                 the originator, and the caller's stamp then satisfies the same
+ *                 guard by construction. Exercised: both would change if dropped.
+ *   a parameter   `q` must be one; a bare name that is not is not ours to bind.
+ *   node-valued   ⚠ NO CORPUS EVENT distinguishes this today -- every such clause
+ *                 on a minted packet happens to name a node-valued field. Kept
+ *                 because without it a creating event whose sequence number were
+ *                 written `sno = pktSeqNo(pkt)` would enumerate a sequence number
+ *                 over node ids, which compiles and is nonsense. Tested directly
+ *                 below for that reason; a mutation of it survives the end-to-end
+ *                 suite.
+ *
+ * `nodeFields` is derived from the model's own `initialSrcAddr ∈ PKT → ND`, via
+ * the same PacketField.cppType the chunk's field type comes from, so no field
+ * name appears here.
+ */
+export function chosenAtCreation(
+  clauses: readonly string[], packet: string, params: readonly string[],
+  resolved: ReadonlySet<string>, nodeFields: ReadonlySet<string>,
+): string[] {
+  const out: string[] = [];
+  for (const c of clauses) {
+    const m = new RegExp(`^(\\w+)\\s*=\\s*(\\w+)\\(\\s*${packet}\\s*\\)$`).exec(c.trim());
+    if (!m || resolved.has(m[1]) || out.includes(m[1])) continue;
+    if (!nodeFields.has(m[2]) || !params.includes(m[1])) continue;
+    out.push(m[1]);
+  }
+  return out;
+}
+
 interface Param { name: string; cppType: string; }
 interface Plan {
   label: string;
@@ -161,6 +205,12 @@ interface PlanContext {
   /** Leaves of the emitted packet-type lattice -- see typeOf. */
   leaves: ReadonlySet<string>;
   /**
+   * Packet fields the model types as NODE-valued (`initialSrcAddr ∈ PKT → ND`).
+   * A creating event may choose such a field's value; it cannot read one off a
+   * packet it is in the middle of minting.
+   */
+  nodeFields: ReadonlySet<string>;
+  /**
    * The Event-B name of the field carrying the SENDER, from senderFieldOf.
    * Null when the model stamps none, in which case nothing is delivery-scoped.
    */
@@ -173,12 +223,16 @@ interface PlanContext {
 }
 
 function planFor(label: string, params: Param[], guards: string[], ctx: PlanContext): Plan {
-  const { carriers, enc, nestedVars, pktField, leaves, senderField, pairKeyed } = ctx;
+  const { carriers, enc, nestedVars, pktField, leaves, nodeFields, senderField, pairKeyed } = ctx;
   const clauses = guards.flatMap((g) => splitConjuncts(g));
   const lines: string[] = [];
   const rollback: string[] = [];
   let stamps: string | undefined;
   const resolved = new Set<string>();
+  // Packets this event MINTS, as opposed to ones it was handed. A field read off
+  // a minted packet is a read of a default, not of data -- see the node-valued
+  // branch below.
+  const minted = new Set<string>();
   // Inside a loop an unmet precondition must skip this candidate, not abandon
   // the whole event -- returning would silently stop at the first bad one.
   let depth = 0;
@@ -291,6 +345,32 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
       const fn = clauses.map((c) =>
         new RegExp(`^${p}\\s*=\\s*(\\w+)\\(\\s*(\\w+)\\s*\\)(?:\\s*(\\+|−|-)\\s*(\\d+))?$`).exec(c.trim())
       ).find(Boolean);
+      // ⚠ A NODE-VALUED FIELD OF A PACKET THIS EVENT IS MINTING IS NOT A READ.
+      //
+      // `create_rreq` (RTMCS) determines its originator as `s = initialSrcAddr(pkt)`
+      // and gives `s` no other binding. Reading that off a freshly minted chunk
+      // yields the field's default, -1, and the event then declines on the first
+      // guard that uses it -- `floodSeqNo.count(-1)` -- every tick, on every node:
+      // schedulable, and firing zero times.
+      //
+      // For a CREATING event the source is not something to look up; the creator
+      // IS the source. The generator already knows this and already acts on it
+      // twice -- MintRoute's `s = Sink` and the pattern's `x ∈ ND ∖ Dests` both
+      // resolve the originator independently, and the fresh-packet branch below
+      // then STAMPS the field, satisfying the same guard by construction. The only
+      // shape missing was the one where the read is the ONLY binding, which is why
+      // this sits inside the read rather than beside it.
+      //
+      // Enumerating over the node carrier is what makes it right per node rather
+      // than merely non-negative: `bindNodeIdentity` emits `ND.insert(myNodeId)`,
+      // so in a per-node module ND holds exactly this node, and the loop binds the
+      // originator to the only node that could have originated it. The pattern's
+      // own creating event has enumerated over ND since the set-difference fix.
+      //
+      // Derived, not named: `cppType === "Node"` on the PacketField comes from the
+      // model's own `initialSrcAddr ∈ PKT → ND`. A field valued as anything else
+      // (a sequence number, a payload) still reads, because nothing says what
+      // value the creator should invent for it.
       if (fn && known(fn[2])) {
         const [, f, x, op, n] = fn;
         const arith = op ? ` ${op === "+" ? "+" : "-"} ${n}` : "";
@@ -406,7 +486,40 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
       }
       // fresh packet
       if (isFresh(p) && par.cppType === "PktId") {
+        // ⚠ ITS NODE-VALUED ATTRIBUTES ARE CHOSEN FIRST, BEFORE THE MINT.
+        //
+        // `create_rreq` (RTMCS) determines its originator as
+        // `s = initialSrcAddr(pkt)` and gives `s` no other binding, so `s` fell
+        // through to the ordinary `p = f(x)` read and was taken off the chunk of
+        // the packet being minted -- where the field is still its default, -1.
+        // The event then declined on the first guard using it,
+        // `floodSeqNo.count(-1)`, every tick on every node: schedulable, firing
+        // zero times.
+        //
+        // For a creating event the source is not something to look up; the
+        // creator IS the source. The generator already acts on this twice --
+        // MintRoute's `s = Sink` and the pattern's `x ∈ ND ∖ Dests` both bind the
+        // originator independently, and the stamp loop below then satisfies the
+        // same guard by construction. Only the shape where the read is the ONLY
+        // binding was missing.
+        //
+        // Resolving them HERE, ahead of the mint, is what keeps the emitted loops
+        // nested correctly: bound after the mint, the enumeration would sit inside
+        // the packet's lifetime, and a candidate that failed would erase the very
+        // chunk the next iteration re-stamps -- losing the type tag with it. ND
+        // holding exactly one node today would have hidden that.
+        //
+        // Derived, not named: `cppType === "Node"` comes from the model's own
+        // `initialSrcAddr ∈ PKT → ND`. A field valued as anything else -- a
+        // sequence number, a payload -- still reads, because nothing in the model
+        // says what value a creator should invent for it.
+        for (const q of chosenAtCreation(clauses, p, params.map((v) => v.name),
+          resolved, nodeFields)) {
+          lines.push(`    for (Node ${q} : ND) {`); depth++;
+          resolved.add(q); progress = true;
+        }
         lines.push(`    ${par.cppType} ${p} = newPktId();`);
+        minted.add(p);
         rollback.push(`    pktStore.erase(${p});`);
         const tag = typeOf(p);
         // The chunk, and only the chunk. The context map `type` is the other
@@ -643,7 +756,11 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // Built once: none of it varies by event.
   const planContext: PlanContext = {
     carriers, enc: (id) => model.encodings.get(id),
-    nestedVars, pktField, leaves, senderField: senderField ? senderField.ebName : null, pairKeyed,
+    nestedVars, pktField, leaves,
+    // From the model's own `∈ PKT → ND`, via PacketField.cppType -- the same
+    // derivation the chunk's field type comes from, asked once here.
+    nodeFields: new Set(fields.filter((f) => f.cppType === "Node").map((f) => f.ebName)),
+    senderField: senderField ? senderField.ebName : null, pairKeyed,
   };
   const plans: Plan[] = [];
   for (const ev of model.events) {
