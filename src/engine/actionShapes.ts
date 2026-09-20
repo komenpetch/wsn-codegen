@@ -69,6 +69,21 @@ export function anyMapletAdded(action: string): [string, string, string] | null 
   return m ? [m[1], m[2], m[3]] : null;
 }
 
+/**
+ * The variable that LOSES this exact maplet, or null. `V ≔ V ∖ {a ↦ b}` → `V`.
+ *
+ * The mirror of variableGainingMaplet, and here for the same reason: the medium
+ * binding asks which pair-sets the DELIVERY event removes `{f ↦ pkt}` from, so
+ * the transmitting node can apply that cleanup to its own copy -- which in a
+ * per-node module nothing else ever will. Writing the regex there would be an
+ * eleventh copy of this shape, which is what noDuplication.test.ts exists for.
+ */
+export function variableLosingMaplet(action: string, a: string, b: string): string | null {
+  const m = new RegExp(`^(${IDENT})\\s*≔\\s*\\1\\s*∖\\s*\\{\\s*${a}\\s*↦\\s*${b}\\s*\\}$`)
+    .exec(action.trim());
+  return m ? m[1] : null;
+}
+
 /** The variable that gains this exact maplet, or null. `V ≔ V ∪ {a ↦ b}` → `V`. */
 export function variableGainingMaplet(action: string, a: string, b: string): string | null {
   const m = new RegExp(`^(${IDENT})\\s*≔\\s*\\1\\s*∪\\s*\\{\\s*${a}\\s*↦\\s*${b}\\s*\\}$`)

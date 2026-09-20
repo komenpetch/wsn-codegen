@@ -1,4 +1,4 @@
-import { mapletAddedTo, variableGainingMaplet } from "./actionShapes";
+import { mapletAddedTo, variableGainingMaplet, variableLosingMaplet } from "./actionShapes";
 import type { EncodedMachine, GeneratedTree, FlatEvent } from "./types";
 import { splitConjuncts } from "./ruleEngine";
 import type { PacketModel, PacketField } from "./packetModel";
@@ -76,6 +76,10 @@ export interface MediumPlan {
   args: string[];
   tags: string[];                 // packet-type leaves, one transmit method each
   realisedByMedium: Set<string>;
+  // Medium state the DELIVERY event removes that the sender's own copy never
+  // sees removed, because that event runs on the receiver. See mediumCore.
+  txSender: string;
+  strandedOnSender: string[];
 }
 
 const conj = (ev: FlatEvent) => ev.guards.flatMap(splitConjuncts).map((c) => c.trim());
@@ -156,6 +160,8 @@ export type MediumCore = {
   nbrsParam: string;
   propagation: string;
   realisedByMedium: Set<string>;
+  txSender: string;
+  strandedOnSender: string[];
 };
 
 // True when the model describes a medium: packets are serialised field by
@@ -269,8 +275,48 @@ function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore | null {
       realisedByMedium.add(ev.label);
   }
 
+  // ⚠ WHAT THE DELIVERY EVENT CLEANS UP THAT THE SENDER'S OWN COPY NEVER SEES.
+  //
+  // `start_tx` files `{x ↦ pkt}` into the medium and `send_up` removes it
+  // again -- but in a per-node module `send_up` runs on the RECEIVER, so the
+  // sender's own entry is never removed and its copy grows for ever. The
+  // model's cleanup is real and in the right place; it is the one-class-per-node
+  // realisation that strands it, the same split as `deliveredBy` and
+  // `transmitRecordsItsOwnFiring`.
+  //
+  // Measured: RTMCS's receive events guard `nb ∉ dom(sentUp ∪ sentDown)` -- "the
+  // receiver has nothing in flight" -- which is false for ever once a node has
+  // transmitted anything. 1152 of its rejections were that clause. ⚠ MintRoute
+  // writes the same idea as a MAPLET (`nb ↦ pkt ∉ …`), per packet rather than
+  // per node, so it never depended on the entry going away.
+  //
+  // ⚠ NOT the set the transmit uses as its OWN self-limit. `send_down` guards
+  // `cn ↦ pkt ∉ channel` and adds the same maplet, which is what stops it
+  // transmitting the same packet twice; clearing that would put every packet on
+  // the air repeatedly. Both case studies use `channel` for exactly that, and
+  // both have `sentDown` removed by `send_up` without it being a self-limit.
+  const txSelfLimit = new Set<string>();
+  for (const c of conj(tx)) {
+    const m = /^(\w+)\s*↦\s*(\w+)\s*∉\s*(\w+)$/.exec(c);
+    if (m && m[2] === txPkt && acts(tx).some((a) => variableGainingMaplet(a, m[1], txPkt) === m[3]))
+      txSelfLimit.add(m[3]);
+  }
+  // The transmitting node, as the TRANSMIT event names it: the parameter it
+  // pairs with the packet in a pair-set it observes.
+  let txSender = "";
+  for (const c of conj(tx)) {
+    const m = /^(\w+)\s*↦\s*(\w+)\s*∈\s*(\w+)$/.exec(c);
+    if (m && m[2] === txPkt && enc(m[3]) === "pair-set") txSender = m[1];
+  }
+  const strandedOnSender: string[] = [];
+  for (const a of acts(rx)) {
+    const v = variableLosingMaplet(a, senderParam, rxPkt);
+    if (v && enc(v) === "pair-set" && !txSelfLimit.has(v) && !strandedOnSender.includes(v))
+      strandedOnSender.push(v);
+  }
+
   return { txPkt, rxPkt, rx, wire, requires, senderParam, senderGetter,
-           nbrsParam, propagation, realisedByMedium };
+           nbrsParam, propagation, realisedByMedium, txSender, strandedOnSender };
 }
 
 export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, cls: string): MediumPlan | null {
@@ -351,6 +397,7 @@ export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, c
     txPacketParam: txPkt, rxPacketParam: rxPkt,
     senderParam, senderGetter, wire, requires, propagation,
     identity, carried, unrestored, args, realisedByMedium,
+    txSender: core.txSender, strandedOnSender: core.strandedOnSender,
     // Ordered by tag value, the same order the PktType enum is emitted in.
     tags: [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t),
   };
@@ -608,9 +655,16 @@ export function bindMedium(tree: GeneratedTree, plan: MediumPlan, cls: string): 
       const lastReturn = cc.lastIndexOf("    return true;", endOfBody);
       if (lastReturn < at)
         throw new Error("mediumBinding: the transmit method has no `return true;` to place the send before.");
+      const stranded = plan.txSender === "" ? [] : plan.strandedOnSender.map((v) =>
+        `    ${v}.erase({${plan.txSender}, ${plan.txPacketParam}});\n`);
       cc = cc.slice(0, lastReturn)
         + `    // — Medium binding: hand the model's own packet to the radio —\n`
         + `    mediumSend(${plan.txPacketParam});\n`
+        + (stranded.length === 0 ? "" :
+          `    // The packet has left. In the model the DELIVERY event removes these,\n`
+          + `    // but in a per-node module that event runs on the RECEIVER, so the\n`
+          + `    // sender's own entry would never be removed. See strandedOnSender.\n`)
+        + stranded.join("")
         + cc.slice(lastReturn);
     } else
       // The marker is there but not as executable code, which means the

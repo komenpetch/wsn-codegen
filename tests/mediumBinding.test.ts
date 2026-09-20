@@ -222,11 +222,21 @@ describe("medium binding: guards that used to look translated", () => {
     const body = tx.slice(0, tx.indexOf("\n}"));
     const send = body.indexOf("mediumSend(");
     expect(send).toBeGreaterThan(0);
-    // Nothing the event does may follow the send.
+    // The property that matters: no MODEL action may follow the send, because
+    // the frame has to carry everything the event produces. Asserted as "every
+    // translated action comes first" rather than "nothing at all follows" --
+    // the binding's OWN cleanup does follow it, deliberately, and must
+    // (`sentDown.erase({cn, pkt})`: the delivery event would have removed that
+    // entry, but it runs on the receiver, so the sender's copy is stranded).
     const after = body.slice(send).split("\n").slice(1)
       .map((l) => l.trim())
-      .filter((l) => l !== "" && !l.startsWith("//") && l !== "return true;");
+      .filter((l) => l !== "" && !l.startsWith("//") && l !== "return true;"
+        && !/^\w+\.erase\(\{\w+, \w+\}\);$/.test(l));
     expect(after).toEqual([]);
+    // And the last model action really is before it -- otherwise the filter
+    // above could be hiding everything.
+    expect(body.lastIndexOf("ensurePkt(")).toBeLessThan(send);
+    expect(body.lastIndexOf("live_pktNbHops.erase(pkt);")).toBeLessThan(send);
   });
 });
 
