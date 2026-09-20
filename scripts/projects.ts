@@ -20,6 +20,17 @@ export const PROJECTS: Record<string, string> = {
   // The app-layer chain (pM1 → uM2 → pM3): the working copy, not the pristine
   // export at test_input/. The freeze guard is pinned to this one.
   AppLayer: "Update_wsn/C0_project",
+  // The same chain with the control set SPLIT — `partition(CONTROL, {ROUTE},
+  // {BEACON})` plus its two constants, three lines, and nothing else. It is a
+  // separate project rather than an edit to AppLayer because that one is the
+  // advisor's input and stays untouched, and because the freeze guard and the
+  // published similarity figures are pinned to it.
+  //
+  // This is option A's demonstration: the TOOL brings the rule and the PROJECT
+  // brings the leaves, so swapping in RTMCS's `partition(CONTROL, {RREQ},
+  // {RREP}, {RRER})` needs no generator change either. Measured 2026-09-21 —
+  // both leaves originate, transmit and flood; see CLAUDE.md for what it costs.
+  AppLayerCtl: "Update_wsn/C0_project_ctl",
 };
 
 // Absolute path of a project: a known label, or a path relative to ROOT.
