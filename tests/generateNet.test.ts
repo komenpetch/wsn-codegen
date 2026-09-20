@@ -122,10 +122,32 @@ describe("generate (network branch) for MintRoute M4", () => {
   // `not schedulable ... no binding for sd`, no `try_` method, zero call
   // sites -- and the emitted `.h` is byte-identical across the change, which
   // is what the next assertion pins.
+  // 2026-09-20: 30 -> 27. IMAGE-MEM and IMAGE-EQ-SINGLETON translate the
+  // relational-image forms `e ∈ ran({k} ◁ R)` and `ran({k} ◁ R) = {c}`, which
+  // are `k ↦ e ∈ R` and "the image is exactly one value" written the long way.
+  // ⚠ MEASURED, not assumed: MintRoute's scheduled set is unchanged, the three
+  // clauses are two in `update_route` and one in `lose_pkt`, and `lose_pkt`
+  // stops refusing -- so the flood was rebuilt and re-run and A/B'd. Identical,
+  // every counter, every node: `lose_pkt` guards that the delivery image is
+  // exactly `{FAILED_XMIT}`, which never happens when `send_up` publishes a
+  // real node id.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(30);
+    expect(after).toBe(27);
+  });
+
+  // ⚠ AND THE ORDER THAT MAKES THE IMAGE RULES REACHABLE AT ALL. composedRules
+  // claims any `x ∈ <compound>` mentioning `ran(`, then its parser gives up on
+  // `◁` and emits "" -- so with imageRules last, IMAGE-MEM never got a turn and
+  // all four of RTMCS's `dest_recv_*` events stayed refusing. Pinned as the
+  // OUTCOME rather than the call order, so it fails with the clause that broke.
+  it("translates membership in a relational image, not just equality", () => {
+    const cc = byExt(".cc");
+    expect(cc).not.toContain("UNTRANSLATED GUARD: nb ∈ ran({nd} ◁ neighbourTbl)");
+    // map-of-sets, which is what `neighbourTbl ∈ ND ↔ ND` resolves to here --
+    // the rule reads the encoding rather than assuming one spelling.
+    expect(cc).toContain("(neighbourTbl.count(nd) > 0 && neighbourTbl.at(nd).count(nb) > 0)");
   });
 
   // The guard on the claim above: the three newly translated bodies belong to

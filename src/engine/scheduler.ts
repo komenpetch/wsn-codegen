@@ -344,7 +344,30 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
       // determined: p = f(x) [+|- n]
       const fn = clauses.map((c) =>
         new RegExp(`^${p}\\s*=\\s*(\\w+)\\(\\s*(\\w+)\\s*\\)(?:\\s*(\\+|−|-)\\s*(\\d+))?$`).exec(c.trim())
-      ).find(Boolean);
+      ).find(Boolean)
+        // ⚠ OR THE GRAPH FORM, `x ↦ p ∈ F`, WHICH SAYS THE SAME THING. A
+        // function IS its graph, so with the key bound the maplet DETERMINES the
+        // value exactly as the application does. The mirror of the pktStore
+        // branch further down, which binds the key from a known value.
+        //
+        // ⚠ AND THE TWO CASE STUDIES DIFFER HERE, WHICH IS WHY IT WAS MISSING.
+        // MintRoute's receive events write `pkt ∈ dom(pktFwdr) ∧ f = pktFwdr(pkt)`
+        // -- the application form, already handled. RTMCS's write
+        // `pkt ↦ f ∈ pktFwdr`. Unrecognised, `f` fell through to "enumerate over
+        // ND" -- and `bindNodeIdentity` makes ND hold exactly THIS node, so the
+        // loop could only ever try `f = myNodeId` and the guard comparing it
+        // against the chunk's forwarder failed on every packet that came from a
+        // neighbour. Measured: 672 rejections in dest_recv_rreqPkt, with no
+        // later guard ever reached, so not one RREQ was ever delivered to its
+        // destination.
+        ?? clauses.map((c) => {
+          const m = new RegExp(`^(\\w+)\\s*↦\\s*${p}\\s*∈\\s*(\\w+)$`).exec(c.trim());
+          // Only for an ENC7 packet field: the value is on the chunk, which is
+          // what makes it readable. A pair-set of nodes says nothing of the kind.
+          return m && pktField.has(m[2]) && known(m[1])
+            ? ([c, m[2], m[1], undefined, undefined] as unknown as RegExpExecArray)
+            : null;
+        }).find(Boolean);
       // ⚠ A NODE-VALUED FIELD OF A PACKET THIS EVENT IS MINTING IS NOT A READ.
       //
       // `create_rreq` (RTMCS) determines its originator as `s = initialSrcAddr(pkt)`

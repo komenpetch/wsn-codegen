@@ -67,9 +67,16 @@ export function emitWithPacketClasses(
   // the deliberate intercept-and-refuse technique -- so update_route stayed
   // untranslated even though PK-DOM matched the clause in isolation. That cost
   // a debugging round the first time this was built.
+  //
+  // ⚠ AND imageRules BEFORE composedRules, FOR THE SAME REASON. `composedRules`
+  // claims any `x ∈ <compound>` whose right-hand side mentions `ran(` -- which
+  // `des ∈ ran({pkt} ◁ ctlNeighbours)` does -- and then its parser gives up on
+  // `◁` and it emits "". With imageRules last, IMAGE-MEM never got a turn and
+  // all four of RTMCS's `dest_recv_*` events stayed refusing. Nothing is taken
+  // the other way: SETEXPR could only ever refuse these.
   const composed = composeRules([...pairKeyedRules(pairKeyed, model),
     ...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
-    ...scalarRules(), ...composedRules(carriers), ...nestedMapRules(nested), ...imageRules()]);
+    ...scalarRules(), ...imageRules(), ...composedRules(carriers), ...nestedMapRules(nested)]);
   let tree = withRules(composed, () => emit(model, name, 2, raw.contexts));
 
   // Splice the packet classes into the header, above the module class.

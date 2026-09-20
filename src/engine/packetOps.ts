@@ -31,6 +31,8 @@ import { addsMaplet, addsTo, anyMapletAdded, mapletAddedTo, removesFrom, variabl
 import type { EncodedMachine, FlatEvent, RawContext, RawModel, Labelled } from "./types";
 import { eventAncestry } from "./flattener";
 import { esc } from "./text";
+import { parseSetExpr } from "./setExpr";
+import type { SetExpr } from "./setExpr";
 import type { PacketModel, PacketField } from "./packetModel";
 import { getterOf, setterOf, liveSetOf } from "./packetModel";
 import { OVERRIDE_GLYPHS } from "./text";
@@ -391,6 +393,36 @@ export function enablingEventsOf(model: EncodedMachine, source: EncodedMachine,
   return [...out];
 }
 
+/**
+ * Variables the arrival must NOT stage, shared by the two derivations below.
+ *
+ * What the DELIVERY event writes -- it moves the packet from sentDown to sentUp
+ * as its own postcondition, and staging those would falsify its own guards --
+ * plus anything a receive event ADDS to.
+ *
+ * ⚠ ADDING is what disqualifies, not touching. A receive event that CONSUMES
+ * the membership (`WiMedium ≔ WiMedium ∖ {f ↦ pkt}`, taking the packet off the
+ * medium) still requires that membership to exist first, so it must stay
+ * staged. Excluding on any assignment at all dropped exactly that case and put
+ * the arrival back to staging nothing useful. And staging a variable a receive
+ * event adds to would hand this node a buffer entry belonging to the SENDER,
+ * which its transmit events would then send on that node's behalf.
+ */
+function writtenByDelivery(base: EncodedMachine, source: EncodedMachine,
+  receiveLabels: readonly string[], sendUpLabel: string,
+  senderQueues: readonly string[] = []): Set<string> {
+  const written = new Set<string>(senderQueues);
+  const su = base.events.find((e) => e.label === sendUpLabel);
+  for (const a of su?.actions ?? []) {
+    const m = /^\s*(\w+)\s*≔/.exec(a.trim());
+    if (m) written.add(m[1]);
+  }
+  for (const ev of source.events)
+    if (receiveLabels.includes(ev.label))
+      for (const a of ev.actions) { const v = variableAddedTo(a); if (v) written.add(v); }
+  return written;
+}
+
 // Medium state an ARRIVAL must make true before the receive events can fire.
 //
 // The receive events do not only read what `send_up` publishes; they also assert
@@ -413,31 +445,8 @@ export function arrivalRequirementsOf(base: EncodedMachine, source: EncodedMachi
   // rather than recomputed because the caller already has the transmit labels.
   senderQueues: readonly string[] = [],
   sendUpLabel = "send_up"): string[] {
-  const su = base.events.find((e) => e.label === sendUpLabel);
-  const written = new Set<string>(senderQueues);
-  for (const a of su?.actions ?? []) {
-    const m = /^\s*(\w+)\s*≔/.exec(a.trim());
-    if (m) written.add(m[1]);
-  }
+  const written = writtenByDelivery(base, source, receiveLabels, sendUpLabel, senderQueues);
   const wanted = new Set(receiveLabels);
-  // A receive event's OWN postcondition is not a precondition the medium has to
-  // establish. `receive_controlPkt` guards that the packet is on the medium and
-  // then re-queues it into `ndBuff`; staging ndBuff here would hand this node a
-  // buffer entry belonging to the SENDER, which its transmit events would then
-  // pick up and send on that node's behalf.
-  //
-  // ⚠ ADDING to a variable is what disqualifies it, not touching it. A receive
-  // event that CONSUMES the membership -- `WiMedium ≔ WiMedium ∖ {f ↦ pkt}`,
-  // taking the packet off the medium -- still requires that membership to exist
-  // first, so it must stay staged. Excluding on any assignment at all dropped
-  // exactly that case and put the arrival back to staging nothing useful.
-  for (const ev of source.events)
-    if (wanted.has(ev.label))
-      for (const a of ev.actions) {
-        const v = variableAddedTo(a);
-        if (v) written.add(v);
-      }
-
   const out = new Set<string>();
   for (const ev of source.events) {
     if (!wanted.has(ev.label)) continue;
@@ -447,6 +456,62 @@ export function arrivalRequirementsOf(base: EncodedMachine, source: EncodedMachi
     }
   }
   return [...out];
+}
+
+/**
+ * Packet SETS an arrival must place the packet into: the same idea as
+ * arrivalRequirementsOf, one shape further out.
+ *
+ * That one handles `pkt ∈ ran(V)` over a pair-set -- "the packet is on the
+ * medium". This one handles a receive event asserting membership in a set of
+ * PACKETS, written as a set EXPRESSION: RTMCS's four `dest_recv_*` events guard
+ * `pkt ∈ middleware ∖ destBuff(des)`, and `middleware ⊆ PKT` is "packets
+ * currently in the network" -- added by the creating events, removed when the
+ * packet is retired. It is a fact about the PACKET, and in a per-node module it
+ * stays on the originator, so a receiving node's copy never contains a packet
+ * that arrived from elsewhere.
+ *
+ * ⚠ MEASURED, because this is the guard that stranded everything: RTMCS's
+ * `ctlNeighbours` ended the run holding one entry per delivery on every node --
+ * nothing was ever consumed. Its three consumers were each blocked, and
+ * `dest_recv_*` was blocked on exactly this: 896 rejections, the precise number
+ * of arrivals for which this node is the packet's final destination.
+ *
+ * ⚠ AND THE TWO CASE STUDIES ARE NOT THE SAME HERE, which is why the blast
+ * radius was measured on both before this existed. Each stages exactly ONE
+ * variable, `middleware` -- required by RTMCS's four `dest_recv_*` and by
+ * MintRoute's two `sink_recv_*`.
+ *
+ * POSITIVE leaves only. `A ∖ B` requires A and says nothing about B; `A ∪ B`
+ * requires neither on its own; `A ∩ B` requires both. Getting that wrong would
+ * stage a set the guard wants the packet OUT of.
+ */
+export function arrivalPacketSetsOf(base: EncodedMachine, source: EncodedMachine,
+  receiveLabels: readonly string[], sendUpLabel = "send_up"): string[] {
+  const written = writtenByDelivery(base, source, receiveLabels, sendUpLabel);
+  const out = new Set<string>();
+  for (const ev of source.events) {
+    if (!receiveLabels.includes(ev.label)) continue;
+    for (const g of ev.guards.flatMap((x) => x.split("∧"))) {
+      const m = /^\s*(\w+)\s*∈\s*(.+)$/.exec(g.trim());
+      if (!m) continue;
+      const parsed = parseSetExpr(m[2]);
+      if (!parsed) continue;
+      for (const v of positiveLeaves(parsed))
+        if (base.variableTypes.has(v) && !written.has(v) && base.encodings.get(v) === "set")
+          out.add(v);
+    }
+  }
+  return [...out];
+}
+
+/** The leaves a membership REQUIRES to contain the element. */
+function positiveLeaves(e: SetExpr): string[] {
+  if (e.k === "id") return [e.name];
+  if (e.k !== "op") return [];
+  if (e.op === "∖") return positiveLeaves(e.l);
+  if (e.op === "∩") return [...positiveLeaves(e.l), ...positiveLeaves(e.r)];
+  return [];                                    // a union requires neither side
 }
 
 // What the DELIVERY event itself requires of the medium, split by polarity.

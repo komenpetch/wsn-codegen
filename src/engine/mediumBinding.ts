@@ -5,7 +5,7 @@ import type { PacketModel, PacketField } from "./packetModel";
 import { getterOf, setterOf, broadcastMethodOf, liveSetOf } from "./packetModel";
 import { OVERRIDE_GLYPHS, OVERRIDE_OR_UNION_GLYPHS } from "./text";
 import { methodForLabel, splitParams } from "./emitted";
-import { deserialiseFieldsOf } from "./packetOps";
+import { deserialiseFieldsOf, arrivalPacketSetsOf, receiveEventsOf } from "./packetOps";
 
 // The medium binding: the third and last of the identity bindings.
 //
@@ -80,6 +80,9 @@ export interface MediumPlan {
   // sees removed, because that event runs on the receiver. See mediumCore.
   txSender: string;
   strandedOnSender: string[];
+  // Packet SETS the RECEIVE events require membership in. See
+  // arrivalPacketSetsOf -- a fact about the packet, which does not travel.
+  packetSets: string[];
 }
 
 const conj = (ev: FlatEvent) => ev.guards.flatMap(splitConjuncts).map((c) => c.trim());
@@ -162,6 +165,7 @@ export type MediumCore = {
   realisedByMedium: Set<string>;
   txSender: string;
   strandedOnSender: string[];
+  packetSets: string[];
 };
 
 // True when the model describes a medium: packets are serialised field by
@@ -315,8 +319,10 @@ function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore | null {
       strandedOnSender.push(v);
   }
 
+  const packetSets = arrivalPacketSetsOf(model, model, receiveEventsOf(model, model), DELIVER);
+
   return { txPkt, rxPkt, rx, wire, requires, senderParam, senderGetter,
-           nbrsParam, propagation, realisedByMedium, txSender, strandedOnSender };
+           nbrsParam, propagation, realisedByMedium, txSender, strandedOnSender, packetSets };
 }
 
 export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, cls: string): MediumPlan | null {
@@ -398,6 +404,7 @@ export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, c
     senderParam, senderGetter, wire, requires, propagation,
     identity, carried, unrestored, args, realisedByMedium,
     txSender: core.txSender, strandedOnSender: core.strandedOnSender,
+    packetSets: core.packetSets,
     // Ordered by tag value, the same order the PktType enum is emitted in.
     tags: [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t),
   };
@@ -588,6 +595,14 @@ function arrivalFn(plan: MediumPlan, cls: string): string {
     "    // transmitting node wrote these into the one shared relation; here the",
     "    // transmission itself is the evidence, and it just happened.",
     ...plan.requires.map((v) => `    ${v}.insert({_f, _pkt});`),
+    ...(plan.packetSets.length === 0 ? [] : [
+      "    // And the packet SETS the receive events require it to be in. A set of",
+      "    // PACKETS is a fact about the packet, not about a node -- `middleware`",
+      "    // is \"packets currently in the network\" -- so in a per-node module it",
+      "    // stays on the originator and a receiver's copy never contains a packet",
+      "    // that arrived from elsewhere. The arrival is the evidence that it is.",
+      ...plan.packetSets.map((v) => `    ${v}.insert(_pkt);`),
+    ]),
     "    // Who receives: the radio's answer, not the topology variable's.",
     `    ${plan.propagation}[_pkt].clear();`,
     `    ${plan.propagation}[_pkt].insert(myNodeId);`,

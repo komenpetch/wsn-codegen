@@ -34,6 +34,53 @@ export function imageRules(): NetRule[] {
       match: re(/^(?<y>\w+)\s*=\s*(?<R>\w+)\s*\[\s*\{\s*(?<x>\w+)\s*\}\s*\]$/),
       emit: (m) => `${m.captures.y} == relImage(${m.captures.R}, ${m.captures.x})`,
     },
+    // `e ∈ ran({k} ◁ R)` -- MEMBERSHIP in an image, which is not a set
+    // comparison at all: it is `k ↦ e ∈ R` written the long way, so it needs no
+    // helper and builds no set. The optional outer parentheses are RTMCS's own
+    // spelling, `des ∈ ( ran({pkt} ◁ ctlNeighbours) )`.
+    //
+    // ⚠ THIS IS THE DELIVERY PUBLICATION TEST, and untranslated it made all four
+    // `dest_recv_*` events REFUSE TO FIRE -- so an RREQ could never be delivered
+    // to its destination, `ctlNeighbours` was never drained by them, and the
+    // whole reception chain stalled behind it.
+    {
+      id: "IMAGE-MEM", tier: 1,
+      evidence: ["RTMCS.dest_recv_rreqPkt", "MintRoute.update_route"],
+      match: re(/^(?<e>\w+)\s*∈\s*\(?\s*ran\s*\(\s*\{\s*(?<k>\w+)\s*\}\s*◁\s*(?<R>\w+)\s*\)\s*\)?$/),
+      emit: (m, enc) => {
+        const { e, k, R } = m.captures;
+        switch (enc(R)) {
+          case "map-of-sets": return `(${R}.count(${k}) > 0 && ${R}.at(${k}).count(${e}) > 0)`;
+          case "pair-set":    return `${R}.count({${k}, ${e}}) > 0`;
+          case "function":    return `(${R}.count(${k}) > 0 && ${R}.at(${k}) == ${e})`;
+          default:            return "";     // refuse rather than guess a shape
+        }
+      },
+    },
+    // `ran({k} ◁ R) = {c}` / `≠ {c}` -- the image is EXACTLY one named value.
+    //
+    // RTMCS asks this of `ctlNeighbours` to tell a delivery from a loss: the
+    // image being exactly `{FAILED_XMIT}` means nobody received it. Size AND
+    // membership, because `{c} ⊆ image` is a weaker statement than equality --
+    // a packet delivered to one node AND marked failed would pass the weaker
+    // test and is not what the model says.
+    //
+    // ⚠ An ABSENT key is the empty image, which is not `{c}` -- so `≠` is TRUE
+    // there and `=` is FALSE. Writing `R.at(k)` first would throw instead.
+    {
+      id: "IMAGE-EQ-SINGLETON", tier: 1,
+      evidence: ["RTMCS.dest_recv_rreqPkt", "RTMCS.lose_controlPkt", "MintRoute.lose_pkt"],
+      match: re(/^ran\s*\(\s*\{\s*(?<k>\w+)\s*\}\s*◁\s*(?<R>\w+)\s*\)\s*(?<op>=|≠)\s*\{\s*(?<c>\w+)\s*\}$/),
+      emit: (m, enc) => {
+        const { k, R, op, c } = m.captures;
+        const is = enc(R) === "map-of-sets"
+          ? `(${R}.count(${k}) > 0 && ${R}.at(${k}).size() == 1 && ${R}.at(${k}).count(${c}) > 0)`
+          : enc(R) === "function"
+            ? `(${R}.count(${k}) > 0 && ${R}.at(${k}) == ${c})`
+            : "";                            // a pair-set needs a scan: refuse
+        return is === "" ? "" : (op === "=" ? is : `!${is}`);
+      },
+    },
   ];
 }
 
