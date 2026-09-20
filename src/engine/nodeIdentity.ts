@@ -53,8 +53,14 @@ import { subsetClosure } from "./text";
 // distinguished node needs it; so does deciding whether a `V ≔ C × {v}`
 // initialisation is node-keyed at all -- and that second caller had no notion
 // of it, so it specialised `netSeqNo ≔ PKT × {0}` as though PKT were ND.
+// The ROOT node set: the one `ND.insert(myNodeId)` populates, so every node is
+// in it by construction. Named once because two things depend on it — the
+// subset closure starts here, and a cartesian initialisation over it needs no
+// membership test where one over a proper subset does.
+export const NODE_ROOT = "ND";
+
 export function nodeSetsOf(contexts: readonly RawContext[]): Set<string> {
-  return subsetClosure("ND", contexts.flatMap((c) => c.axioms.map((a) => a.text)));
+  return subsetClosure(NODE_ROOT, contexts.flatMap((c) => c.axioms.map((a) => a.text)));
 }
 
 /**
@@ -129,7 +135,47 @@ export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
   return found[0] ?? null;
 }
 
-interface CartesianInit { target: string; carrier: string; excluded: string | null; value: string; }
+export interface CartesianInit { target: string; carrier: string; excluded: string | null; value: string; }
+
+/**
+ * One specialised initialisation line: `V ≔ C × {v}` for THIS node.
+ *
+ * ⚠ A PROPER SUBSET MUST BE TESTED FOR MEMBERSHIP; THE ROOT MUST NOT. This used
+ * to emit `V[myNodeId] = v;` unconditionally whenever there was no `∖ {x}`
+ * exclusion — it asked "is there an exclusion?" and never "is the carrier the
+ * root or a proper subset?". Over `ND` that is right, because
+ * `ND.insert(myNodeId)` puts every node in it. Over `Destination` or `Actuators`
+ * it is wrong: RTMCS writes `recvedData ≔ Destination × {∅}` and
+ * `emergencyAlert ≔ Actuators × {FALSE}`, and every node was given an entry, so
+ * `dom(recvedData)` and `dom(emergencyAlert)` were all of ND where the model
+ * says they are those two sets.
+ *
+ * Measured before the fix: both domains read 1 on `sensor3` under EVERY config,
+ * including the one where sensor3 is in neither set.
+ *
+ * ⚠ It was latent rather than live, and worth knowing why. `reset_actuatingStatus`
+ * is schedulable and binds its parameter by walking `dom(emergencyAlert)`, so it
+ * iterated every node instead of the actuators — it fires 0 only because it
+ * guards `= TRUE` and `actuating`'s write is untranslated. `dest_recv_dataPkt`
+ * guards `recvedData.count(des) > 0`, which passed for every node rather than
+ * only destinations, and is inert only because no data packet is ever created.
+ * Both go live the moment the PEnv sensing boundary is bound.
+ *
+ * The two comment spellings are kept exactly as they were, so the 17 correct
+ * sites across the corpus do not move a byte.
+ */
+export function cartesianInitLine(i: CartesianInit, root: string = NODE_ROOT): string {
+  const tests: string[] = [];
+  if (i.carrier !== root) tests.push(`${i.carrier}.count(myNodeId) > 0`);
+  if (i.excluded !== null) tests.push(`myNodeId != ${i.excluded}`);
+  const assign = `${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};`;
+  const note = i.excluded !== null && i.carrier === root
+    ? `   // over ${root} ∖ {${i.excluded}}`
+    : `   // ${i.target} ≔ ${i.carrier}${i.excluded !== null ? ` ∖ {${i.excluded}}` : ""} × {…}`;
+  return tests.length
+    ? `        if (${tests.join(" && ")}) ${assign}${note}`
+    : `        ${assign}${note}`;
+}
 
 // `f ≔ ND × {v}` and `f ≔ (ND ∖ {Sink}) × {v}` from INITIALISATION. These could
 // not run at construction time -- ND was empty then -- so they are specialised
@@ -264,10 +310,7 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
     `    // A LATER stage, so every node has registered and ${sink ?? "ND"} is settled: INET`,
     "    // runs all modules through one stage before any reaches the next.",
     "    if (stage == INITSTAGE_LAST) {",
-    ...inits.map((i) =>
-      i.excluded === null
-        ? `        ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // ${i.target} ≔ ${i.carrier} × {…}`
-        : `        if (myNodeId != ${i.excluded}) ${i.target}[myNodeId]${i.value ? ` = ${i.value}` : ""};   // over ND ∖ {${i.excluded}}`),
+    ...inits.map((i) => cartesianInitLine(i)),
     "    }",
   ].join("\n");
 
