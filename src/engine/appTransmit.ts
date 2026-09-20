@@ -133,7 +133,7 @@ const defs = (cls: string, tags: string[], senderSetter: string | null): string 
 // dispatch. The region runs from the marker the CommPattern merge writes to the
 // method's closing `return true;`, so the event's GUARDS and its accounting are
 // untouched -- only what is put on the wire changes.
-function rewriteSendDown(cc: string, once: boolean): string {
+function rewriteSendDown(cc: string, once: boolean, drain: readonly string[]): string {
   const at = cc.indexOf(PLACEHOLDER_START);
   if (at < 0) return cc;
   const end = cc.indexOf("\n    return true;\n}", at);
@@ -164,6 +164,19 @@ function rewriteSendDown(cc: string, once: boolean): string {
     ] : []),
     `    ${DISPATCH}(x, pkt);`,
     "    sendSeqNo++;",
+    ...(drain.length ? [
+      "    // ⚠ THE SENDER PUTS BACK ITS OWN PAIR, because the model's cleanup runs",
+      "    // on the wrong node: `send_up` removes it, and in a per-node module that",
+      "    // runs on the RECEIVER, against the copy the arrival staged. Left here",
+      "    // the sender's entry survives for ever -- one per transmission, measured",
+      "    // at 765 residual against 763 transmissions -- and since BOTH of pM1's",
+      "    // cleanup events guard `pkt ∉ ran(sentDown)`, both die permanently for",
+      "    // every packet this node has ever sent.",
+      "    //",
+      "    // Safe only because the pair is not this transmit's self-limit: the",
+      "    // record above is. See senderSideDrainOf, which computes that exclusion.",
+      ...drain.map((v) => `    ${v}.erase({x, pkt});`),
+    ] : []),
   ].join("\n") + cc.slice(end);
 }
 
@@ -177,7 +190,10 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
   // three primitive shapes of one concept crossing three boundaries.
   // Null when the model stamps no such field, in which case the wire copy is
   // left exactly as the model made it.
-  senderField: PacketField | null = null): GeneratedTree {
+  senderField: PacketField | null = null,
+  // Pair-sets the sender must put back once the transmission is realised,
+  // from senderSideDrainOf. Empty when the model limits itself.
+  drain: readonly string[] = []): GeneratedTree {
   // Ordered by tag value, the same order the PktType enum is emitted in.
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t);
   if (tags.length === 0) return tree;
@@ -197,7 +213,7 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
           '#include "inet/networklayer/common/L3Address.h"\n'
           + '#include "inet/networklayer/contract/IL3AddressType.h"') };
     if (f.path.endsWith(".cc")) {
-      const body = rewriteSendDown(f.content, once);
+      const body = rewriteSendDown(f.content, once, drain);
       const at = body.search(new RegExp(`^bool ${esc(cls)}::`, "m"));
       if (at < 0) throw new Error("appTransmit: no event method to place the transmit definitions before.");
       return { ...f, content: body.slice(0, at) + defs(cls, tags, senderField ? setterOf(senderField) : null) + "\n\n" + body.slice(at) };

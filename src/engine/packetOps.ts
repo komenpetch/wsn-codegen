@@ -27,7 +27,8 @@
 // Those are the Specific layer in the class diagram and were never in scope.
 
 import { INITIALISATION } from "./types";
-import { addsMaplet, addsTo, anyMapletAdded, mapletAddedTo, removesFrom, variableAddedTo } from "./actionShapes";
+import { addsMaplet, addsTo, anyMapletAdded, mapletAddedTo, removesFrom, variableAddedTo,
+         variableGainingMaplet, variableLosingMaplet } from "./actionShapes";
 import type { EncodedMachine, FlatEvent, RawContext, RawModel, Labelled } from "./types";
 import { eventAncestry } from "./flattener";
 import { esc } from "./text";
@@ -685,6 +686,65 @@ export function transmitRecordsItsOwnFiring(base: EncodedMachine,
     if (sd.actions.some((a) => addsMaplet(a, v, x, pkt))) return true;
   }
   return false;
+}
+
+// Which pair-set must the SENDER put back once it has realised a transmission?
+//
+// ⚠ THE MODEL'S CLEANUP RUNS ON THE WRONG NODE -- the 2026-09-07 global-model /
+// per-node-module finding, in a third place. `send_down` OBSERVES
+// `x ↦ pkt ∈ sentDown`; the pair is removed by `send_up`, which in a per-node
+// module runs on the RECEIVER, against the copy the ARRIVAL staged. So the
+// sender's own entry is never removed and `sentDown` grows by one entry per
+// transmission, for ever. Measured on the nine-node field: 765 residual entries
+// against 763 transmissions -- exactly one apiece.
+//
+// What that costs is not the memory. BOTH of pM1's transmission-cleanup events
+// guard `pkt ∉ ran(sentDown)`, so on any node that has transmitted a packet both
+// are dead for it for ever. `finish_tx_pkt` additionally needs
+// `pkt ∈ ran(ndBuff)` -- which selects exactly the FORWARDING nodes, i.e. the
+// ones whose sentDown is dirty -- so it never fires anywhere at all, and
+// `final_tx_pkt` survives only on a node that never transmits. Measured before
+// this: `finish_tx_pkt` 0 field-wide against 2397 attempts (71% rejected on that
+// one guard), `final_tx_pkt` 88 and every one of them on the sink, and `sentUp`
+// ending the run holding 2372 of the 2460 deliveries ever made.
+//
+// ⚠ ONLY SAFE WHERE THE BINDING OWNS THE LIMIT, and the two conditions are the
+// same one. Where the model's own transmit event records its firing (MintRoute
+// guards `cn ↦ pkt ∉ channel` and adds the same maplet) that pair-set IS the
+// self-limit, and draining it would put every packet on the air repeatedly --
+// which is why the network branch excludes it (mediumBinding's txSelfLimit).
+// Here `send_down` has NO ACTIONS, so it can hold no self-limit, which is
+// precisely the condition under which transmitRecordsItsOwnFiring is false and
+// the binding keeps `txRealised` instead. So a model that limits itself gets
+// nothing from this, and a model that does not is safe to drain: the check
+// below is that exclusion, computed rather than assumed.
+export function senderSideDrainOf(base: EncodedMachine, enc: (v: string) => string,
+  sendDownLabel = "send_down", deliveryLabel = "send_up"): string[] {
+  const sd = base.events.find((e) => e.label === sendDownLabel);
+  const su = base.events.find((e) => e.label === deliveryLabel);
+  if (!sd || !su) return [];
+
+  // The transmit's OWN self-limit: a pair it guards absent and then adds.
+  const selfLimit = new Set<string>();
+  for (const g of sd.guards) {
+    const m = /^\s*(\w+)\s*↦\s*(\w+)\s*∉\s*(\w+)\s*$/.exec(g.trim());
+    if (m && sd.actions.some((a) => variableGainingMaplet(a, m[1], m[2]) === m[3]))
+      selfLimit.add(m[3]);
+  }
+
+  const out: string[] = [];
+  for (const g of sd.guards) {
+    const m = /^\s*(\w+)\s*↦\s*(\w+)\s*∈\s*(\w+)\s*$/.exec(g.trim());
+    if (!m) continue;
+    const v = m[3];
+    if (selfLimit.has(v) || out.includes(v)) continue;
+    if (enc(v) !== "pair-set" || !base.variableTypes.has(v)) continue;
+    // The DELIVERY event must be the thing that removes this very maplet --
+    // under its own parameter names, which are not the transmit's.
+    if (su.actions.some((a) => variableLosingMaplet(a, String.raw`\w+`, String.raw`\w+`) === v))
+      out.push(v);
+  }
+  return out;
 }
 
 // Which chunk field carries the SENDER, derived rather than named.

@@ -8,7 +8,7 @@ import { installScheduler } from "./scheduler";
 import { bindNodeIdentity, nodeSetsOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
-import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderFieldOf, mergeContexts } from "./packetOps";
+import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { routeTableOf, bindRoutingTable } from "./routingTable";
 import { patternExtensionFor } from "./patternExtension";
@@ -264,7 +264,11 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // pair it observes on the SENDER, so the module records which
       // transmissions it has already realised. A model that keeps that record
       // itself gets nothing. See transmitRecordsItsOwnFiring.
-      !transmitRecordsItsOwnFiring(base), fwdr);
+      !transmitRecordsItsOwnFiring(base), fwdr,
+      // And having taken that record on, it must also put back the pair the
+      // model's own delivery event would have removed -- which in a per-node
+      // module it removes on the RECEIVER, never on the sender.
+      senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""));
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
