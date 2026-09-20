@@ -6,6 +6,7 @@ import { nestedMapVars } from "./nestedMap";
 import { pairKeyedVars } from "./pairKeyed";
 import { emittedMethods, splitParams, implOf, headerOf, unreachableEvents, mustFind, mustReplace, packetTypeLeaves } from "./emitted";
 import { DELIVERED_BY } from "./packetModel";
+import { orderByPhase } from "./phaseFlags";
 import { esc } from "./text";
 
 // A relational image, in either of the two spellings the corpus uses.
@@ -329,7 +330,17 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
     clauses.some((c) => new RegExp(`^${p}\\s*∉`).test(c.trim())) && !existsAlready(p);
 
   let progress = true;
-  while (progress && resolved.size < params.length) {
+  // ⚠ `p ∈ dom(F)` is a LAST RESORT and is switched on only once every other
+  // branch has stalled, because it can otherwise steal a parameter that
+  // belongs to a stronger binding. Measured: RTMCS's `create_rreq` guards both
+  // `s = initialSrcAddr(pkt)` and `s ∈ dom(floodTbl)`, and `s` is reached
+  // BEFORE `pkt`. Allowed to fire immediately, the domain branch bound the
+  // originator off `floodTbl` and the creating event stopped CHOOSING its
+  // source -- undoing the fix that made RTMCS originate a packet at all.
+  // Deferring it costs nothing: an event whose parameter has a real binding
+  // resolves on the first pass and never reaches this.
+  let domAllowed = false;
+  while (resolved.size < params.length) {
     progress = false;
     for (const par of params) {
       if (resolved.has(par.name)) continue;
@@ -717,6 +728,36 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
         lines.push(`    for (${par.cppType} ${p} : ${inSet[1]}) {`); depth++;
         resolved.add(p); progress = true; continue;
       }
+      // `p ∈ dom(F)` -- the candidates are F's own keys.
+      //
+      // This is the same move the packet branch below makes ("dom of the
+      // packet-keyed functions is pktStore, so enumerating it is enumerating
+      // the packets that exist"), stated for an ordinary machine variable, and
+      // it was the ONLY binding three RTMCS events and one MintRoute event had:
+      // `reset_fldRREQ`, `reset_fldRREP`, `reset_fldRRER` and MintRoute's
+      // `reset_flooding` all guard `x ∈ dom(floodFlg) ∧ floodFlg(x) = TRUE`.
+      // Without it they were unschedulable, nothing ever lowered the flood
+      // flag, and `start_fldRREP` -- which needs it LOW -- rejected 100% of its
+      // calls on that one guard, so no RREP was ever created.
+      //
+      // ⚠ A PACKET FIELD IS EXCLUDED, and that is not caution but the
+      // two-storage trap, which this project has now paid for four times: ENC7
+      // moves a packet attribute's value onto the chunk and its machine map is
+      // left dead (and may be stripped entirely), so binding off `dom(F)` for
+      // one would enumerate an empty map -- or fail to compile. RTMCS's
+      // `clear_pkt` reaches this branch and every one of its six `dom()` guards
+      // names a relocated field, so it stays unschedulable, correctly.
+      //
+      // ⚠ Pair-keyed variables are excluded too: their key is a MAPLET, so
+      // `e.first` is a `std::pair`, not the scalar the parameter is typed as.
+      const dm = domAllowed ? clauses.map((c) =>
+        new RegExp(`^${p}\\s*∈\\s*dom\\s*\\(\\s*(\\w+)\\s*\\)$`).exec(c.trim())).find(Boolean) : undefined;
+      if (dm && !pktField.has(dm[1]) && !pairKeyed.has(dm[1]) &&
+          (enc(dm[1]) === "function" || enc(dm[1]) === "map-of-sets")) {
+        lines.push(`    for (auto& _dm_${p} : ${dm[1]}) {`); depth++;
+        lines.push(`    ${par.cppType} ${p} = _dm_${p}.first;`);
+        resolved.add(p); progress = true; continue;
+      }
       // An EXISTING packet -- the transmit and receive events take one the node
       // already holds, so the candidates are exactly the registry's keys. This
       // is the other half of the fresh case: dom of the packet-keyed functions
@@ -727,6 +768,11 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
         resolved.add(p); progress = true; continue;
       }
     }
+    // A pass that bound nothing means the ordinary branches are exhausted: turn
+    // the last resort on and go round once more, then stop.
+    if (progress) continue;
+    if (domAllowed) break;
+    domAllowed = true;
   }
 
   const missing = params.filter((p) => !resolved.has(p.name)).map((p) => p.name);
@@ -835,7 +881,16 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // into the module. So they are emitted where the reception is handled, and
   // there is one place a reception is accounted for.
   const inlined = new Set(arrivalEvents.filter((l) => firable.some((p) => p.label === l)));
-  const scheduled = firable.filter((p) => !inlined.has(p.label));
+  // ⚠ THE ORDER OF THIS LIST IS BEHAVIOUR, NOT PRESENTATION. Each event is
+  // attempted once per tick in this order and sees what the earlier ones left,
+  // so an event tried after the one that falsifies its guard never fires at
+  // all. Model order alone leaves RTMCS's `start_fldRREP` dead by construction
+  // and lets three phase terminators empty their own phase -- see phaseFlags.ts
+  // for the two repairs and for what they deliberately do not attempt. Every
+  // event neither rule touches keeps its model position.
+  const unordered = firable.filter((p) => !inlined.has(p.label));
+  const order = orderByPhase(model, unordered.map((p) => p.label));
+  const scheduled = order.map((l) => unordered.find((p) => p.label === l)!);
   const defs: string[] = [];
   const closers = (p: Plan) => Array(p.lines.filter((l) => l.trim().startsWith("for (")).length);
   const callOf = (p: Plan) => `${p.method ?? p.label}(${p.params.map((x) => x.name).join(", ")})`;

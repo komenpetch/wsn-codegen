@@ -225,6 +225,29 @@ describe("generate (network branch) for MintRoute M4", () => {
       expect(cc).toContain(ev);
   });
 
+  // ⚠ MintRoute's flood is the protected baseline, so the phase-flag ordering
+  // has to be measurably inert here and not merely believed to be. MintRoute
+  // has ONE starter (nothing contends with start_flooding), so the only change
+  // the two rules can make is appending its phase terminator -- every other
+  // call must keep its position, which is what makes the A/B run that followed
+  // meaningful rather than lucky.
+  it("appends MintRoute's phase terminator without reordering anything else", () => {
+    const body = /bool \w+::runEnabledEvents\(\)\s*\{([\s\S]*?)\n\}/.exec(byExt(".cc"));
+    expect(body).not.toBeNull();
+    const order = [...body![1].matchAll(/try_(\w+)\(\)/g)].map((m) => m[1]);
+    expect(order).toContain("reset_flooding");
+    expect(order[order.length - 1]).toBe("reset_flooding");
+    // start_flooding keeps its place ahead of the creating event it enables.
+    expect(order.indexOf("start_flooding")).toBeLessThan(order.indexOf("create_bconPkt"));
+    // And the rest is still the MODEL's own order -- checked against the model,
+    // not against itself. (Sorting `rest` by its own index in `order` would
+    // hold for any permutation whatsoever and prove nothing.)
+    const model = flatten(parseModel(loadProject("MintRoute")), "M4");
+    const modelOrder = model.events.map((e) => e.label);
+    const rest = order.filter((l) => l !== "reset_flooding");
+    expect(rest).toEqual(modelOrder.filter((l) => rest.includes(l)));
+  });
+
   // Regression for the Critical finding fixed 2026-09-06 (task-6-report.md):
   // PKT-DOM used to match both `∈` and `∉ dom(F)` and emit `true` for both,
   // silently discarding the "packet does not exist yet" precondition of the
@@ -320,6 +343,61 @@ describe("generate (network branch) for RTMCS M6 (multiple set-typed parameter r
   for (let m = defRe.exec(cc); m; m = defRe.exec(cc))
     defs.push({ method: m[1], params: m[2], start: m.index });
   const bodyOf = (i: number) => cc.slice(defs[i].start, i + 1 < defs.length ? defs[i + 1].start : cc.length);
+
+  // The batch order decides which events can EVER fire, so it is pinned here
+  // against the real model rather than only unit-tested on synthetic events.
+  const batch = (text: string): string[] => {
+    const body = /bool \w+::runEnabledEvents\(\)\s*\{([\s\S]*?)\n\}/.exec(text);
+    expect(body, "runEnabledEvents must be emitted").not.toBeNull();
+    return [...body![1].matchAll(/try_(\w+)\(\)/g)].map((m) => m[1]);
+  };
+
+  it("tries the RREP flood starter before the RREQ one that would starve it", () => {
+    const order = batch(cc);
+    // start_fldRREP's guards are start_fldRREQ's PLUS two, and both take
+    // floodFlg. Tried second it could never fire -- measured as 308/372/364/336
+    // calls per node, every one rejected on that guard -- so no RREP was ever
+    // created. Model order is RREQ(8), RREP(11), RRER(14).
+    expect(order.indexOf("start_fldRREP")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("start_fldRREP")).toBeLessThan(order.indexOf("start_fldRREQ"));
+    expect(order.indexOf("start_fldRRER")).toBeLessThan(order.indexOf("start_fldRREQ"));
+    // RREP before RRER is the MODEL's order: their clause sets are
+    // incomparable, so nothing justifies preferring either.
+    expect(order.indexOf("start_fldRREP")).toBeLessThan(order.indexOf("start_fldRRER"));
+  });
+
+  it("runs each flood's creating event before anything that lowers its flag", () => {
+    const order = batch(cc);
+    // reset_fldRREQ sits between start_fldRREQ and create_rreq in model order,
+    // so left there it raises and lowers floodFlg before the creating event is
+    // tried and nothing is ever created.
+    for (const reset of ["reset_fldRREQ", "reset_fldRREP", "reset_fldRRER"]) {
+      expect(order, `${reset} must be schedulable`).toContain(reset);
+      expect(order.indexOf("create_rreq")).toBeLessThan(order.indexOf(reset));
+      expect(order.indexOf("create_rrep")).toBeLessThan(order.indexOf(reset));
+    }
+    // And among themselves, most specific first: reset_fldRREQ guards only
+    // `floodFlg = TRUE`, so tried first it would end a RREP phase before
+    // reset_fldRREP could lower rrepFlg, stranding it raised for ever.
+    expect(order.indexOf("reset_fldRREP")).toBeLessThan(order.indexOf("reset_fldRREQ"));
+    expect(order.indexOf("reset_fldRRER")).toBeLessThan(order.indexOf("reset_fldRREQ"));
+  });
+
+  it("binds a parameter whose only binding is a domain membership", () => {
+    // `x ∈ dom(floodFlg)` is all three reset events give. Without a branch for
+    // it they were unschedulable, so nothing ever lowered the flood flag.
+    expect(cc).toContain("for (auto& _dm_x : floodFlg) {");
+  });
+
+  it("does not bind off the dead machine map of a relocated packet field", () => {
+    // ENC7 moves a packet attribute onto the chunk and leaves its machine map
+    // empty or stripped, so enumerating dom() for one binds nothing -- or does
+    // not compile. RTMCS's clear_pkt has six such guards and no others, and
+    // must stay unschedulable rather than silently binding off a dead map.
+    expect(h).toContain("// not schedulable: clear_pkt");
+    for (const field of ["finalDestAddr", "netDestAddr", "pktNbHops"])
+      expect(cc).not.toContain(`for (auto& _dm_pkt : ${field}) {`);
+  });
 
   it("rewrites every set-typed parameter, not just the first few", () => {
     const missed: string[] = [];
