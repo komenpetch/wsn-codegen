@@ -25,16 +25,25 @@ describe("openNodeSubsetsOf", () => {
     expect(openNodeSubsetsOf(ctx(["ND ⊆ ℕ"]))).toEqual([]);
   });
 
-  it("leaves a subset the axioms enumerate (RTMCS's `Actuators = {1,8,9}`)", () => {
-    expect(openNodeSubsetsOf(ctx(["Actuators ⊆ ND", "Actuators = {1,8,9}"]))).toEqual([]);
+  // ⚠ THESE TWO ASSERTED THE OPPOSITE UNTIL 2026-09-21, AND THEY WERE WRONG.
+  // An enumeration does not close a node subset, for the same reason `ND` is
+  // emitted empty: node identity is bound at RUNTIME. Those enumerations live
+  // in `T01.buc`, the test/animation context, and the measurement that settled
+  // it is that the RTMCS harness assigns sink=0, sensor1=6, sensor2=7,
+  // sensor3=8 — so `Actuators = {1,8,9}` names two nodes that do not exist.
+  // Excluding them was not neutral: it left them declared, empty and fillable
+  // by nothing, so RTMCS had no destinations at all.
+  it("claims a node subset even when an axiom enumerates it (RTMCS's Actuators)", () => {
+    expect(openNodeSubsetsOf(ctx(["Actuators ⊆ ND", "Actuators = {1,8,9}"]))).toEqual(["Actuators"]);
   });
 
-  it("leaves a subset a partition fixes (RTMCS's Destination)", () => {
-    // `partition(Destination, {Sink}, Actuators)` says exactly who is in it.
+  it("claims a node subset even when a partition names its parts (RTMCS's Destination)", () => {
+    // `partition(Destination, {Sink}, Actuators)` reduces it to ANOTHER unfixed
+    // set, so it never grounded the membership in anything the runtime can use.
     expect(openNodeSubsetsOf(ctx([
       "Destination ⊆ ND",
       "partition(Destination, {Sink}, Actuators)",
-    ]))).toEqual([]);
+    ]))).toEqual(["Destination"]);
   });
 
   it("follows the subset chain, so an indirect node subset still counts", () => {

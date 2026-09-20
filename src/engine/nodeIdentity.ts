@@ -68,29 +68,38 @@ export function nodeSetsOf(contexts: readonly RawContext[]): Set<string> {
  * `final_tx_pkt` totalled 3 for the whole run, i.e. packets were essentially
  * never retired.
  *
- * ✅ AND IT IS A SHAPE, NOT A NAME. Measured across the corpus before it was
- * written:
+ * ✅ EVERY node subset is harness-populated. `ND` alone is excluded, because it
+ * is bound to the simulation's nodes by this same pass — that is what
+ * `ND.insert(myNodeId)` is.
  *
- *   AppLayer   `Dests ⊆ ND`                     members NOT fixed  → harness
- *   MintRoute  (no node subsets at all)                            → untouched
- *   RTMCS      `Actuators = {1,8,9}`,
- *              `partition(Destination, {Sink}, Actuators)`
- *                                               members ARE fixed  → untouched
+ * ⚠ AN ENUMERATION DOES NOT MAKE A NODE SUBSET CLOSED, and this used to exclude
+ * one that carried one. The reason is the same reason `ND` is emitted empty:
+ * NODE IDENTITY IS BOUND AT RUNTIME. The enumerations live in `T01.buc`, the
+ * test/animation context — `ND = {0,…,9}`, `Actuators = {1,8,9}` — and those are
+ * the values the modeller animated with, not a specification. The simulation
+ * assigns its own module ids.
  *
- * So the rule picks out exactly the one set that needs supplying, and cannot
- * disturb either case study. A subset whose members the axioms DO fix is left
- * alone deliberately: emitting those from `C = {…}` is a separate gap (RTMCS's
- * `Actuators` is declared empty today) and belongs to the context emitter, not
- * to the identity binding.
+ * Measured, which is what settled it: the RTMCS harness assigns
+ * `sink=0, sensor1=6, sensor2=7, sensor3=8`, so honouring `Actuators = {1,8,9}`
+ * would designate **two ids that name no node at all**.
  *
- * ⚠ `ND` itself is excluded: it is bound to the simulation's nodes by this same
- * pass, which is what `ND.insert(myNodeId)` is.
+ * ⚠ AND LEAVING THEM OUT WAS NOT NEUTRAL — it left them declared, empty, and
+ * fillable by nothing, because the context emitter does not emit those values
+ * either. `M6Wsn` guards `x ∈ ND ∖ Destination` in its creating event, so an
+ * empty `Destination` means every RTMCS node originates and nothing is a
+ * destination: exactly the defect this pass was written to fix for `Dests`.
+ *
+ *   AppLayer   `Dests ⊆ ND`                              → harness
+ *   MintRoute  (no node subsets at all)                  → untouched
+ *   RTMCS      `Destination ⊆ ND`, `Actuators ⊆ Destination` → harness
+ *
+ * ⚠ The model's own `partition(Destination, {Sink}, Actuators)` is an invariant
+ * the HARNESS must respect (a node in Actuators is in Destination); nothing here
+ * enforces it, because deriving that would be inventing semantics rather than
+ * reading them.
  */
 export function openNodeSubsetsOf(contexts: readonly RawContext[]): string[] {
-  const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
-  const fixed = (c: string) => axioms.some((a) =>
-    new RegExp(`^${c}\\s*=`).test(a) || new RegExp(`partition\\s*\\(\\s*${c}\\b`).test(a));
-  return [...nodeSetsOf(contexts)].filter((c) => c !== "ND" && !fixed(c)).sort();
+  return [...nodeSetsOf(contexts)].filter((c) => c !== "ND").sort();
 }
 
 /** The NED parameter by which the harness says this node is in that set. */
@@ -247,8 +256,8 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
     // members accumulate across the modules. The harness decides, because the
     // model does not -- see openNodeSubsetsOf.
     ...openSubsets.flatMap((c) => [
-      `        // ${c} ⊆ ND is declared and its members are not fixed by any axiom,`,
-      "        // so the harness names them -- exactly as it names the topology.",
+      `        // ${c} ⊆ ND is declared, and node identity is bound at RUNTIME, so`,
+      "        // the harness names its members -- exactly as it names the topology.",
       `        if (par("${membershipParam(c)}").boolValue()) ${c}.insert(myNodeId);`,
     ]),
     "    }",
@@ -305,7 +314,7 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
       mustFind(f.content, anchor, "bindNodeIdentity (NED parameters)");
       const decls = openSubsets.map((c) =>
         `        bool ${membershipParam(c)} = default(false);`
-        + `   // is this node in ${c}? (${c} ⊆ ND, members not fixed by any axiom)`);
+        + `   // is this node in ${c}? (${c} ⊆ ND — node identity is bound at runtime)`);
       return { ...f, content: f.content.replace(anchor, [anchor, ...decls].join("\n")) };
     }
     return f;
