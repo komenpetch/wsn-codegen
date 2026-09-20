@@ -227,7 +227,7 @@ export interface MediumStaging {
 }
 
 function arrival(deliverMethod: string, senderGetter: string,
-  staged: MediumStaging, deserialise: readonly { setter: string; getter: string }[]): string[] {
+  staged: MediumStaging, deserialise: readonly { setter: string; getter: string; live: string }[]): string[] {
   const pair = "{_f, _pkt}";
   // Remember only what was actually CHANGED. Inserting a pair a set already
   // holds changes nothing, so erasing it on the way out would delete state the
@@ -294,7 +294,10 @@ function arrival(deliverMethod: string, senderGetter: string,
       "    // event fails that domain guard. Measured: 18 of 18 rejections.",
       "    PPkt *_local = ensurePkt(_pkt);",
       ...deserialise.map((d) => `    _local->${d.setter}(_wire->${d.getter}());`),
-      "    pktLive.insert(_pkt);",
+      // One insert per field WRITTEN just above -- that is what puts the
+      // packet in each of those domains. A field this arrival did not write
+      // stays out of its own, which a single shared set could not express.
+      ...deserialise.filter((d) => d.live !== "").map((d) => `    ${d.live}.insert(_pkt);`),
     ]),
     "    // What the delivery and the receive events require of the MEDIUM. In the",
     "    // global model the transmitting node wrote these into one shared",
@@ -357,7 +360,7 @@ const isOwnAddressFn = (cls: string): string => [
 export function installAppReceive(tree: GeneratedTree, cls: string,
   id: PacketIdentity, deliverMethod: string, senderField: PacketField,
   staged: MediumStaging = { insert: [], remove: [] },
-  deserialise: readonly { setter: string; getter: string }[] = []): GeneratedTree {
+  deserialise: readonly { setter: string; getter: string; live: string }[] = []): GeneratedTree {
   return tree.map((f) => {
     if (f.path.endsWith(".h"))
       return { ...f, content: f.content

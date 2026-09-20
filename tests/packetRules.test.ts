@@ -57,12 +57,12 @@ describe("packet-access rules", () => {
 
   it("writes a field through the identity binding (override spelling)", () => {
     expect(apply("pktSeqNo ≔ pktSeqNo {pkt↦sno}"))
-      .toBe("ensurePkt(pkt)->setSeqNum(sno); pktLive.insert(pkt);");
+      .toBe("ensurePkt(pkt)->setSeqNum(sno); live_pktSeqNo.insert(pkt);");
   });
 
   it("writes a field through the identity binding (union spelling)", () => {
     expect(apply("pktNbHops ≔ pktNbHops ∪ {pkt ↦nbh}"))
-      .toBe("ensurePkt(pkt)->setNbHops(nbh); pktLive.insert(pkt);");
+      .toBe("ensurePkt(pkt)->setNbHops(nbh); live_pktNbHops.insert(pkt);");
   });
 
   // The precondition this guards is the one PKT-DOM used to drop by emitting
@@ -72,7 +72,7 @@ describe("packet-access rules", () => {
   // that a real test is emitted, and specifically NOT the constant `true`.
   it("tests ∈-domain membership on a PARTIAL field for real, never as a constant", () => {
     const out = apply("pkt ∈ dom(pktSeqNo)");
-    expect(out).toBe("pktLive.count(pkt) > 0");
+    expect(out).toBe("live_pktSeqNo.count(pkt) > 0");
     expect(out).not.toBe("true");
   });
 
@@ -88,8 +88,49 @@ describe("packet-access rules", () => {
   it("does not conflate pkt ∉ dom(f) with pkt ∈ dom(f)", () => {
     const notIn = apply("pkt ∉ dom(pktSeqNo)");
     const isIn  = apply("pkt ∈ dom(pktSeqNo)");
-    expect(notIn).toBe("pktLive.count(pkt) == 0");
+    expect(notIn).toBe("live_pktSeqNo.count(pkt) == 0");
     expect(notIn).not.toBe(isIn);
+  });
+
+  // ⚠ THE INVARIANT EVERY ASSERTION ABOVE WOULD STILL PASS WITHOUT: two
+  // DIFFERENT fields must use DIFFERENT sets. A shared `pktLive` satisfies
+  // "emits a real test", "is not the constant true" and "the two operators are
+  // opposite" perfectly well -- and it made RTMCS's send_down unsatisfiable,
+  // because that event asks `pkt ∉ dom(vPktData) ∧ pkt ∈ dom(pktData)`: the
+  // serialisation step, one field's domain against another's. Shared, that is
+  // `s.count(p) == 0 && s.count(p) > 0`, which no packet can satisfy, so the
+  // module compiled, ran for sixty seconds and put nothing on the air.
+  it("gives each field its own domain, so one event can test two of them", () => {
+    const a = apply("pkt ∉ dom(pktSeqNo)");
+    const b = apply("pkt ∈ dom(pktNbHops)");
+    expect(a).toBe("live_pktSeqNo.count(pkt) == 0");
+    expect(b).toBe("live_pktNbHops.count(pkt) > 0");
+    // The container named on each side differs -- the whole point.
+    const nameOf = (s: string | null) => /^(\w+)\./.exec(s ?? "")?.[1];
+    expect(nameOf(a)).not.toBe(nameOf(b));
+  });
+
+  // A write marks THAT field's domain and no other. Under the shared set,
+  // writing any field marked every field's domain live.
+  it("a write puts the packet in the written field's domain only", () => {
+    const w = apply("pktSeqNo ≔ pktSeqNo ∪ {pkt ↦ sno}");
+    expect(w).toContain("live_pktSeqNo.insert(pkt);");
+    expect(w).not.toContain("live_pktNbHops");
+  });
+
+  // A TOTAL field's domain is the whole carrier, so it has no set at all --
+  // PKT-DOM answers `true`. Emitting `live_initialSrcAddr` would declare a set
+  // nothing ever reads, and inserting into one would assert a domain the model
+  // does not track.
+  // ⚠ `initialSrcAddr` has no SET rule at all -- the evidence table records no
+  // clause writing it in either corpus, and this catalog does not carry rules
+  // on fabricated evidence. So the write side is asserted as "produces nothing
+  // naming a liveness set", which covers both "no rule matched" and "matched
+  // and emitted no insert", rather than pretending a write rule exists.
+  it("a total field gets no liveness set", () => {
+    expect(applyTotal("pkt ∈ dom(initialSrcAddr)")).toBe("true");
+    expect(applyTotal("initialSrcAddr ≔ initialSrcAddr ∪ {pkt ↦ s}") ?? "")
+      .not.toContain("live_");
   });
   it("leaves non-packet variables alone", () => {
     expect(apply("s ∈ dom(floodTbl)")).toBeNull();

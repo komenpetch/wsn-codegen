@@ -32,7 +32,7 @@ import type { EncodedMachine, FlatEvent, RawContext, RawModel, Labelled } from "
 import { eventAncestry } from "./flattener";
 import { esc } from "./text";
 import type { PacketModel, PacketField } from "./packetModel";
-import { getterOf, setterOf } from "./packetModel";
+import { getterOf, setterOf, liveSetOf } from "./packetModel";
 import { OVERRIDE_GLYPHS } from "./text";
 
 
@@ -562,7 +562,7 @@ export function supersededEventsOf(base: EncodedMachine, pRaw: RawModel, pMachin
 // The test is the delivery event's own actions, so a model whose delivery
 // restores its fields gets nothing from here and keeps doing it itself.
 export function deserialiseFieldsOf(base: EncodedMachine, pm: PacketModel,
-  sendUpLabel = "send_up"): { setter: string; getter: string }[] {
+  sendUpLabel = "send_up"): { setter: string; getter: string; live: string }[] {
   const su = base.events.find((e) => e.label === sendUpLabel);
   if (!su) return [];
   const restores = (ebName: string) =>
@@ -579,8 +579,12 @@ export function deserialiseFieldsOf(base: EncodedMachine, pm: PacketModel,
   // `update_nbr`'s `delta = sNo − lastSeqno(y ↦ x) − 1` was negative on every
   // one of 248 attempts -- the freshness test can never pass when the sequence
   // number never arrives.
+  // `live` is this field's own dom() set, or "" for a total field (whose domain
+  // is the whole carrier and so has no set). The APP-layer arrival writes the
+  // field, which puts the packet in its domain, so it marks that one set -- not
+  // a shared one, and not the sets of fields it did not write.
   return pm.fields.filter((f) => !restores(f.ebName))
-    .map((f) => ({ setter: setterOf(f), getter: getterOf(f) }));
+    .map((f) => ({ setter: setterOf(f), getter: getterOf(f), live: f.total ? "" : liveSetOf(f) }));
 }
 
 // Does the model's transmit-observation event record that it has already fired

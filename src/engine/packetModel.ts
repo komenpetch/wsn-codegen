@@ -20,6 +20,19 @@ export interface PacketField { name: string; ebName: string; cppType: "int" | "N
 export const getterOf = (f: PacketField): string => `get${cap(f.name)}`;
 export const setterOf = (f: PacketField): string => `set${cap(f.name)}`;
 
+// The set that holds `dom(F)` for a PARTIAL packet-attribute function.
+//
+// ⚠ ONE SET PER FIELD, and that is the whole point. ENC7 moves a field's VALUE
+// onto the chunk, but its DOMAIN -- "has this attribute been set on this
+// packet yet" -- is separate state per field, and the model uses it that way:
+// RTMCS's `send_down` guards `pkt ∉ dom(vPktData) ∧ pkt ∈ dom(pktData)`, which
+// IS the serialisation step (the wire copy does not exist yet AND the local one
+// does). Collapsing the family onto one shared `pktLive` made that conjunction
+// `s.count(p) == 0 && s.count(p) > 0` -- unsatisfiable, so send_down could never
+// fire and RTMCS put nothing on the air. Keyed on ebName rather than the C++
+// field name so two fields can never share a set by sharing a rename.
+export const liveSetOf = (f: PacketField): string => `live_${f.ebName}`;
+
 // The transmit method for one packet type, named as MintRoute names its own:
 // BEACON -> sendBeaconBroadcast, ROUTE -> sendRouteBroadcast. Every packet the
 // model transmits goes out as a broadcast, because the model's medium names no

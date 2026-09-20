@@ -196,8 +196,14 @@ describe("medium binding: guards that used to look translated", () => {
     // `{pkt} ⩤ pktSeqNo` in send_down is the model saying the packet has left.
     // Emitting nothing there left it permanently held, so the same packet could
     // never be accepted again and the duplicate events could never run.
+    // ⚠ Per field: `{pkt} ⩤ pktSeqNo` gives up pktSeqNo's domain and says
+    // nothing about pktSrc's. Under the shared set one erase dropped them all,
+    // which is why RTMCS's clear_pkt -- which deliberately never touches
+    // pktSrc -- used to wipe it anyway.
     const tx = cc.slice(cc.indexOf(`bool ${CLS}::${TX}(int cn`));
-    expect(tx.slice(0, tx.indexOf("\n}"))).toContain("pktLive.erase(pkt);");
+    const body = tx.slice(0, tx.indexOf("\n}"));
+    expect(body).toContain("live_pktSeqNo.erase(pkt);");
+    expect(body).toContain("live_pktSrc.erase(pkt);");
   });
 });
 

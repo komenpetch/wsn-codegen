@@ -19,6 +19,7 @@
 
 import type { GeneratedTree } from "./types";
 import type { PacketField } from "./packetModel";
+import { liveSetOf } from "./packetModel";
 import type { TypeLattice } from "./packetTypes";
 import { esc } from "./text";
 import { emittedMethods, headerOf, implOf } from "./emitted";
@@ -97,21 +98,31 @@ export function spliceImpl(cc: string, block: string): string {
 // Emitted as a MEMBER, not file scope: the packet-keyed functions are machine
 // variables, so each node owns its own: a shared store would let one node see
 // another's packets.
-export function insertPacketRegistry(tree: GeneratedTree): GeneratedTree {
+export function insertPacketRegistry(tree: GeneratedTree, fields: readonly PacketField[]): GeneratedTree {
   const ANCHOR = "    // ── Event-B machine state ──";
+  // ONE SET PER PARTIAL FIELD -- see liveSetOf. A total function's domain is the
+  // whole carrier, so PKT-DOM answers `true` for it and it needs no set.
+  const partial = fields.filter((f) => !f.total);
   return tree.map((f) => {
     if (!f.path.endsWith(".h") || !f.content.includes(ANCHOR)) return f;
     const registry = [
       ANCHOR,
       "    // Identity binding: the model's PktId to the chunk carrying its fields.",
-      "    // This map is also dom(pktSeqNo), dom(pktSrc), ... -- see PKT-DOM.",
       "    std::map<PktId, inet::Ptr<PPkt>> pktStore;",
-      "    // dom() of the PARTIAL packet-attribute functions. Distinct from",
-      "    // pktStore: a chunk may exist before the model considers the packet",
-      "    // created, and a TOTAL context function (initialSrcAddr) is defined",
-      "    // for every packet regardless. Conflating the two made every",
+      "    // dom() of each PARTIAL packet-attribute function, one set apiece.",
+      "    //",
+      "    // ⚠ NOT ONE SHARED SET. ENC7 moves a field's VALUE onto the chunk, but",
+      "    // its DOMAIN -- has this attribute been set on this packet yet -- is",
+      "    // separate state per field, and a model can use two of them in one",
+      "    // conjunction: `pkt ∉ dom(vPktData) ∧ pkt ∈ dom(pktData)` is the",
+      "    // serialisation step itself. Shared, that reads `s.count(p) == 0 &&",
+      "    // s.count(p) > 0` -- unsatisfiable, so the event could never fire.",
+      "    //",
+      "    // Distinct from pktStore: a chunk may exist before the model considers",
+      "    // the packet created, and a TOTAL context function (initialSrcAddr) is",
+      "    // defined for every packet regardless. Conflating those two made every",
       "    // creating event's freshness guard unsatisfiable.",
-      "    std::set<PktId> pktLive;",
+      ...partial.map((p) => `    std::set<PktId> ${liveSetOf(p)};   // dom(${p.ebName})`),
       "    PktId nextPktId = 1;",
       "    PPkt *pktOf(PktId id) {",
       "        auto it = pktStore.find(id);",

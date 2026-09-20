@@ -90,7 +90,7 @@ export function emitWithPacketClasses(
   // variables per case study. Nothing caught it because every clause using one
   // was `// UNTRANSLATED`; translating them is what makes the declaration matter.
   tree = fixPairKeyedDeclarations(tree, pairKeyed);
-  tree = insertPacketRegistry(tree);
+  tree = insertPacketRegistry(tree, pm.fields);
   tree = insertImageHelper(tree);
   return tree;
 }

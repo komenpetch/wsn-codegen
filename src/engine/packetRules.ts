@@ -1,6 +1,6 @@
 import type { Rule, RuleMatch } from "./rules";
 import type { PacketField } from "./packetModel";
-import { getterOf, setterOf } from "./packetModel";
+import { getterOf, setterOf, liveSetOf } from "./packetModel";
 import { esc, OVERRIDE_OR_UNION_GLYPHS } from "./text";
 
 export interface NetRule extends Rule { tier: 1 | 2 | 3; evidence: string[]; supersedes?: string; }
@@ -216,6 +216,12 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     // Accessor names on the emitted chunk, reachable now that the identity
     // binding gives the generated code a PPkt to call them on.
     const G = getterOf(f), S = setterOf(f);
+    // This field's own dom(F). A TOTAL field has no such set -- its domain is
+    // the whole carrier -- so every use of LIVE below sits behind an `f.total`
+    // test, which is where that semantics belongs. Blanking LIVE here as well
+    // would be dead logic: it is unobservable behind those same tests, and it
+    // would read as a guard without being one.
+    const LIVE = liveSetOf(f);
     const ev = EVIDENCE[f.ebName] ?? {};
 
     // `y = F(p)`: reads back the chunk field of "the packet identified by
@@ -287,7 +293,13 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-SET-${f.ebName}`, tier: 1, evidence: ev.SET,
       match: re(new RegExp(
         `^${F}\\s*≔\\s*${F}\\s*(?:[${OVERRIDE_OR_UNION_GLYPHS}]\\s*)?\\{\\s*(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*\\}$`)),
-      emit: (m) => `ensurePkt(${m.captures.p})->${S}(${m.captures.v}); pktLive.insert(${m.captures.p});`,
+      // ⚠ The liveness insert is conditional on PARTIAL here for the same reason
+      // it is in SET_KEY just below, and it did not used to be: a total field's
+      // domain is all of PKT, so PKT-DOM answers `true` for it and its set is
+      // never read. Under the old SHARED set that inconsistency was invisible --
+      // writing a total field marked every partial field's domain live too.
+      emit: (m) => `ensurePkt(${m.captures.p})->${S}(${m.captures.v});`
+        + (f.total ? "" : ` ${LIVE}.insert(${m.captures.p});`),
     });
     // `F(p) ≔ v` -- the PER-KEY spelling of the same write. A separate rule
     // because it is a separate clause shape, and the one the catalog was
@@ -303,7 +315,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-SET-KEY-${f.ebName}`, tier: 1, evidence: ev.SET_KEY,
       match: re(new RegExp(`^${F}\\s*\\(\\s*(?<p>\\w+)\\s*\\)\\s*≔\\s*(?<v>\\w+)$`)),
       emit: (m) => `ensurePkt(${m.captures.p})->${S}(${m.captures.v});`
-        + (f.total ? "" : ` pktLive.insert(${m.captures.p});`),
+        + (f.total ? "" : ` ${LIVE}.insert(${m.captures.p});`),
     });
     // `x ∈ dom(F)`: for a TOTAL function (F.total, e.g. initialSrcAddr,
     // netSeqNo -- `PKT → ...`) this is vacuously true under ENC7, since a
@@ -330,7 +342,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       // exactly the set of packets this node holds -- and that is what
       // pktStore is. One lookup answers both. Before the registry existed
       // there was nothing to look in, so a partial field had to be refused.
-      emit: (m) => f.total ? "true" : `pktLive.count(${m.captures.p}) > 0`,
+      emit: (m) => f.total ? "true" : `${LIVE}.count(${m.captures.p}) > 0`,
     });
     // `x ∉ dom(F)` is NOT translatable under ENC7: it asks whether the
     // packet/chunk exists at all, and once F's value lives on the chunk that
@@ -357,7 +369,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       // The freshness precondition of every creating event ("this packet does
       // not exist yet"), and the registry is precisely what makes it
       // answerable again.
-      emit: (m) => f.total ? "false" : `pktLive.count(${m.captures.p}) == 0`,
+      emit: (m) => f.total ? "false" : `${LIVE}.count(${m.captures.p}) == 0`,
     });
     // Domain anti-restriction on a chunk field: this node no longer holds the
     // packet's attributes. Under ENC7 the five attributes share one domain
@@ -382,7 +394,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     if (ev.DEL) out.push({
       id: `PKT-DEL-${f.ebName}`, tier: 3, evidence: ev.DEL,
       match: re(new RegExp(`^${F}\\s*≔\\s*\\{\\s*(?<p>\\w+)\\s*\\}\\s*⩤\\s*${F}$`)),
-      emit: (m) => `pktLive.erase(${m.captures.p});`,
+      emit: (m) => f.total ? "" : `${LIVE}.erase(${m.captures.p});`,
     });
     // `p ↦ v ∈ F` / `∉` -- a function's graph tested via maplet membership
     // (valid Event-B for a `PKT ⇸ T` variable, since a function IS its
@@ -430,7 +442,7 @@ export function packetRules(fields: PacketField[]): NetRule[] {
         // own comment), so a live packet is not automatically a chunk this node
         // holds -- the null check stays in both arms rather than being folded
         // into the total one.
-        const dom = f.total ? "" : `pktLive.count(${p}) > 0 && `;
+        const dom = f.total ? "" : `${LIVE}.count(${p}) > 0 && `;
         const has = `(${dom}pktOf(${p}) != nullptr && pktOf(${p})->${G}() == ${v})`;
         return op === "∈" ? has : `!${has}`;
       },

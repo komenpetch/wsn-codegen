@@ -237,15 +237,28 @@ describe("generate (network branch) for MintRoute M4", () => {
     const fieldNames = ["pktSeqNo", "pktSrc", "pktFwdr", "pktData", "pktNbHops"];
 
     // Every dom() guard on a packet field became a real store lookup...
-    // pktLive, not pktStore: the domain of the PARTIAL packet functions is
-    // distinct from chunk existence (a chunk can be built before the model
-    // considers the packet created). Conflating them made every creating
-    // event's freshness guard unsatisfiable and was why the flood would not
-    // start.
-    const notIn = (cc.match(/pktLive\.count\(\w+\) == 0/g) ?? []).length;
-    const isIn = (cc.match(/pktLive\.count\(\w+\) > 0/g) ?? []).length;
+    // a live_<field> set, not pktStore: the domain of the PARTIAL packet
+    // functions is distinct from chunk existence (a chunk can be built before
+    // the model considers the packet created). Conflating them made every
+    // creating event's freshness guard unsatisfiable and was why the flood
+    // would not start.
+    const notIn = (cc.match(/live_\w+\.count\(\w+\) == 0/g) ?? []).length;
+    const isIn = (cc.match(/live_\w+\.count\(\w+\) > 0/g) ?? []).length;
     expect(notIn).toBeGreaterThan(0);
     expect(isIn).toBeGreaterThan(0);
+    // ⚠ And they are PER FIELD, which is what makes a model that tests two
+    // domains in one conjunction translatable at all. A shared set passes both
+    // counts above and is what stopped RTMCS transmitting.
+    const sets = new Set(cc.match(/live_\w+/g) ?? []);
+    expect(sets.size).toBeGreaterThan(1);
+
+    // ⚠ AND EVERY ONE OF THEM IS DECLARED. Nothing else in the suite asks this:
+    // the registry could emit no per-field sets at all, every assertion above
+    // would still pass, and the module would simply not compile -- which only
+    // the clang gate would notice, and only when someone ran it. A pass that
+    // silently does nothing is the failure mode this project keeps paying for.
+    const h = byExt(".h");
+    for (const s of sets) expect(h).toContain(`std::set<PktId> ${s};`);
 
     // ...and none survived as an untranslated dom clause on those fields.
     for (const f of fieldNames)
@@ -728,7 +741,10 @@ describe("v5 arrival: the four fixes that made the flood propagate", () => {
     // base chain's abstract one does not, and this module runs that one.
     expect(body).toContain("PPkt *_local = ensurePkt(_pkt);");
     expect(body).toContain("_local->setNbHops(_wire->getNbHops());");
-    expect(body).toContain("pktLive.insert(_pkt);");
+    // One insert per field the arrival WROTE, each into that field's own
+    // domain -- not one shared set covering fields it never touched.
+    expect(body).toContain("live_pktNbHops.insert(_pkt);");
+    expect(body).not.toContain("pktLive.insert(_pkt);");
   });
 });
 
