@@ -57,6 +57,45 @@ export function nodeSetsOf(contexts: readonly RawContext[]): Set<string> {
   return subsetClosure("ND", contexts.flatMap((c) => c.axioms.map((a) => a.text)));
 }
 
+/**
+ * Node subsets the axioms declare but leave OPEN — the ones a harness has to
+ * populate, because nothing in the model says who is in them.
+ *
+ * ⚠ WHY THIS EXISTS. `Dests ⊆ ND` is declared and never filled, so `ND ∖ Dests`
+ * admits every node and `dest_recv_pkt`'s `nb ∈ Dests` can never hold: the
+ * flood has no destination. Every node forwards and nobody consumes — measured
+ * on the nine-node field as `fwdr_receive_pkt` 94–95 on all nine while
+ * `final_tx_pkt` totalled 3 for the whole run, i.e. packets were essentially
+ * never retired.
+ *
+ * ✅ AND IT IS A SHAPE, NOT A NAME. Measured across the corpus before it was
+ * written:
+ *
+ *   AppLayer   `Dests ⊆ ND`                     members NOT fixed  → harness
+ *   MintRoute  (no node subsets at all)                            → untouched
+ *   RTMCS      `Actuators = {1,8,9}`,
+ *              `partition(Destination, {Sink}, Actuators)`
+ *                                               members ARE fixed  → untouched
+ *
+ * So the rule picks out exactly the one set that needs supplying, and cannot
+ * disturb either case study. A subset whose members the axioms DO fix is left
+ * alone deliberately: emitting those from `C = {…}` is a separate gap (RTMCS's
+ * `Actuators` is declared empty today) and belongs to the context emitter, not
+ * to the identity binding.
+ *
+ * ⚠ `ND` itself is excluded: it is bound to the simulation's nodes by this same
+ * pass, which is what `ND.insert(myNodeId)` is.
+ */
+export function openNodeSubsetsOf(contexts: readonly RawContext[]): string[] {
+  const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
+  const fixed = (c: string) => axioms.some((a) =>
+    new RegExp(`^${c}\\s*=`).test(a) || new RegExp(`partition\\s*\\(\\s*${c}\\b`).test(a));
+  return [...nodeSetsOf(contexts)].filter((c) => c !== "ND" && !fixed(c)).sort();
+}
+
+/** The NED parameter by which the harness says this node is in that set. */
+export const membershipParam = (constant: string) => `in${constant}`;
+
 export function sinkConstantOf(contexts: readonly RawContext[]): string | null {
   const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
 
@@ -176,6 +215,7 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
   contexts: readonly RawContext[], cls: string, shell: ShellKind = "network"): GeneratedTree {
   const inits = cartesianInits(model, nodeSetsOf(contexts));
   const sink = sinkConstantOf(contexts);
+  const openSubsets = openNodeSubsetsOf(contexts);
 
   const identity = sink
     ? [
@@ -202,6 +242,15 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
     `    if (stage == ${IDENTITY_STAGE[shell]}) {`,
     ...identity,
     "        ND.insert(myNodeId);",
+    // A node subset the axioms leave open is populated the same way ND is:
+    // each node declares its own membership, and the set is shared, so the
+    // members accumulate across the modules. The harness decides, because the
+    // model does not -- see openNodeSubsetsOf.
+    ...openSubsets.flatMap((c) => [
+      `        // ${c} ⊆ ND is declared and its members are not fixed by any axiom,`,
+      "        // so the harness names them -- exactly as it names the topology.",
+      `        if (par("${membershipParam(c)}").boolValue()) ${c}.insert(myNodeId);`,
+    ]),
     "    }",
     `    // A LATER stage, so every node has registered and ${sink ?? "ND"} is settled: INET`,
     "    // runs all modules through one stage before any reaches the next.",
@@ -247,6 +296,17 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
         throw new Error(`bindNodeIdentity: ${cls}::initialize(int stage) has no closing brace to `
           + "insert the identity binding before.");
       return { ...f, content: f.content.slice(0, end) + "\n" + seed + f.content.slice(end) };
+    }
+    // The .ned must DECLARE the parameter the .cc reads, or OMNeT++ refuses the
+    // module at setup with "unknown parameter" -- so the two are emitted
+    // together, from the same derivation, rather than left to agree by hand.
+    if (f.path.endsWith(".ned") && openSubsets.length) {
+      const anchor = "    parameters:";
+      mustFind(f.content, anchor, "bindNodeIdentity (NED parameters)");
+      const decls = openSubsets.map((c) =>
+        `        bool ${membershipParam(c)} = default(false);`
+        + `   // is this node in ${c}? (${c} ⊆ ND, members not fixed by any axiom)`);
+      return { ...f, content: f.content.replace(anchor, [anchor, ...decls].join("\n")) };
     }
     return f;
   });

@@ -527,13 +527,29 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
     expect(body![1]).toContain("Dests.count(nb) > 0");
   });
 
-  // And the consequence, which is the honest half: nothing populates `Dests`,
-  // so with the guard restored the event genuinely cannot fire — and the module
-  // now SAYS so instead of firing it wrongly.
-  it("and then reports dest_recv_pkt as unreachable, because nothing fills Dests", () => {
+  // ⚠ `Dests ⊆ ND` is DECLARED AND NEVER FILLED, so `ND ∖ Dests` admits every
+  // node and the flood has no destination: every node forwards, nobody
+  // consumes. Measured on the nine-node field before this was emitted —
+  // `fwdr_receive_pkt` 94–95 on all nine while `final_tx_pkt` totalled 3 for
+  // the whole run. The harness names the members because the model does not.
+  it("lets the harness populate a node subset the axioms leave open", () => {
+    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
+    const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
+    const ned = t.find((f) => f.path.endsWith(".ned"))!.content;
+    // Populated exactly the way ND is, and in the same init stage.
+    expect(cc).toContain('if (par("inDests").boolValue()) Dests.insert(myNodeId);');
+    // ⚠ The .ned MUST declare what the .cc reads, or OMNeT++ refuses the module
+    // at setup with "unknown parameter" — so both come from one derivation.
+    expect(ned).toContain("bool inDests = default(false);");
+  });
+
+  // And with it fillable, the destination reception is schedulable again —
+  // whether it FIRES is then the harness's decision, which is the point.
+  it("and dest_recv_pkt becomes schedulable once something can fill Dests", () => {
     const h = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
       .find((f) => f.path.endsWith(".h"))!.content;
-    expect(h).toContain("not scheduled: dest_recv_pkt -- nothing that runs ever fills `Dests`");
+    expect(h).toContain("bool try_dest_recv_pkt();");
+    expect(h).not.toContain("not scheduled: dest_recv_pkt");
   });
 
   it("needs no second project: the bundled extension is the default", () => {
