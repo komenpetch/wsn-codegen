@@ -67,5 +67,15 @@ DSR has no network-layer Event-B source and it is not recoverable
   CommPattern pair, and the measured three-hop flood.
 - [Network-protocol shell](2026-09-08-network-protocol-shell.md) — the pivot to
   `NetworkProtocolBase`, which closed the base-class conflict.
+- [`updateNbrs` drain — the sources](2026-09-20-updatenbrs-drain-research.md) —
+  why RTMCS's reception chain jams, answered from the raw Rodin XML, INET's
+  `Aodv.cc`, the thesis, the ECTI-CON paper and the Final Report. Ends in a
+  scope verdict: the state involved is RTMCS's own M4–M6, so it is case-study
+  work and not the generator's.
+- [`updateNbrs` drain — the experiment](2026-09-20-updatenbrs-twin-experiment.md)
+  — the same question measured: the circular wait, three falsified
+  counterfactuals, and a repeatable drain that unjams the backward half and does
+  nothing for the forward one. ⚠ Includes the measured tension between the two
+  halves. Everything was built on copies and reverted.
 - [task-reports/](task-reports/) — including `00-decision-ledger.md`, every
   judgment call made during PPkt's implementation and the two that were wrong.
