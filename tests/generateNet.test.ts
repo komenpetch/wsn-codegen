@@ -558,16 +558,25 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
     // PPkt is carried: the chunk, and the sequence number the extension adds.
     expect(h).toContain("class PPkt : public inet::FieldsChunk");
     expect(h).toMatch(/int seqNum = 0;\s*\/\/ Event-B: pktSeqNo/);
-    // ⚠ AND NO CONTROL LEAF IS INVENTED. This used to assert RoutePkt and
-    // BeaconPkt, because the extension bundled MintRoute's
-    // `partition(CONTROL, {ROUTE}, {BEACON})`. The leaves come from the
-    // uploaded project now, and this one declares no control split at all —
-    // so a model that draws no distinction between control subtypes correctly
-    // gets none invented for it. controlLeaves.test.ts covers the projects
-    // that do declare one.
-    expect(h).not.toContain("class RoutePkt");
-    expect(h).not.toContain("class BeaconPkt");
+    // ⚠ AND THE LEAVES COME FROM THE UPLOADED PROJECT.
+    //
+    // This asserted their ABSENCE while the app-layer chain declared no control
+    // split: the extension had bundled MintRoute's
+    // `partition(CONTROL, {ROUTE}, {BEACON})`, and removing it was what made
+    // the leaves the project's own. On 2026-09-21 the chain took that same
+    // split itself, so absence is no longer available as the proof — and since
+    // the leaves are now spelled exactly as the old bundle spelled them, their
+    // PRESENCE cannot distinguish "read from the project" from "invented"
+    // either.
+    //
+    // So the no-invention half moves out of this suite rather than being
+    // asserted vacuously here: controlLeaves.test.ts carries it on synthetic
+    // shapes, including "treats an UNSPLIT control set as its own single
+    // target", which is the case this file can no longer construct from a real
+    // project. What remains here is that the chunk classes track the lattice.
     expect(h).toContain("class DataPkt : public PPkt");
+    expect(h).toContain("class RoutePkt : public PPkt");
+    expect(h).toContain("class BeaconPkt : public PPkt");
   });
 });
 
@@ -579,11 +588,18 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
 describe("v3 refuses an incoherent pairing instead of emitting a module that cannot compile", () => {
   it("refuses a packet source whose lattice lacks a type the base model uses", () => {
     // The slots are not interchangeable. MintRoute's events guard on BEACON and
-    // ROUTE; the AppLayer partition declares only DATA/CONTROL, so the emitted
-    // module said `PktType::BEACON` against an enum with no such member and
-    // redefined CONTROL as `const int` beside the base context's `std::set<int>`.
+    // ROUTE; a source whose partition declares neither makes the emitted module
+    // say `PktType::BEACON` against an enum with no such member.
+    //
+    // ⚠ THE SOURCE HERE IS RTMCS, AND IT USED TO BE AppLayer. AppLayer declared
+    // only DATA/CONTROL and so was the natural "lacks the types" source — until
+    // 2026-09-21, when it took `partition(CONTROL, {ROUTE}, {BEACON})` and
+    // started covering MintRoute's lattice exactly. RTMCS is the better witness
+    // anyway: its split is `{RREQ}, {RREP}, {RRER}`, genuinely disjoint from
+    // MintRoute's, so the pairing is incoherent for a reason no later edit to
+    // one project can quietly remove.
     const run = () => generate(loadProject("MintRoute"), "M4", "M4Wsn", 3,
-      { files: loadProject("AppLayer"), machine: "pM3" });
+      { files: loadProject("RTMCS"), machine: "M6" });
     expect(run).toThrow(/BEACON/);
     expect(run).toThrow(/ROUTE/);
     // ⚠ And it must name ONLY the packet types. The lattice tracks every

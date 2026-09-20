@@ -137,7 +137,7 @@ describe.skipIf(!existsSync(APP))("and so is one bound by its own typing guard",
   it("the pattern keeps enumerating over ND ∖ Dests, not over bare ND", () => {
     const cc = generate(load(APP), "pM3", "Pm3Wsn", 3)
       .find((f) => f.path.endsWith(".cc"))!.content;
-    const body = bodyOf(cc, "bool Pm3Wsn::try_create_controlPkt()");
+    const body = bodyOf(cc, "bool Pm3Wsn::try_create_beaconPkt()");
     expect(body).toContain("for (Node x : ND) {");
     expect(body).toContain("if (Dests.count(x) > 0) continue;");
     expect(body).toContain("ensurePkt(pkt)->setInitialSrcAddr(x);");

@@ -33,10 +33,30 @@ describe("packetTypeLattice", () => {
     expect(new Set(lat.tagOf.values()).size).toBe(3);   // tags are distinct
   });
 
+  // ⚠ SYNTHETIC ON PURPOSE, AND IT USED TO READ A REAL PROJECT.
+  //
+  // This pinned option A's core guarantee -- a project that splits nothing gets
+  // nothing invented -- against `Update_wsn/C0_project`, which was the corpus's
+  // only flat-lattice project. On 2026-09-21 that project took
+  // `partition(CONTROL, {ROUTE}, {BEACON})`, so ALL THREE corpus projects now
+  // split CONTROL and no real model exercises this path any more.
+  //
+  // Synthetic is the better home regardless: resting the guarantee on a real
+  // project happening to stay flat is what let it lapse in one edit, and the
+  // same reasoning already put the model-derived scalar initialiser on a
+  // synthetic fixture (2026-09-14).
   it("handles a flat partition with no CONTROL subdivision", () => {
-    const lat = packetTypeLattice(load("Update_wsn/C0_project").contexts)!;
+    const lat = packetTypeLattice([
+      ctx("C1.buc", ["partition(TYPE, CONTROL, {DATA})", "type ∈ PKT → TYPE"]),
+    ])!;
     expect(lat.children.get("CONTROL")).toBeUndefined();
     expect(lat.leaves).toEqual(["DATA", "CONTROL"]);
+  });
+
+  it("reads the app-layer chain's own split, now that it has one", () => {
+    const lat = packetTypeLattice(load("Update_wsn/C0_project").contexts)!;
+    expect(lat.children.get("CONTROL")).toEqual(["ROUTE", "BEACON"]);
+    expect(lat.leaves).toEqual(["DATA", "ROUTE", "BEACON"]);
   });
 
   it("returns null when no partition axiom exists", () => {

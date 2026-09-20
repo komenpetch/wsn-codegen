@@ -22,7 +22,7 @@ const load = (d: string) =>
   readdirSync(d).filter((f) => /\.(bum|buc)$/.test(f))
     .map((f) => ({ name: f, xml: readFileSync(join(d, f), "utf8") }));
 
-// ⚠ THE CREATING EVENT IS `create_controlPkt`, NOT the abstract
+// ⚠ THE CREATING EVENT IS `create_beaconPkt`, NOT the abstract
 // `creatingControlPacket`. Once the extension derives a creating event for the
 // control set -- which it does even when nothing splits that set, because the
 // sequence number has to be stamped by whatever creates a control packet --
@@ -38,11 +38,11 @@ describe("a relational-image parameter is bound at its declared type, from the r
     // If the creating event stops being schedulable the assertions below would
     // pass vacuously. Fail loudly instead. (This guard has already earned its
     // keep once: it is what caught the suite going stale.)
-    expect(cc).toContain("bool Pm3Wsn::try_create_controlPkt()");
+    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
   });
 
   it("binds a scalar-declared parameter as a scalar, not as a set", () => {
-    expect(h).toContain("bool create_controlPkt(Node x, int des, PktId pkt, Data data, int sno);");
+    expect(h).toContain("bool create_beaconPkt(Node x, int des, PktId pkt, Data data, int sno);");
     expect(cc).not.toContain("std::set<Node> des = relImage(");
   });
 

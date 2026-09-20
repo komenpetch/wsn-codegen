@@ -27,7 +27,7 @@ const load = (d: string) =>
   readdirSync(d).filter((f) => /\.(bum|buc)$/.test(f))
     .map((f) => ({ name: f, xml: readFileSync(join(d, f), "utf8") }));
 
-// ⚠ THE CREATING EVENT IS `create_controlPkt`, NOT the abstract
+// ⚠ THE CREATING EVENT IS `create_beaconPkt`, NOT the abstract
 // `creatingControlPacket`. Once the extension derives a creating event for the
 // control set -- which it does even when nothing splits that set, because the
 // sequence number has to be stamped by whatever creates a control packet --
@@ -37,11 +37,11 @@ const load = (d: string) =>
 describe("a parameter ranged over a set difference is enumerated, not read back", () => {
   const cc = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3)
     .find((f) => f.path.endsWith(".cc"))!.content;
-  const method = cc.slice(cc.indexOf("bool Pm3Wsn::try_create_controlPkt()"));
+  const method = cc.slice(cc.indexOf("bool Pm3Wsn::try_create_beaconPkt()"));
   const body = method.slice(0, method.indexOf("\n}"));
 
   it("reaches the method at all — otherwise this suite proves nothing", () => {
-    expect(cc).toContain("bool Pm3Wsn::try_create_controlPkt()");
+    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
   });
 
   it("enumerates the originator over the carrier", () => {

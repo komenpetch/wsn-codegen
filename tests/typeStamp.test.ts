@@ -31,35 +31,48 @@ const load = (d: string) =>
 
 const MINTROUTE = "../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck";
 
-// ⚠ THE CREATING EVENT IS `create_controlPkt`, NOT the abstract
-// `creatingControlPacket`. Once the extension derives a creating event for the
-// control set -- which it does even when nothing splits that set, because the
-// sequence number has to be stamped by whatever creates a control packet --
-// the derived event supersedes the abstract one, exactly as MintRoute's own
-// per-leaf events supersede it there. The behaviour asserted below moved with
-// it intact; only the method name changed.
-describe("a membership type guard stamps a tag when, and only when, it pins one", () => {
+// ⚠ THE CREATING EVENT IS THE DERIVED PER-LEAF ONE, NOT the abstract
+// `creatingControlPacket`: the derived event supersedes the abstract one,
+// exactly as MintRoute's per-leaf events supersede it there.
+//
+// ⚠ AND IT IS `create_beaconPkt` NOW, WHICH COSTS THIS SUITE ITS ORIGINAL
+// SUBJECT. It read `create_controlPkt` while the app-layer chain left CONTROL
+// unsplit, so CONTROL was a lattice LEAF and `type(pkt) ∈ CONTROL` -- a
+// MEMBERSHIP in a one-element part -- pinned the tag. That is the branch the
+// 2026-09-19 type-stamp fix added. On 2026-09-21 the chain took
+// `partition(CONTROL, {ROUTE}, {BEACON})`, so every corpus project now splits
+// CONTROL and the membership-pins-a-leaf branch has NO real-model witness left;
+// what is asserted below is the EQUALITY branch, which the MintRoute describe
+// further down already covers. Treat this as reduced coverage, not as proof --
+// restoring it needs a flat-lattice project or a synthetic one.
+describe("a type guard on a derived per-leaf creating event stamps that leaf", () => {
   const v3 = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
   const cc = v3.find((f) => f.path.endsWith(".cc"))!.content;
   const h = v3.find((f) => f.path.endsWith(".h"))!.content;
   const body = (() => {
-    const i = cc.indexOf("bool Pm3Wsn::try_create_controlPkt()");
+    const i = cc.indexOf("bool Pm3Wsn::try_create_beaconPkt()");
     return i < 0 ? "" : cc.slice(i, cc.indexOf("\n}", i));
   })();
 
   it("reaches the method at all — otherwise this suite proves nothing", () => {
-    expect(cc).toContain("bool Pm3Wsn::try_create_controlPkt()");
+    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
   });
 
-  it("stamps the leaf the membership guard names", () => {
-    expect(body).toContain("ensurePkt(pkt)->setType(PktType::CONTROL);");
+  it("stamps the leaf its own type guard names", () => {
+    expect(body).toContain("ensurePkt(pkt)->setType(PktType::BEACON);");
   });
 
   it("stamps it before the guard that reads it back", () => {
-    // The event's own guard is `CONTROL.count(getType()) > 0`. Unstamped, the
-    // chunk's default is DATA and the guard is false on every candidate.
+    // Unstamped, the chunk's default is DATA and the event's own type guard is
+    // false on every candidate.
+    //
+    // ⚠ The `CONTROL.count(...)` below is NOT this event's guard any more — the
+    // derived per-leaf event strengthens membership to `= BEACON`. It is the
+    // FLOOD events' guard (`type(pkt) ∈ CONTROL`), which the split leaves
+    // untouched by design, and it is asserted here to pin that the set form
+    // survives alongside the leaf form.
     expect(cc).toContain("CONTROL.count(static_cast<int>(pktOf(pkt)->getType())) > 0");
-    expect(packetTypeLeaves(h)).toContain("CONTROL");
+    expect(packetTypeLeaves(h)).toContain("BEACON");
   });
 
   it("names a member the emitted enum actually declares", () => {
