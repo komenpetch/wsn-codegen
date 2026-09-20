@@ -2,7 +2,7 @@ import { mapletAddedTo, variableGainingMaplet } from "./actionShapes";
 import type { EncodedMachine, GeneratedTree, FlatEvent } from "./types";
 import { splitConjuncts } from "./ruleEngine";
 import type { PacketModel, PacketField } from "./packetModel";
-import { getterOf, setterOf, broadcastMethodOf } from "./packetModel";
+import { getterOf, setterOf, broadcastMethodOf, liveSetOf } from "./packetModel";
 import { OVERRIDE_GLYPHS, OVERRIDE_OR_UNION_GLYPHS } from "./text";
 import { methodForLabel, splitParams } from "./emitted";
 import { deserialiseFieldsOf } from "./packetOps";
@@ -65,7 +65,7 @@ export interface MediumPlan {
   rxPacketParam: string;
   senderParam: string;           // the transmitting node, as `send_up` names it
   senderGetter: string;          // the chunk field the model stamps it into
-  wire: { staging: string; getter: string }[];
+  wire: { staging: string; getter: string; enc: PacketField | null }[];
   requires: string[];            // pair-sets an arrival must place {f, pkt} in
   propagation: string;
   identity: { getter: string; cast: boolean }[];
@@ -149,7 +149,7 @@ export type MediumCore = {
   txPkt: string;
   rxPkt: string;
   rx: EncodedMachine["events"][number];
-  wire: { staging: string; getter: string }[];
+  wire: { staging: string; getter: string; enc: PacketField | null }[];
   requires: string[];
   senderParam: string;
   senderGetter: string;
@@ -196,14 +196,23 @@ function mediumCore(model: EncodedMachine, pm: PacketModel): MediumCore | null {
   // variable (`vPktSeqNo ≔ vPktSeqNo ∪ {pkt ↦ sno}`), that variable IS the
   // wire copy of that field. This is the model's own serialisation, stated in
   // its own actions; the binding just reads which pairs it names.
-  const wire: { staging: string; getter: string }[] = [];
+  const wire: { staging: string; getter: string; enc: PacketField | null }[] = [];
   for (const f of fields) {
     const read = conj(tx).map((c) =>
       new RegExp(`^(\\w+)\\s*=\\s*${f.ebName}\\(\\s*${txPkt}\\s*\\)$`).exec(c)).find(Boolean);
     if (!read) continue;
     const q = read[1];
     const staging = acts(tx).map((a) => variableGainingMaplet(a, txPkt, q)).find(Boolean);
-    if (staging) wire.push({ staging, getter: getterOf(f) });
+    // ⚠ IS THE WIRE COPY ITSELF AN ENC7 FIELD? RTMCS types `vPktData ∈ PKT ⇸ ℤ`
+    // and `envDestAddr ∈ PKT ⇸ (ND ∪ {BROADCAST})`, so ENC7 owns their storage
+    // and a machine-map write here is a SECOND one. That is what it was: the
+    // arrival wrote the map while `send_up`'s own guards read the chunk
+    // (`live_vPktData.count(pkt) > 0`, `pktOf(pkt)->getVPktData()`), so the
+    // delivery event declined on every frame that arrived. MintRoute types all
+    // five of its wire copies over `ran(channel)`, so none is a field and
+    // nothing about it changes.
+    if (staging) wire.push({ staging, getter: getterOf(f),
+      enc: fields.find((g) => g.ebName === staging) ?? null });
   }
   if (wire.length === 0) return null;              // nothing is serialised: not a medium
 
@@ -292,7 +301,17 @@ export function planMedium(model: EncodedMachine, pm: PacketModel, cc: string, c
     if (p === senderParam) { args.push("_f"); continue; }
     const staged = conj(rx).map((c) =>
       new RegExp(`^${p}\\s*=\\s*(\\w+)\\(\\s*${rxPkt}\\s*\\)$`).exec(c)).find(Boolean);
-    if (staged && wire.some((w) => w.staging === staged[1])) { args.push(`${staged[1]}.at(_pkt)`); continue; }
+    const stagedWire = staged && wire.find((w) => w.staging === staged[1]);
+    if (stagedWire) {
+      // Read it back from wherever the arrival just PUT it -- the chunk when
+      // ENC7 owns this wire copy, the machine map otherwise. Reading the map
+      // unconditionally handed the delivery event a value from storage its own
+      // guards do not consult.
+      args.push(stagedWire.enc
+        ? `pktOf(_pkt)->${getterOf(stagedWire.enc)}()`
+        : `${staged[1]}.at(_pkt)`);
+      continue;
+    }
     // `pkt ↦ nxt ∈ F` with F a packet field -- a function's graph tested via
     // maplet membership, which for a bound `pkt` is just a read of F. RTMCS's
     // send_up binds its next-hop parameter this way and MintRoute's does not,
@@ -483,7 +502,14 @@ function arrivalFn(plan: MediumPlan, cls: string): string {
     "    PktId _pkt = localIdFor(wire.get());",
     "    // Deserialise: the wire copies the transmit event staged, back into the",
     "    // variables the delivery event reads them from.",
-    ...plan.wire.map((w) => `    ${w.staging}[_pkt] = wire->${w.getter}();`),
+    // ⚠ Into the storage that wire copy actually HAS. A staging variable the
+    // model types over PKT is an ENC7 field, so its home is the chunk and its
+    // domain is its own live set -- writing a machine map of the same name puts
+    // the value somewhere the delivery event's guards never look.
+    ...plan.wire.map((w) => w.enc
+      ? `    ensurePkt(_pkt)->${setterOf(w.enc)}(wire->${w.getter}());`
+        + (w.enc.total ? "" : ` ${liveSetOf(w.enc)}.insert(_pkt);`)
+      : `    ${w.staging}[_pkt] = wire->${w.getter}();`),
     ...(plan.unrestored.length === 0 ? [] : [
       "    // ⚠ And the chunk fields the delivery event does NOT restore.",
       "    //",
@@ -548,11 +574,37 @@ export function bindMedium(tree: GeneratedTree, plan: MediumPlan, cls: string): 
       throw new Error("mediumBinding: the emitted transmit structure was not found; the shell's shape changed.");
     const txBlock = new RegExp(
       String.raw`[ \t]*// — SensorApp transmit structure[\s\S]*?\n[ \t]*sentCount\+\+;\n`);
-    if (txBlock.test(cc))
-      cc = cc.replace(txBlock,
-        `    // — Medium binding: hand the model's own packet to the radio —\n` +
-        `    mediumSend(${plan.txPacketParam});\n`);
-    else
+    if (txBlock.test(cc)) {
+      cc = cc.replace(txBlock, "");
+      // ⚠ AFTER THE EVENT'S ACTIONS, NOT IN PLACE OF THE BLOCK IT REPLACES.
+      // An Event-B event is atomic: the guards hold, every action applies, and
+      // the transmission realises the whole of it -- so the frame must carry
+      // the state the event PRODUCES. The app-layer transmit structure sits at
+      // the top of the actions, and sending there put the packet on the air
+      // before the event had finished stamping it.
+      //
+      // Measured, not reasoned: RTMCS's send_down ends with
+      // `envDestAddr(pkt) ≔ nxt`, an ENC7 chunk field, so every frame left
+      // carrying that field at its DEFAULT. The receiver's send_up guards
+      // `pkt ↦ nxt ∈ envDestAddr` against it and declined 35 of 35 arrivals --
+      // instrumented as `chunk=-1 nxt=0`, the second value being the default.
+      // MintRoute is unaffected either way: its send_down writes only machine
+      // maps and live sets after the send, never the chunk.
+      // By Event-B label, the same way the delivery side finds its method, so
+      // the CommPattern rename cannot make this silently miss.
+      const txSig = methodForLabel(cc, cls, TRANSMIT);
+      if (!txSig)
+        throw new Error("mediumBinding: the transmit method was not found to place the send after its actions.");
+      const at = cc.indexOf(`bool ${cls}::${txSig.method}(`);
+      const endOfBody = cc.indexOf("\n}", at);
+      const lastReturn = cc.lastIndexOf("    return true;", endOfBody);
+      if (lastReturn < at)
+        throw new Error("mediumBinding: the transmit method has no `return true;` to place the send before.");
+      cc = cc.slice(0, lastReturn)
+        + `    // — Medium binding: hand the model's own packet to the radio —\n`
+        + `    mediumSend(${plan.txPacketParam});\n`
+        + cc.slice(lastReturn);
+    } else
       // The marker is there but not as executable code, which means the
       // transmit event does not fully translate and refuses to fire -- the
       // emitter comments its actions out. There is nothing to wire a transmit

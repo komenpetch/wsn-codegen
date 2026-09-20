@@ -48,7 +48,7 @@ const re = (p: RegExp) => (expr: string): RuleMatch | null => {
 // rule -- e.g. initialSrcAddr is guarded `∈ dom(...)` four times across both
 // corpora and `∉` never; envDestAddr and pktErrND are guarded `∉ dom(...)`
 // exactly once each (their own creation site) and `∈` never.
-type Kind = "GET" | "IMG" | "SET" | "SET_KEY" | "DOM" | "DOM_NOT" | "DEL" | "MEM" | "ARITH";
+type Kind = "GET" | "IMG" | "SET" | "SET_KEY" | "DOM" | "DOM_NOT" | "DEL" | "DEL_MAPLET" | "MEM" | "ARITH";
 const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
   // Context-sourced: a fixed per-packet identity, never written or removed.
   initialSrcAddr: {
@@ -189,15 +189,27 @@ const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
   // there is no genuine `∈ dom(envDestAddr)` clause anywhere to be evidence
   // for, so (per this catalog's own "no fabricated evidence" rule) no such
   // rule is generated.
+  // ⚠ MEM and DEL_MAPLET were MISSING here, and that is what stopped RTMCS
+  // receiving. `send_up` guards `pkt ↦ nxt ∈ envDestAddr` and then removes the
+  // same maplet -- both real clauses in the corpus, both found by grepping it
+  // rather than assumed. With no PKT rule claiming them they fell through to
+  // the app-layer catalog's generic pair rules, which read and erase the
+  // MACHINE MAP of that name -- the storage ENC7 replaced and nothing fills. So
+  // the guard was false on every frame that arrived: instrumented, 35 of 35
+  // rejections were that one clause and no earlier guard ever rejected.
   envDestAddr: {
     SET: ["RTMCS.send_down"],
     DOM_NOT: ["RTMCS.send_down"],
+    MEM: ["RTMCS.send_up"],
+    DEL_MAPLET: ["RTMCS.send_up"],
   },
-  // Same shape as envDestAddr: pktErrND is guarded `∉` exactly once, at its
-  // own creation site (create_rrer), and `∈` never.
+  // Same shape as envDestAddr: pktErrND is guarded `∉` at its own creation site
+  // (create_rrer), and carries one MEM clause of its own (`pkt ↦ eND ∈
+  // pktErrND`) that the same grep found.
   pktErrND: {
     SET: ["RTMCS.create_rrer"],
     DOM_NOT: ["RTMCS.create_rrer"],
+    MEM: ["RTMCS.invalidate_neighbour"],
   },
 };
 
@@ -395,6 +407,27 @@ export function packetRules(fields: PacketField[]): NetRule[] {
       id: `PKT-DEL-${f.ebName}`, tier: 3, evidence: ev.DEL,
       match: re(new RegExp(`^${F}\\s*≔\\s*\\{\\s*(?<p>\\w+)\\s*\\}\\s*⩤\\s*${F}$`)),
       emit: (m) => f.total ? "" : `${LIVE}.erase(${m.captures.p});`,
+    });
+    // `F ≔ F ∖ {p ↦ v}` -- removing one MAPLET, the write-side twin of MEM and
+    // a DIFFERENT clause shape from DEL's domain anti-restriction above. For a
+    // function, dropping the pair (p, v) when F(p) = v drops p from dom(F), so
+    // the value test is what makes it that removal rather than a blind erase.
+    //
+    // ⚠ Without this the clause fell through to the app-layer catalog's generic
+    // pair rule, which erases from the MACHINE MAP of that name -- the storage
+    // ENC7 replaced. It emitted something that compiled and did nothing, and the
+    // packet stayed in dom(envDestAddr) for ever, so `send_down`'s own
+    // `pkt ∉ dom(envDestAddr)` could never hold again and a received packet
+    // could never be forwarded.
+    if (ev.DEL_MAPLET) out.push({
+      id: `PKT-DEL-MAPLET-${f.ebName}`, tier: 3, evidence: ev.DEL_MAPLET,
+      match: re(new RegExp(`^${F}\\s*≔\\s*${F}\\s*∖\\s*\\{\\s*(?<p>\\w+)\\s*↦\\s*(?<v>\\w+)\\s*\\}$`)),
+      emit: (m) => {
+        const { p, v } = m.captures;
+        if (f.total) return "";     // a total function's domain cannot shrink
+        return `if (${LIVE}.count(${p}) > 0 && pktOf(${p}) != nullptr`
+          + ` && pktOf(${p})->${G}() == ${v}) ${LIVE}.erase(${p});`;
+      },
     });
     // `p ↦ v ∈ F` / `∉` -- a function's graph tested via maplet membership
     // (valid Event-B for a `PKT ⇸ T` variable, since a function IS its

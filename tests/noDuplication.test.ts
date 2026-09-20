@@ -119,11 +119,24 @@ describe("shared helpers have exactly one home", () => {
     // than appended. The test above asserts the pattern still matches its own
     // owner precisely so an exception list that has swallowed the signal
     // cannot masquerade as a passing guard.
-    const owners = ["actionShapes.ts", "aliasEncoding.ts", "encodingResolver.ts", "nestedMap.ts"];
+    // ⚠ FOURTH EXCEPTION, ARGUED RATHER THAN APPENDED. packetRules.ts's
+    // PKT-DEL-MAPLET matches `F ≔ F ∖ {p ↦ v}` -- character for character the
+    // shape nestedMap's NEST-DEL already matches, one nesting level flatter,
+    // and nestedMap is on this list for exactly that reason. packetRules.ts
+    // contains nothing BUT Rule objects with `match`/`emit`; it never asks
+    // "which events add to v", which is the question actionShapes owns.
+    const owners = ["actionShapes.ts", "aliasEncoding.ts", "encodingResolver.ts",
+                    "nestedMap.ts", "packetRules.ts"];
     const offenders = sources
       .filter((s) => !owners.includes(s.file) && selfUpdate.test(stripComments(s.text)))
       .map((s) => s.file);
     expect(offenders).toEqual([]);
+    // ⚠ AND THE LIST POLICES ITSELF. An exception whose file no longer writes
+    // the shape is a hole left open for nothing -- the next copy to land there
+    // would be waved through. Every name here must still earn its place.
+    for (const o of owners)
+      expect(selfUpdate.test(stripComments(sources.find((s) => s.file === o)!.text)),
+        `${o} is excepted but no longer writes this shape — drop it from owners`).toBe(true);
     // And the guard is live: it must still see the shape in its own owner,
     // which is exactly what the first version failed to do.
     expect(selfUpdate.test(stripComments(

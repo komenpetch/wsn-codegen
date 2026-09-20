@@ -205,6 +205,29 @@ describe("medium binding: guards that used to look translated", () => {
     expect(body).toContain("live_pktSeqNo.erase(pkt);");
     expect(body).toContain("live_pktSrc.erase(pkt);");
   });
+
+  // ⚠ THE SEND GOES LAST, AFTER EVERY ACTION. An Event-B event is atomic, so
+  // the frame must carry the state the event PRODUCES. The app-layer transmit
+  // structure this replaces sits at the TOP of the actions, and sending there
+  // put the packet on the air before the event had finished stamping it:
+  // RTMCS's send_down ends with `envDestAddr(pkt) ≔ nxt`, a chunk field, so
+  // every frame left carrying it at its default and the receiver's send_up
+  // declined 35 of 35 arrivals on exactly that comparison.
+  //
+  // MintRoute cannot show that symptom -- it writes only machine maps and live
+  // sets after the send -- which is precisely why the ordering needs pinning
+  // here rather than being left to a run that would not catch it.
+  it("transmits after the event's actions, not before them", () => {
+    const tx = cc.slice(cc.indexOf(`bool ${CLS}::${TX}(int cn`));
+    const body = tx.slice(0, tx.indexOf("\n}"));
+    const send = body.indexOf("mediumSend(");
+    expect(send).toBeGreaterThan(0);
+    // Nothing the event does may follow the send.
+    const after = body.slice(send).split("\n").slice(1)
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("//") && l !== "return true;");
+    expect(after).toEqual([]);
+  });
 });
 
 // Not a medium rule, but the defect the medium binding surfaced: an event that

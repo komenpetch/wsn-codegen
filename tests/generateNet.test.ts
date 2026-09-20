@@ -318,6 +318,27 @@ describe("generate (network branch) for RTMCS M6 (multiple set-typed parameter r
     expect(missed).toEqual([]);
   });
 
+  // ⚠ RTMCS IS THE ONLY MODEL THAT CAN ASSERT THIS, which is why it is here
+  // and not in mediumBinding.test.ts. A wire copy the model types over PKT is
+  // an ENC7 field, so its storage is the chunk -- and RTMCS types two that way
+  // (`vPktData ∈ PKT ⇸ ℤ`, `envDestAddr ∈ PKT ⇸ (ND ∪ {BROADCAST})`) while
+  // MintRoute types all five of its over `ran(channel)`.
+  //
+  // The arrival wrote a machine map of that name regardless: a SECOND storage,
+  // which send_up's own guards never consult. Measured before the fix: the
+  // delivery event declined every one of 35 arrivals; after it, send_up fires
+  // once per frame the radio decoded, on every node.
+  it("stages an ENC7 wire copy onto the chunk, not into a machine map", () => {
+    const arrival = cc.slice(cc.indexOf(`void ${cls}::handleLowerPacket(Packet *packet) {`));
+    const body = arrival.slice(0, arrival.indexOf("\n}"));
+    expect(body).toContain("ensurePkt(_pkt)->setVPktData(wire->getData());");
+    expect(body).toContain("live_vPktData.insert(_pkt);");
+    expect(body).not.toContain("vPktData[_pkt] =");
+    // And a wire copy that is NOT a field still goes to its map, so this did
+    // not simply redirect everything at the chunk.
+    expect(body).toContain("vPktSeqNo[_pkt] = wire->getSeqNum();");
+  });
+
   it("keeps each rewritten signature identical in the header and the .cc", () => {
     const rewritten = defs.filter((d) => d.params.includes("const std::set<Node>&"));
     expect(rewritten.length).toBeGreaterThan(1);   // the multi-fix case is real
