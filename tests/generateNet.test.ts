@@ -114,10 +114,30 @@ describe("generate (network branch) for MintRoute M4", () => {
   // what a member initialiser MEANS, so reporting it as untranslated was false.
   // ⚠ The same assignment inside an EVENT is still untranslated and still
   // counted -- a declaration cannot express a state change.
+  // 2026-09-20: 33 -> 30. A set LITERAL is a leaf of a set expression now
+  // (setExpr.ts), so the three `x ∈ ND ∖{Sink}` guards translate -- the
+  // set-difference gap this file's own history recorded. ⚠ MEASURED TO BE
+  // BEHAVIOUR-NEUTRAL, not assumed: all three live in `sensing`,
+  // `start_sensing` and `create_dataPkt`, which are the PEnv boundary --
+  // `not schedulable ... no binding for sd`, no `try_` method, zero call
+  // sites -- and the emitted `.h` is byte-identical across the change, which
+  // is what the next assertion pins.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(33);
+    expect(after).toBe(30);
+  });
+
+  // The guard on the claim above: the three newly translated bodies belong to
+  // events nothing can schedule, so translating them cannot move the flood.
+  // If a future change makes one of them schedulable, this fails and says so
+  // rather than letting PEnv traffic appear in a measured run unannounced.
+  it("and the three it gained are all PEnv events nothing schedules", () => {
+    const h = tree.find((f) => f.path.endsWith(".h"))!.content;
+    for (const ev of ["sensing", "start_sensing", "create_dataPkt"]) {
+      expect(h).toContain(`// not schedulable: ${ev} --`);
+      expect(h).not.toContain(`bool try_${ev}();`);
+    }
   });
 
   // ⚠ THE ORDER OF THE NET RULES IN netPipeline.ts IS BEHAVIOUR, NOT STYLE,

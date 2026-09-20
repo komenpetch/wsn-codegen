@@ -32,6 +32,7 @@ import type { EncodingForm } from "./types";
 export type SetExpr =
   | { k: "id"; name: string }
   | { k: "apply"; f: string; arg: string }          // f(k) -- a map-of-sets member
+  | { k: "lit"; items: string[] }                   // {BROADCAST}, {a, b} -- written out
   | { k: "op"; op: "∪" | "∩" | "∖"; l: SetExpr; r: SetExpr }
   | { k: "fn"; fn: "ran" | "dom"; e: SetExpr };
 
@@ -43,9 +44,15 @@ export type Elem =
 // Recursive descent over a tiny grammar. The set operators are left
 // associative and share one precedence level, as in Event-B; the models
 // parenthesise wherever it matters.
+// An element of a set literal: a name, or an integer. Event-B writes a negative
+// with U+2212 MINUS SIGN (`BROADCAST = −1`), which is not C++, so a numeric
+// element is normalised the way pairKeyed.ts already normalises one.
+const LIT_ITEM = /^(?:[A-Za-z_]\w*|(?:−|-)?\d+)$/;
+const asCpp = (s: string) => s.replace(/−/g, "-");
+
 function tokenize(s: string): string[] {
   const out: string[] = [];
-  const re = /\s*(ran|dom|[A-Za-z_]\w*|[()∪∩∖])/gy;
+  const re = /\s*(ran|dom|[A-Za-z_]\w*|(?:−|-)?\d+|[(){},∪∩∖])/gy;
   let i = 0;
   while (i < s.length) {
     re.lastIndex = i;
@@ -71,6 +78,25 @@ export function parseSetExpr(src: string): SetExpr | null {
       if (!e || t[i] !== ")") return null;
       i++;
       return e;
+    }
+    // A set written out: `{BROADCAST}` in `nxt ∈ ND ∪ {BROADCAST}` (RTMCS
+    // send_down, the guard that gated its whole transmit path). Only elements
+    // that are a name or an integer are accepted; anything else refuses the
+    // whole expression rather than guessing. A PAIR literal never even reaches
+    // here -- `↦` is not a token, so tokenize() gives up on the string first --
+    // which is the outcome we want, since a pair set has no equality test.
+    if (tok === "{") {
+      i++;
+      const items: string[] = [];
+      for (;;) {
+        const el = t[i];
+        if (el === undefined || !LIT_ITEM.test(el)) return null;
+        items.push(asCpp(el));
+        i++;
+        if (t[i] === ",") { i++; continue; }
+        if (t[i] === "}") { i++; return { k: "lit", items }; }
+        return null;
+      }
     }
     if (tok === "ran" || tok === "dom") {
       i++;
@@ -152,6 +178,18 @@ export function memberTest(elem: Elem, e: SetExpr, enc: Enc, carriers: Carriers 
       // `x ∈ f(k)` -- membership in the set stored under one key.
       if (elem.kind !== "scalar") return null;
       return `(${e.f}.count(${e.arg}) > 0 && ${e.f}.at(${e.arg}).count(${elem.x}) > 0)`;
+    }
+
+    case "lit": {
+      // The model wrote the members out, so there is no container to look in:
+      // membership IS equality against each of them.
+      // `items` is never empty: the parser refuses `{}` rather than building
+      // one, so there is no length check here to read as coverage.
+      if (elem.kind !== "scalar") return null;
+      const x = elem.x;
+      return e.items.length === 1
+        ? `${x} == ${e.items[0]}`
+        : `(${e.items.map((v) => `${x} == ${v}`).join(" || ")})`;
     }
 
     case "op": {
