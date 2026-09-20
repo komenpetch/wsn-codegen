@@ -72,8 +72,26 @@ const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
   //
   // ⚠ And the dead map survived `stripDeadPacketFieldMaps` because these very
   // guards referenced it -- the stale read is what kept its own storage alive.
+  // ⚠ RTMCS DECLARES THIS NAME AS SOMETHING ELSE, and both are packet
+  // attributes. In the pattern it is a context CONSTANT, total, read only as a
+  // relational image; in RTMCS it is a VARIABLE, partial, written and deleted by
+  // events -- `finalDestAddr ∈ xmittedPkts ⇸ ND`. The kinds below are per
+  // PROJECT and the evidence check verifies each cited event against its own
+  // project's corpus, so the two coexist without either being read as the other.
+  //
+  // Every RTMCS entry here was read off the corpus, not assumed: `npm run event
+  // -- RTMCS M6 --all --flat` lists 22 clauses on this variable across 14
+  // events. Without them the clauses fell to the app-layer catalog's generic
+  // rules, which read the MACHINE MAP that ENC7 replaced -- and that map is
+  // written only on the ORIGINATING node, so `receive_rreqPkt` was called 2048
+  // times and rejected all 2048 on `pkt ∈ dom(finalDestAddr)`.
   finalDestAddr: {
     IMG: ["AppLayer.creatingControlPacket", "AppLayer.creatingDataPacket"],
+    GET: ["RTMCS.dest_recv_rreqPkt", "RTMCS.final_tx_pkt", "RTMCS.receive_rreqPkt"],
+    SET: ["RTMCS.create_rreq", "RTMCS.create_rrep", "RTMCS.create_dataPkt"],
+    DOM: ["RTMCS.receive_rreqPkt", "RTMCS.clear_pkt", "RTMCS.dest_recv_rreqPkt"],
+    DEL: ["RTMCS.clear_pkt"],
+    MEM: ["RTMCS.create_rreq", "RTMCS.create_rrep"],
   },
   // The core attribute family every case study carries (pM1's ENC7 chunk
   // fields): established by the create_* events, read back and handed off
@@ -252,8 +270,15 @@ export function packetRules(fields: PacketField[]): NetRule[] {
     // ENC7 no longer maintains).
     if (ev.GET) out.push({
       id: `PKT-GET-${f.ebName}`, tier: 1, evidence: ev.GET,
-      match: re(new RegExp(`^(?<y>\\w+)\\s*=\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)$`)),
-      emit: (m) => `${m.captures.y} == pktOf(${m.captures.p})->${G}()`,
+      // ⚠ BOTH OPERATORS. `v ≠ F(p)` is the same read with the opposite test,
+      // and matching only `=` left it to be dropped as UNTRANSLATED -- which in
+      // RTMCS's four receive events is the clause saying "I am not this
+      // packet's final destination", i.e. the whole reason a receiver forwards
+      // rather than consumes. Dropping it does not merely lose a guard: it
+      // makes the forwarding event and its destination twin both willing to
+      // fire on the same packet.
+      match: re(new RegExp(`^(?<y>\\w+)\\s*(?<op>=|≠)\\s*${F}\\(\\s*(?<p>\\w+)\\s*\\)$`)),
+      emit: (m) => `${m.captures.y} ${m.captures.op === "=" ? "==" : "!="} pktOf(${m.captures.p})->${G}()`,
     });
     // `y = ran({p} ◁ F)`: GET's read, written as a relational image. The two
     // are the same clause -- `F[{p}] = ran({p} ◁ F)`, and for a function that

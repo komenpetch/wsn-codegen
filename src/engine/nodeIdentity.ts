@@ -1,6 +1,7 @@
 import { INITIALISATION } from "./types";
 import type { EncodedMachine, GeneratedTree, RawContext } from "./types";
 import { mustFind } from "./emitted";
+import { subsetClosure } from "./text";
 
 // The node-level identity binding: bind the model's carrier set to the
 // simulation's actual nodes.
@@ -53,16 +54,7 @@ import { mustFind } from "./emitted";
 // initialisation is node-keyed at all -- and that second caller had no notion
 // of it, so it specialised `netSeqNo ≔ PKT × {0}` as though PKT were ND.
 export function nodeSetsOf(contexts: readonly RawContext[]): Set<string> {
-  const axioms = contexts.flatMap((c) => c.axioms.map((a) => a.text.trim()));
-  const nodeSets = new Set(["ND"]);
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const a of axioms) {
-      const m = /^(\w+)\s*⊆\s*(\w+)$/.exec(a);
-      if (m && nodeSets.has(m[2]) && !nodeSets.has(m[1])) { nodeSets.add(m[1]); grew = true; }
-    }
-  }
-  return nodeSets;
+  return subsetClosure("ND", contexts.flatMap((c) => c.axioms.map((a) => a.text)));
 }
 
 export function sinkConstantOf(contexts: readonly RawContext[]): string | null {

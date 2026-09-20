@@ -51,3 +51,27 @@ export const OVERRIDE_OR_UNION_GLYPHS = OVERRIDE_GLYPHS + "∪";
 // (scheduler.ts unions CARRIER_ALIAS's keys for this reason).
 export const carrierSetsOf = (...contextOwners: { contexts: { sets: string[] }[] }[]): Set<string> =>
   new Set(contextOwners.flatMap((o) => o.contexts.flatMap((c) => c.sets)));
+
+/**
+ * Every set that lives inside `root`, to a FIXPOINT: `root` itself, plus
+ * anything a `S ⊆ root` predicate places within it, plus anything inside that,
+ * so `A ⊆ B ⊆ root` counts whatever order the predicates appear in.
+ *
+ * ⚠ TWO QUESTIONS ASK THIS AND THEY DIFFER IN BOTH ARGUMENTS, which is why it
+ * takes them rather than hardcoding either. `nodeSetsOf` asks it of ND over the
+ * CONTEXT axioms; `packetModel` asks it of PKT over the context axioms AND the
+ * machine invariants -- because a subset of the packet carrier is typically a
+ * VARIABLE (`xmittedPkts ⊆ PKT`), so its declaration is an invariant and a
+ * context-only version cannot see it.
+ */
+export function subsetClosure(root: string, predicates: readonly string[]): Set<string> {
+  const inside = new Set([root]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const p of predicates) {
+      const m = /^(\w+)\s*⊆\s*(\w+)$/.exec(p.trim());
+      if (m && inside.has(m[2]) && !inside.has(m[1])) { inside.add(m[1]); grew = true; }
+    }
+  }
+  return inside;
+}

@@ -72,7 +72,7 @@ export interface MediumPlan {
   carried: { setter: string; getter: string }[];   // fields the model never restores
   // Chunk fields the DELIVERY event does not write back, which the arrival
   // must therefore copy off the wire itself. See deserialiseFieldsOf.
-  unrestored: { setter: string; getter: string }[];
+  unrestored: { setter: string; getter: string; live: string }[];
   args: string[];
   tags: string[];                 // packet-type leaves, one transmit method each
   realisedByMedium: Set<string>;
@@ -526,7 +526,15 @@ function arrivalFn(plan: MediumPlan, cls: string): string {
       "    // per-hop fields that change between one reception and the next.",
       "    {",
       "        PPkt *_local = ensurePkt(_pkt);",
-      ...plan.unrestored.map((u) => `        _local->${u.setter}(wire->${u.getter}());`),
+      // ⚠ AND THE WRITE PUTS THE PACKET IN THAT FIELD'S DOMAIN. Copying the
+      // value across without marking it left the receiver holding the value on
+      // its chunk while the model still said `pkt ∉ dom(F)` -- which is what
+      // `finalDestAddr` did: the packet's own destination reached every node and
+      // `receive_rreqPkt` rejected all 2048 calls on the domain test alone.
+      ...plan.unrestored.flatMap((u) => [
+        `        _local->${u.setter}(wire->${u.getter}());`,
+        ...(u.live === "" ? [] : [`        ${u.live}.insert(_pkt);`]),
+      ]),
       "    }",
     ]),
     "    // The medium state the delivery event requires. In the global model the",

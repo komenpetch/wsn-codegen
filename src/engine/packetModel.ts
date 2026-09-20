@@ -3,7 +3,7 @@ import type { TypeLattice } from "./packetTypes";
 import { packetTypeLattice } from "./packetTypes";
 import { flatten } from "./flattener";
 import { resolveEncodings } from "./encodingResolver";
-import { cap, capTag } from "./text";
+import { cap, capTag, subsetClosure } from "./text";
 
 export interface PacketField { name: string; ebName: string; cppType: "int" | "Node"; source: "context" | "variable"; total: boolean; }
 
@@ -80,7 +80,24 @@ export interface PacketModel { fields: PacketField[]; leaves: PacketLeaf[]; latt
 // function's domain is the whole carrier (`pkt ∈ dom(F)` is vacuously true
 // once the chunk exists); a partial one's is not (`∈ dom(F)` is a real
 // "has this attribute been set yet" precondition).
-const PKT_DOMAIN = /^\s*\w+\s*∈\s*PKT\s*(→|⇸)/;
+// ⚠ PKT *OR A SUBSET OF IT*, and the subset case is not academic. RTMCS types
+// `finalDestAddr ∈ xmittedPkts ⇸ ND` -- the packet's own destination, which in
+// any real protocol is a header field -- over `xmittedPkts ⊆ PKT` rather than
+// over PKT. Requiring the domain to be spelled literally `PKT` left that one
+// variable as a machine map, so it stayed on the ORIGINATING node and every
+// receiver's copy was empty. Measured: `receive_rreqPkt` was called 2048 times
+// and rejected all 2048 on `finalDestAddr.count(pkt) > 0`, with no other guard
+// ever rejecting. That is the 2026-09-07 global-model/per-node finding: a
+// per-PACKET attribute has to travel WITH the packet.
+//
+// Bounded, measured before the change rather than hoped: across all three
+// generation targets exactly ONE variable is typed over a PKT subset -- this
+// one. MintRoute declares six such subsets and types nothing over them, and the
+// app-layer project declares one and types nothing over it.
+const pktDomain = (pktSets: ReadonlySet<string>) => (text: string) => {
+  const m = /^\s*(\w+)\s*∈\s*(\w+)\s*(→|⇸)/.exec(text);
+  return m && pktSets.has(m[2]) ? { name: m[1], total: m[3] === "→" } : null;
+};
 
 // A field's C++ type: a node-valued attribute is a Node, everything else an int.
 const nodeValued = (inv: string) => /(?:→|⇸)\s*ND\b/.test(inv);
@@ -102,15 +119,23 @@ export function packetModel(raw: RawModel, machine: EncodedMachine, lattice: Typ
     fields.push({ name: FIELD_NAME[ebName] ?? ebName, ebName, cppType: nodeValued(inv) ? "Node" : "int", source, total });
   };
 
+  // A subset of the packet carrier is normally a VARIABLE, so its declaration
+  // is a machine invariant; the context axioms are searched too because a
+  // context is free to declare one.
+  const isPktDomain = pktDomain(subsetClosure("PKT", [
+    ...raw.contexts.flatMap((c) => c.axioms.map((a) => a.text)),
+    ...machine.variableTypes.values(),
+  ]));
+
   for (const c of raw.contexts)
     for (const a of c.axioms) {
-      const m = PKT_DOMAIN.exec(a.text);
-      if (m) add(a.text.split(/\s*∈\s*/)[0].trim(), a.text, "context", m[1] === "→");
+      const m = isPktDomain(a.text);
+      if (m) add(m.name, a.text, "context", m.total);
     }
 
   for (const [id, inv] of machine.variableTypes) {
-    const m = PKT_DOMAIN.exec(inv);
-    if (m) add(id, inv, "variable", m[1] === "→");
+    const m = isPktDomain(inv);
+    if (m) add(id, inv, "variable", m.total);
   }
 
   const leaves: PacketLeaf[] = [];
