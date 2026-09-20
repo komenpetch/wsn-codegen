@@ -353,12 +353,30 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
     // module at setup with "unknown parameter" -- so the two are emitted
     // together, from the same derivation, rather than left to agree by hand.
     if (f.path.endsWith(".ned") && openSubsets.length) {
+      // ⚠ SCOPED TO THE SIMPLE MODULE, not to the first `parameters:` in the
+      // file. The .cc reads `par(...)` on THIS class, so the declaration has
+      // to sit on the type that names it. A network-layer .ned holds six more
+      // matches — the `<Name>NetworkLayer` wrapper and its four submodules,
+      // whose deeper indentation still CONTAINS this anchor as a substring —
+      // and a declaration landing on any of them is a parameter the module
+      // never sees, i.e. the "unknown parameter" refusal at setup that pairing
+      // the two emissions exists to prevent. It found the right section only
+      // because `simple` happens to be emitted before the wrapper, and
+      // `mustFind` cannot tell one match from six.
+      const decl = mustFind(f.content, `simple ${cls}`, "bindNodeIdentity (NED module)");
       const anchor = "    parameters:";
-      mustFind(f.content, anchor, "bindNodeIdentity (NED parameters)");
+      const at = f.content.indexOf(anchor, decl);
+      if (at < 0)
+        throw new Error(`bindNodeIdentity: \`simple ${cls}\` in the emitted .ned has no `
+          + `"${anchor.trim()}" section to declare the node-subset parameters in.`);
       const decls = openSubsets.map((c) =>
         `        bool ${membershipParam(c)} = default(false);`
         + `   // is this node in ${c}? (${c} ⊆ ND — node identity is bound at runtime)`);
-      return { ...f, content: f.content.replace(anchor, [anchor, ...decls].join("\n")) };
+      return {
+        ...f,
+        content: f.content.slice(0, at) + [anchor, ...decls].join("\n")
+          + f.content.slice(at + anchor.length),
+      };
     }
     return f;
   });

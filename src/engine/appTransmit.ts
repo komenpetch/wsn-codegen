@@ -33,7 +33,7 @@
 import type { GeneratedTree } from "./types";
 import type { PacketModel, PacketField } from "./packetModel";
 import { broadcastMethodOf, getterOf, setterOf, DELIVERED_BY } from "./packetModel";
-import { headerOf, implOf } from "./emitted";
+import { headerOf, implOf, mustFind } from "./emitted";
 import { esc } from "./text";
 import { emitLocalIdFor, identityMembers } from "./mediumBinding";
 import type { PacketIdentity } from "./mediumBinding";
@@ -134,8 +134,25 @@ const defs = (cls: string, tags: string[], senderSetter: string | null): string 
 // method's closing `return true;`, so the event's GUARDS and its accounting are
 // untouched -- only what is put on the wire changes.
 function rewriteSendDown(cc: string, once: boolean, drain: readonly string[]): string {
-  const at = cc.indexOf(PLACEHOLDER_START);
-  if (at < 0) return cc;
+  // ⚠ A PRECONDITION, NOT AN OPTIONAL REWRITE — and the closing anchor two
+  // lines below was already treated that way while this one gave up silently.
+  //
+  // codeEmitter writes this marker on its `hasSendDown` branch, i.e. exactly
+  // when the model has the CommPattern transmit, which is the only case in
+  // which this pass has anything to do. Absent, TWO things go wrong at once
+  // and neither is visible: the module keeps SensorApp's PLACEHOLDER payload
+  // (a ByteCountChunk addressed to the sink) in place of the packet the model
+  // built, AND the sender-side drain below is never emitted — so `sentDown`
+  // grows one entry per transmission and BOTH of pM1's cleanup events, which
+  // guard `pkt ∉ ran(sentDown)`, die permanently for every packet this node
+  // has ever sent. Measured before the drain existed: 765 residual entries
+  // against 763 transmissions. It compiles, links and runs its full sixty
+  // seconds either way.
+  //
+  // The network branch already refuses on this same marker — see
+  // mediumBinding, "the shell's shape changed". This is the application's
+  // half of that, and the two now agree.
+  const at = mustFind(cc, PLACEHOLDER_START, "appTransmit (send_down transmit block)");
   const end = cc.indexOf("\n    return true;\n}", at);
   if (end < 0)
     throw new Error("appTransmit: the SensorApp transmit block has no closing `return true;`.");
