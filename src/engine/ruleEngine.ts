@@ -15,12 +15,64 @@ export function splitConjuncts(expr: string): string[] {
 
 const BUILTIN_TYPES = new Set(["ℕ", "ℕ1", "ℤ", "BOOL", "𝔹", "PKT", "ND"]);
 
-export function isTypingPredicate(expr: string, nonVars: Set<string>): boolean {
+/**
+ * Is this clause a TYPE declaration — carrying no information beyond saying
+ * what sort of thing the parameter is — so that dropping it loses nothing?
+ *
+ * ⚠ A DROPPED GUARD IS SILENT. It never reaches `// UNTRANSLATED`, so an event
+ * whose precondition is weakened this way looks fully translated and fires in
+ * states the model forbids. That is what happened to `dest_recv_pkt`:
+ *
+ *     when nb ∈ Dests          (the pattern's own destination test)
+ *
+ * `Dests` is a context name, so it counted as a type and the clause vanished.
+ * Measured consequence: with `Dests` EMPTY — where `nb ∈ Dests` is
+ * unsatisfiable and the event must fire ZERO times — `dest_recv_pkt` fired 2 on
+ * sensor1, and with `Dests = {sink}` a NON-destination (sensor4) fired it too.
+ * Non-destinations were consuming packets. It stayed invisible because
+ * `fwdr_receive_pkt` holds the complementary guard `nb ∉ Dests` (which survives,
+ * `∉` not being matched here) and wins the race for `recvBuff`; the hole only
+ * shows when fwdr is blocked for some other reason.
+ *
+ * ── The discriminator is in the AXIOMS, not in a name list ──
+ *
+ * A context name is a TYPE when the context DEFINES it as one, and a SUBSET
+ * when the context restricts it:
+ *
+ *     WSN = ND ↔ ND              definition  → `l ∈ WSN` is typing
+ *     randomFn = minR‥maxR       definition  → left as typing (see below)
+ *     Dests ⊆ ND                 SUBSET      → `nb ∈ Dests` is a restriction
+ *     Destination ⊆ ND           SUBSET      → a restriction
+ *     Actuators ⊆ Destination    SUBSET      → a restriction
+ *
+ * `subsets` carries exactly the `N ⊆ S` names, derived by the caller from the
+ * context axioms. BUILTIN_TYPES still wins outright, so `PKT` and `ND` keep
+ * their existing treatment and this cannot disturb them.
+ *
+ * ⚠ ONLY `∈`, NOT `⊆`, and that is deliberate rather than cautious. A `⊆`
+ * clause on a parameter is how Event-B declares a SET-VALUED parameter's type,
+ * and the corpus's only instance is exactly that (`nbs ⊆ ND` in
+ * find_neighbours). Restoring it would gain nothing and, there being no `⊆`
+ * rule, would turn that event into an untranslated one that refuses to fire.
+ *
+ * ⚠ AND THE SAME TRAP IS WHY THIS IS NARROW. Every clause this stops dropping
+ * must have a rule, or it becomes `// UNTRANSLATED` and codeEmitter makes the
+ * event REFUSE. Checked against the catalog before the change: the builtins
+ * `p ∈ ℤ` / `p ∈ ℕ` have NO rule, so widening this to "anything that is not a
+ * carrier set" would have switched off `create_rreq`, `add_bwdRouteEntry`,
+ * `start_tx_rrep` and eleven more — the RREP path included.
+ */
+export function isTypingPredicate(
+  expr: string,
+  nonVars: Set<string>,
+  subsets: ReadonlySet<string> = new Set(),
+): boolean {
   const isType = (s: string) => nonVars.has(s) || BUILTIN_TYPES.has(s);
   // x ∈ T / x ⊆ T (bare RHS) — but NOT x ∈ A ∖ B (CMP1), whose RHS contains ∖.
   // \S+ (not \w+): the built-in carriers ℤ / ℕ / 𝔹 are outside \w.
-  const m = /^\w+\s*[∈⊆]\s*(\S+)$/.exec(expr);
-  if (m && isType(m[1])) return true;
+  const m = /^\w+\s*([∈⊆])\s*(\S+)$/.exec(expr);
+  if (m && m[1] === "∈" && subsets.has(m[2]) && !BUILTIN_TYPES.has(m[2])) return false;
+  if (m && isType(m[2])) return true;
   // nbrs ∈ {n∣ n ∈ ℙ(ND)} — set-builder typing, drop.
   if (/^\w+\s*∈\s*\{.*∣.*\}$/.test(expr)) return true;
   return false;
@@ -53,11 +105,17 @@ export interface TranslatedEvent {
 // shipped tool pays nothing.
 export const ruleClock = { on: false, ms: 0 };
 
-export function translateEvent(ev: FlatEvent, model: EncodedMachine): TranslatedEvent {
+export function translateEvent(
+  ev: FlatEvent,
+  model: EncodedMachine,
+  // Context names declared `N ⊆ S` — see isTypingPredicate. Defaulted so the
+  // existing unit tests, which have no contexts to read, keep their meaning.
+  subsets: ReadonlySet<string> = new Set(),
+): TranslatedEvent {
   if (ruleClock.on) {
     ruleClock.on = false;                       // avoid re-entry double counting
     const t = performance.now();
-    try { return translateEvent(ev, model); }
+    try { return translateEvent(ev, model, subsets); }
     finally { ruleClock.ms += performance.now() - t; ruleClock.on = true; }
   }
   const enc = (id: string) => model.encodings.get(id);
@@ -77,7 +135,7 @@ export function translateEvent(ev: FlatEvent, model: EncodedMachine): Translated
   const untranslatedGuards: string[] = [];
   for (const g of ev.guards)
     for (const clause of splitConjuncts(g)) {
-      if (isTypingPredicate(clause, nonVars)) continue;
+      if (isTypingPredicate(clause, nonVars, subsets)) continue;
       const cpp = matchWhole(clause, enc);
       if (cpp) guards.push(cpp);
       else untranslatedGuards.push(clause);

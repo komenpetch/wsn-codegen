@@ -46,6 +46,20 @@ const BASELINE = resolve(HERE, "__baseline__/applayer-v4.json");
 // and blank runs dropped: 131 / 387 / 30 content lines, all identical. The
 // paper's coverage figures are unaffected and were re-run to confirm.
 //
+// DELIBERATE BASELINE CHANGE, 2026-09-20 -- the fourth, and it RESTORES a guard
+// that was being dropped. `dest_recv_pkt` is guarded `nb ∈ Dests` in the model,
+// and `Dests` being a context name made the clause look like a TYPE, so it was
+// dropped with no `// UNTRANSLATED` marker and the event's precondition was
+// silently weakened. Measured before the fix: with `Dests` EMPTY -- where the
+// guard is unsatisfiable and the event must fire ZERO times -- it fired 2 on
+// sensor1, and with `Dests = {sink}` a NON-destination fired it too. The
+// discriminator now comes from the axioms (`Dests ⊆ ND` is a SUBSET, so
+// membership restricts; `WSN = ND ↔ ND` defines a type, so membership types).
+// Exactly two lines move, both inside `dest_recv_pkt`, and the paper's coverage
+// figures were re-run before re-recording: 111/165 = 67.3 % and 156/165 =
+// 94.5 %, both unchanged -- the restored guard lives in an Event-B event method
+// that has no SensorApp counterpart, so it cannot enter the LCS.
+//
 // This guard is also now the only thing standing between an engine change and
 // the paper's similarity figures, so a failure here is a question ("what did I
 // change, and did I mean to?"), never a prompt to delete the file and re-record.

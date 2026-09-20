@@ -508,6 +508,34 @@ describe("v5 = SensorApp shell + PPkt from another project", () => {
   // an INPUT then — handed in through `--ppkt-from`, so the user supplied two
   // projects and the generator knew nothing about the pattern it embodies. It
   // now ships inside the tool, and one project is enough.
+  // ⚠ THE GUARD THAT DISTINGUISHES A DESTINATION FROM A FORWARDER WAS BEING
+  // DROPPED, silently: `dest_recv_pkt` guards `nb ∈ Dests`, and `Dests` being a
+  // context name made the clause look like a TYPE, so it vanished with no
+  // `// UNTRANSLATED` marker. Measured before the fix — with `Dests` EMPTY, where
+  // the guard is unsatisfiable and the event must fire ZERO times, it fired 2 on
+  // sensor1; with `Dests = {sink}` a NON-destination fired it too.
+  //
+  // Asserted on the EMITTED module rather than only on isTypingPredicate,
+  // because the unit test cannot see whether the clause survives the whole
+  // pipeline — and the byte freeze, which also covers it, fails as an opaque
+  // blob rather than naming what went missing.
+  it("keeps dest_recv_pkt's `nb ∈ Dests`, the destination test", () => {
+    const cc = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
+      .find((f) => f.path.endsWith(".cc"))!.content;
+    const body = /bool \w+::dest_recv_pkt\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(cc);
+    expect(body, "dest_recv_pkt must be emitted").not.toBeNull();
+    expect(body![1]).toContain("Dests.count(nb) > 0");
+  });
+
+  // And the consequence, which is the honest half: nothing populates `Dests`,
+  // so with the guard restored the event genuinely cannot fire — and the module
+  // now SAYS so instead of firing it wrongly.
+  it("and then reports dest_recv_pkt as unreachable, because nothing fills Dests", () => {
+    const h = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
+      .find((f) => f.path.endsWith(".h"))!.content;
+    expect(h).toContain("not scheduled: dest_recv_pkt -- nothing that runs ever fills `Dests`");
+  });
+
   it("needs no second project: the bundled extension is the default", () => {
     const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
     const h = t.find((f) => f.path.endsWith(".h"))!.content;

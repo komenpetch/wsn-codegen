@@ -26,6 +26,27 @@ function typeAliases(contexts: RawContext[]): TypeAliases {
   return out;
 }
 
+/**
+ * Context names the axioms declare as a SUBSET (`N ⊆ S`) rather than define as
+ * a type (`N = …`).
+ *
+ * The sibling of typeAliases above, and read from the same place for the same
+ * reason: what a name MEANS is stated by the context, not by a list kept here.
+ * `Dests ⊆ ND`, `Destination ⊆ ND`, `Actuators ⊆ Destination` are subsets, so
+ * membership in one RESTRICTS; `WSN = ND ↔ ND` defines a type, so membership in
+ * it merely types. ruleEngine's isTypingPredicate needs the difference — see
+ * the account there of the guard this silently dropped.
+ */
+function subsetConstants(contexts: RawContext[]): Set<string> {
+  const out = new Set<string>();
+  for (const c of contexts)
+    for (const a of c.axioms) {
+      const m = /^\s*(\w+)\s*⊆\s*\S+\s*$/.exec(a.text);
+      if (m) out.add(m[1]);
+    }
+  return out;
+}
+
 // The C++ container for an Event-B type expression. A relation is a SET OF
 // PAIRS, not a map: `A ↔ B` may relate one `a` to several `b`, which a
 // std::map cannot hold. It also gives the emitted code a working `==`, which
@@ -326,6 +347,10 @@ export function emit(
   // Types the contexts NAME (`WSN = ND ↔ ND`), so a parameter declared with the
   // bare name resolves to its container rather than falling back to `int`.
   const aliases = typeAliases(contexts);
+  // And the names they declare as SUBSETS (`Dests ⊆ ND`), whose membership is a
+  // restriction rather than a type — without this the clause is dropped with no
+  // marker and the event's precondition is silently weakened.
+  const subsets = subsetConstants(contexts);
   // ⚠ A SCALAR MEMBER WITH NO INITIALISER IS UNDEFINED BEHAVIOUR, and this
   // emitted one: `bool bcastRouTimer;` was read by three guards before anything
   // assigned it. It happened to read false, which is why `create_routePkt`
@@ -372,7 +397,7 @@ export function emit(
   const defs: string[] = [];
   for (const raw of model.events) {
     if (raw.label === "INITIALISATION") continue;
-    const t = translateEvent(raw, model);
+    const t = translateEvent(raw, model, subsets);
     // The CommPattern pair is emitted under its SensorApp name (thesis S4/S5);
     // the Event-B label is kept as provenance so the model stays traceable.
     const inetName = raw.label === "send_down" ? "sendSensorPacket"
@@ -464,7 +489,7 @@ export function emit(
   }
 
   const init = model.events.find((e) => e.label === INITIALISATION);
-  const tInit = init ? translateEvent(init, model) : undefined;
+  const tInit = init ? translateEvent(init, model, subsets) : undefined;
   const ctorBody = tInit
     ? [
         ...tInit.actions.map((a) => `    ${a}`),
