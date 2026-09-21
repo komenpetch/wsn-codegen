@@ -53,10 +53,22 @@ describe("packetTypeLattice", () => {
     expect(lat.leaves).toEqual(["DATA", "CONTROL"]);
   });
 
-  it("reads the app-layer chain's own split, now that it has one", () => {
+  // ⚠ AND THE REAL PROJECT IS STILL FLAT, WHICH THIS PINS.
+  //
+  // For a few hours on 2026-09-21 it was not: `partition(CONTROL, {ROUTE},
+  // {BEACON})` was added to the advisor's own `C1.buc` so structure 3 would
+  // flood two control subtypes. That was the wrong place — the input is the
+  // advisor's and is not edited — and it was reverted. Structure 3 gets those
+  // leaves from the TOOL now, via the bundled `C2_ctl.buc` default, so the
+  // uploaded chain reads exactly as the advisor wrote it.
+  //
+  // This asserts the INPUT, not the generated module: the split the tool adds
+  // is not visible here and must not be, or the revert could silently undo
+  // itself again.
+  it("leaves the uploaded app-layer chain unsplit — the default comes from the tool", () => {
     const lat = packetTypeLattice(load("Update_wsn/C0_project").contexts)!;
-    expect(lat.children.get("CONTROL")).toEqual(["ROUTE", "BEACON"]);
-    expect(lat.leaves).toEqual(["DATA", "ROUTE", "BEACON"]);
+    expect(lat.children.get("CONTROL")).toBeUndefined();
+    expect(lat.leaves).toEqual(["DATA", "CONTROL"]);
   });
 
   it("returns null when no partition axiom exists", () => {

@@ -99,15 +99,26 @@ describe("per-leaf creating events are derived from the project's own split", ()
     // ✅ Nothing is invented: no packet subtype appears that the project does
     // not declare, and MintRoute's own M1 calls this event `create_controlPkt`
     // before its C3 splits CONTROL at all.
+    // ⚠ THE CONTROL SET HERE IS `FLOOD`, AND IT USED TO BE `CONTROL`. Since
+    // 2026-09-21 the extension bundles a DEFAULT split — `partition(CONTROL,
+    // {ROUTE}, {BEACON})` — for a project whose control set is CONTROL and
+    // which does not split it, which is exactly the shape this test used to
+    // build. The rule below is unchanged and still reachable: the default
+    // declares a split of CONTROL specifically, so a project whose control set
+    // is named otherwise correctly declines it and lands on this branch.
+    //
+    // ✅ It is a better witness for that reason. It exercises the single-target
+    // rule AND the "read the set off the guard rather than naming it" property
+    // in one go, so a regression in either shows up here.
     const x = uM4Of([
-      machine("pM3", "CONTROL"),
-      ctx("C1", ["partition(TYPE, CONTROL, {DATA})"], ["DATA", "CONTROL", "type"]),
+      machine("pM3", "FLOOD"),
+      ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"]),
     ]);
-    expect(x).toContain('label="create_controlPkt"');
-    expect(x).toContain('predicate="type(pkt) ∈ CONTROL"');
-    expect(x).not.toContain('predicate="type(pkt) = CONTROL"');
+    expect(x).toContain('label="create_floodPkt"');
+    expect(x).toContain('predicate="type(pkt) ∈ FLOOD"');
+    expect(x).not.toContain('predicate="type(pkt) = FLOOD"');
     // And exactly one, not one per packet type in the lattice.
-    expect(x.match(/label="create_\w+"/g)).toEqual(['label="create_controlPkt"']);
+    expect(x.match(/label="create_\w+"/g)).toEqual(['label="create_floodPkt"']);
   });
 
   it("still derives one per leaf when the project DOES split, and pins by equality", () => {

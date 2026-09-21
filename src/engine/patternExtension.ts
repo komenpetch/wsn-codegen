@@ -7,6 +7,7 @@ import { parseModel } from "./parser";
 import { packetTypeLattice } from "./packetTypes";
 import uM4 from "../assets/pattern-extension/uM4.bum?raw";
 import pM5 from "../assets/pattern-extension/pM5.bum?raw";
+import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
 
 // The pattern extension — PPkt and PRouteTable — SHIPPED INSIDE THE TOOL.
 //
@@ -19,6 +20,8 @@ import pM5 from "../assets/pattern-extension/pM5.bum?raw";
 // The two files are real Rodin sources rather than strings embedded here, so
 // they open in Rodin for proof and review, and there is one copy of each.
 //
+//   C2_ctl.buc   Tier A — the DEFAULT control split, `partition(CONTROL,
+//                {ROUTE}, {BEACON})`, bundled only when the project has none
 //   uM4.bum      Tier A — the per-packet sequence number, plus the per-leaf
 //                creating events DERIVED into it (see deriveControlEvents)
 //   pM5.bum      Tier B — the neighbour table and its pair-keyed metrics
@@ -28,17 +31,53 @@ import pM5 from "../assets/pattern-extension/pM5.bum?raw";
 // bundled — bundling a copy of the base chain as well would make the tool carry
 // a second, drifting copy of the user's own model.
 //
-// ⚠ AND THE CONTROL SPLIT IS NOT BUNDLED, which is the whole of option A.
-// There used to be a third file declaring `partition(CONTROL, {ROUTE},
-// {BEACON})` with two hardcoded creating events beside it. That is MintRoute's
-// split: RTMCS declares `partition(CONTROL, {RREQ}, {RREP}, {RRER})` and the
-// pattern itself declares no split at all. Two partitions of one set are
-// CONTRADICTORY in Event-B rather than additive, so a bundled split does not
-// merely fail to serve those models — it makes them inconsistent. Which control
-// subtypes exist is "how nodes reach each other", the per-case-study side of
-// the project's own scope rule. What IS common is the rule, and that is what
-// the tool now applies.
+// ⚠ THE CONTROL SPLIT IS A DEFAULT, NOT A FIXTURE — AND THIS REVISES OPTION A
+// WITHOUT DISCARDING IT.
+//
+// `C2_ctl.buc` once shipped `partition(CONTROL, {ROUTE}, {BEACON})` with two
+// creating events hardcoded beside it. Option A (c45cd08) deleted BOTH for one
+// stated reason: two partitions of one set are CONTRADICTORY in Event-B rather
+// than additive, so a bundled split would make RTMCS — which declares
+// `partition(CONTROL, {RREQ}, {RREP}, {RRER})` — inconsistent.
+//
+// ✅ THE HARDCODED EVENTS STAY DELETED. Deriving them per leaf is the part that
+// generalises, and it is what lets a project name its own leaves (and lets the
+// flooding case study's FLOOD work as well as CONTROL). Nothing below names a
+// leaf.
+//
+// ✅ THE CONTEXT COMES BACK, because the contradiction was measured and cannot
+// arise: the extension only applies to a project passing REQUIRED_BASE_STATE,
+// and BOTH case studies fail that gate — neither MintRoute nor RTMCS declares
+// `createdPkts`, so neither ever meets this file. A project that DOES reach
+// here and splits the control set itself keeps its own leaves and the default
+// is left out, so the two partitions still never coexist.
+//
+// Structure 3's purpose is to flood with the control subtypes the pattern needs
+// and does not itself declare; supplying them is what the tool carrying PPkt
+// means. ⚠ The uploaded project is NOT edited to obtain them — that was tried
+// on 2026-09-21 and reversed.
 export const PATTERN_EXTENSION_LEAF = "pM5";
+
+// The bundled default split, the context uM4 sees when it is in play, and the
+// context it sees when it is not (the pattern's own, which C2_ctl extends).
+const CTL_SPLIT = "C2_ctl.buc";
+const CTL_SPLIT_CTX = "C2_ctl";
+const SEES_WITHOUT_SPLIT = "C1";
+
+// WHICH set the bundled default splits, read off the bundled file rather than
+// written here twice. It is `CONTROL`, and that MATTERS: the default may only
+// be applied to a project whose own control set is that same set. A project
+// whose control set is named otherwise — the advisor's flooding case study
+// calls it FLOOD — would otherwise receive a partition of a set it never
+// declares, and a project with no control set at all would receive one of a
+// set that does not exist.
+const DEFAULT_SPLIT_OF = (() => {
+  const m = /partition\(\s*(\w+)\s*,/.exec(C2ctl);
+  if (!m)
+    throw new Error("patternExtension: the bundled C2_ctl.buc declares no partition, so there is "
+      + "no way to tell which control set its default split applies to.");
+  return m[1];
+})();
 
 // The machine `uM4` is authored against the app-layer pattern's own leaf name.
 const AUTHORED_AGAINST = "pM3";
@@ -431,9 +470,9 @@ function instantiateB(xml: string, raw: RawModel): string {
  * difference between the two.
  */
 export function patternExtensionFor(files: EbFiles, base: string): { files: EbFiles; machine: string } {
-  const raw = parseModel(files);
+  const project = parseModel(files);
 
-  const declared = new Set(raw.machines.flatMap((m) => m.variables));
+  const declared = new Set(project.machines.flatMap((m) => m.variables));
   const missing = REQUIRED_BASE_STATE.filter((v) => !declared.has(v));
   if (missing.length > 0)
     throw new Error(
@@ -441,8 +480,32 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
       + `not declare ${missing.join(", ")}. Structure 3 carries that extension, so it only applies `
       + `to a project built on the pattern; use structure 2 for a model that is not.`);
 
+  // THE DEFAULT APPLIES ONLY TO A PROJECT WHOSE CONTROL SET IS THE ONE IT
+  // SPLITS, AND ONLY WHERE THAT SET IS NOT ALREADY SPLIT.
+  //
+  // Both halves are load-bearing and neither is hypothetical:
+  //
+  //   already split  — two partitions of one set are CONTRADICTORY in Event-B
+  //                    rather than additive, which is option A's own argument
+  //                    and the reason the default must stand down rather than
+  //                    be added alongside.
+  //   another set    — the bundled file splits CONTROL. A project whose control
+  //                    set is FLOOD, or which declares none, would receive a
+  //                    partition of a set it does not have.
+  const ctlSet = controlSetOf(project);
+  const useDefault = ctlSet === DEFAULT_SPLIT_OF && controlLeavesOf(project).length === 0;
+  const withCtl: EbFiles = useDefault ? [...files, { name: CTL_SPLIT, xml: C2ctl }] : files;
+
+  // ⚠ RE-PARSED, and this is the whole of why the context alone is not enough.
+  // Every derivation below reads the control LEAVES off a parsed model, and
+  // `project` is the upload without the bundle — so deriving from it would find
+  // no leaves, emit no per-leaf creating events, and ship a module whose only
+  // visible change is two dead constants. The leaves have to be in the model
+  // the derivation reads.
+  const raw = useDefault ? parseModel(withCtl) : project;
+
   // Retarget onto the machine being generated from, and instantiate the
-  // per-leaf creating events from THIS project's own control split. `uM4` is
+  // per-leaf creating events from whichever control split is in play. `uM4` is
   // authored against the pattern's own `pM3`, and a project whose machine has
   // another name would leave that refinement dangling.
   const retarget = (f: { name: string; xml: string }) => {
@@ -460,9 +523,23 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
           + `cannot be retargeted onto ${base}. The bundled extension changed shape.`);
       xml = xml.replace(refines(AUTHORED_AGAINST), refines(base));
     }
+    // ⚠ And uM4 must SEE the context that declares the leaves its derived
+    // events name. This changes no emitted C++ — the emitter merges every
+    // context it is given and never reads `sees` — but a machine whose events
+    // guard `type(pkt) = BEACON` while seeing a context that does not declare
+    // BEACON will not open in Rodin, and these files ship as real Rodin
+    // sources precisely so they can be proved and reviewed there.
+    if (useDefault) {
+      const sees = (c: string) =>
+        `<org.eventb.core.seesContext name="sees1" org.eventb.core.target="${c}"/>`;
+      if (!xml.includes(sees(SEES_WITHOUT_SPLIT)))
+        throw new Error(`patternExtension: uM4.bum no longer sees ${SEES_WITHOUT_SPLIT}, so the `
+          + `bundled control split cannot be wired to it. The extension changed shape.`);
+      xml = xml.replace(sees(SEES_WITHOUT_SPLIT), sees(CTL_SPLIT_CTX));
+    }
     return { ...f, xml: instantiate(xml, raw) };
   };
 
   // A new array: the caller's list is theirs.
-  return { files: [...files, ...BUNDLED.map(retarget)], machine: PATTERN_EXTENSION_LEAF };
+  return { files: [...withCtl, ...BUNDLED.map(retarget)], machine: PATTERN_EXTENSION_LEAF };
 }
