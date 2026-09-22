@@ -163,6 +163,10 @@ interface Plan {
   method?: string;      // emitted name, when the CommPattern merge renamed it
 }
 
+// How many extra rounds `runEnabledEvents` may drain when draining is on.
+// A bound, not a fixpoint-forever: two events can enable each other.
+const DRAIN_ROUNDS = 64;
+
 const NUM = String.raw`(?:−|-)?\d+`;
 const num = (s: string) => s.replace(/−/g, "-");
 
@@ -797,7 +801,11 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // Leaves of the emitted packet-type lattice, read off the header -- see typeOf.
   leaves: ReadonlySet<string> = new Set(),
   // See planFor.
-  senderField: PacketField | null = null): { decls: string; defs: string } {
+  senderField: PacketField | null = null,
+  // Drain the non-creating events to a bounded fixpoint each pass. Off by
+  // default, so every recorded measurement stays reproducible and the fix can
+  // be measured against them side by side rather than replacing them.
+  drain = false): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -920,7 +928,52 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
     "    }()) fired = true;",
   ].join("\n");
 
-  const runBody = scheduled.map((p) => `    if (try_${p.label}()) fired = true;`).join("\n");
+  // ⚠ WHICH EVENTS MAY BE DRAINED, AND WHY THE CREATING ONES MAY NOT.
+  //
+  // An Event-B event fires while its guards hold; attempting each ONCE per pass
+  // is an implementation artifact, and a measurable one. On a node with no
+  // incoming traffic -- which is the only place it is visible, because an
+  // arrival grants extra passes -- a node creating one ROUTE and one BEACON per
+  // tick gets ONE start_tx opportunity and transmits ONE. Measured on the sink
+  // under [Config SinkBeacon]: 60s -> 22 created, 11 transmitted, backlog 11;
+  // 120s -> 46 created, 23 transmitted, backlog 23. Exactly linear, so the
+  // undrained packets accumulate in ndBuff and pktStore for ever.
+  //
+  // But the CREATING events must stay at once per pass. Their guards are
+  // satisfiable indefinitely -- a fresh packet can always be minted -- so
+  // draining them would originate unboundedly many per tick, which is strictly
+  // worse than the backlog. A tick IS one origination opportunity; that is the
+  // environment boundary, and it belongs on the timer.
+  //
+  // A creating event is exactly a plan that MINTS, and the mint is what puts
+  // `pktStore.erase` into its rollback. Derived rather than named, so a model
+  // whose creating events are called anything at all still works.
+  const mints = (p: Plan) => p.rollback.some((r) => r.includes("pktStore.erase"));
+  const call = (p: Plan) => `    if (try_${p.label}()) fired = true;`;
+  const drainable = scheduled.filter((p) => !mints(p));
+
+  // ⚠ THE FIRST PASS IS LEFT EXACTLY AS IT WAS, in model order, and the drain
+  // rounds are ADDED after it. Partitioning the first pass instead would move
+  // the creating events ahead of everything else, and the order events are
+  // attempted in is behaviour -- each attempt sees what the earlier ones left.
+  const drainRounds = [
+    "    // Then drain what a single pass leaves behind. See above: the creating",
+    "    // events are deliberately NOT in here.",
+    `    for (int _round = 0; _round < ${DRAIN_ROUNDS}; _round++) {`,
+    "        bool _any = false;",
+    ...drainable.map((p) => `        if (try_${p.label}()) _any = true;`),
+    "        if (!_any) break;   // fixpoint reached",
+    "        fired = true;",
+    "    }",
+    "    // The bound is not decoration: two events can enable each other, and an",
+    "    // unbounded loop here would be a zero-time storm. This project has had",
+    "    // one -- 52,034 events at a single instant.",
+  ].join("\n");
+
+  // Nothing to drain means no loop at all, rather than a loop over an empty body
+  // guarded by a constant the compiler folds away.
+  const runBody = scheduled.map(call).join("\n")
+    + (drain && drainable.length > 0 ? `\n${drainRounds}` : "");
   defs.push(
     `// One round of the Event-B operational semantics: attempt every event whose\n` +
     `// parameters this scheduler can bind, in declaration order, and report\n` +
@@ -1000,14 +1053,17 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // Events the ARRIVAL runs inline -- see emitScheduler.
   arrivalEvents: readonly string[] = [],
   // See planFor.
-  senderField: PacketField | null = null): GeneratedTree {
+  senderField: PacketField | null = null,
+  // See emitScheduler.
+  drain = false): GeneratedTree {
   const ccFile = implOf(tree);
   if (!ccFile)
     throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
   // The packet-type leaves come from the emitted HEADER, where the enum is.
   const hdr = headerOf(tree);
   const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets,
-    deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""), senderField);
+    deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""), senderField,
+    drain);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

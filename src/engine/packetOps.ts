@@ -315,6 +315,30 @@ export function starvedByHoisting(model: EncodedMachine, recv: readonly string[]
   return out;
 }
 
+/**
+ * Which receive events may safely be hoisted to the front of the delivery
+ * batch, to a FIXPOINT.
+ *
+ * ⚠ One pass is not enough, and the reason is that demoting an event CHANGES
+ * the answer for the others. `starvedByHoisting` asks "is what this event
+ * requires filled by something that is NOT hoisted", i.e. by something that
+ * will run after it. Demote an event and it stops being hoisted, so it becomes
+ * exactly such a later filler — and an event that looked safe in the first pass
+ * can be starved by that demotion.
+ *
+ * Terminates because each iteration strictly shrinks the set: `starved` is a
+ * non-empty subset of the current set, so at worst it empties.
+ */
+export function hoistedReceiveEvents(model: EncodedMachine, recv: readonly string[],
+  deliverySet: readonly string[]): string[] {
+  let hoisted = [...recv];
+  for (;;) {
+    const starved = starvedByHoisting(model, hoisted, deliverySet);
+    if (starved.size === 0) return hoisted;
+    hoisted = hoisted.filter((l) => !starved.has(l));
+  }
+}
+
 // Carry named events plus the state they need, on the same terms as the
 // creating ones: the base model's typing wins every collision.
 export function carryEvents(base: EncodedMachine, source: EncodedMachine,

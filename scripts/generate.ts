@@ -34,6 +34,12 @@ import type { EmitVersion } from "../src/engine/codeEmitter";
 const argv = process.argv.slice(2);
 const flag = argv.find((a) => /^--v[123]$/.test(a));
 const version = (flag ? Number(flag.slice(3)) : 2) as EmitVersion;
+// Drain the non-creating events to a bounded fixpoint each pass (structure 3).
+//
+// OFF by default so every recorded measurement stays reproducible: this is the
+// fix for the per-pass backlog, and turning it on moves flood numbers, so the
+// two want measuring side by side rather than one replacing the other.
+const drain = argv.includes("--drain");
 const mIdx = argv.indexOf("--machine");
 const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
 // `mIdx + 1` is only a real index to skip when --machine was actually given.
@@ -41,8 +47,20 @@ const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
 // argument silently disappears.
 const named = new Set(["--machine"]);
 const valueAt = new Set([mIdx].filter((i) => i >= 0).map((i) => i + 1));
+// ⚠ REFUSED rather than silently ignored. --drain is wired into structure 3's
+// scheduler only; accepting it elsewhere would report success and emit a module
+// with no drain in it, which is the "flag that does nothing" failure this
+// project has paid for before.
+if (drain && version !== 3) {
+  console.error("\n--drain applies to structure 3 (--v3); it is not wired into the "
+    + "other structures. Re-run with --v3, or drop --drain.\n");
+  process.exit(2);
+}
+// ⚠ `--drain` has to be excluded here too, or it is taken as the INPUT
+// directory: the filter drops only the version flags and the named pairs, so an
+// unlisted flag silently becomes positional[0].
 const positional = argv.filter((a, i) =>
-  !/^--v[12345]$/.test(a) && !named.has(a) && !valueAt.has(i));
+  !/^--v[12345]$/.test(a) && a !== "--drain" && !named.has(a) && !valueAt.has(i));
 
 const input = positional[0] ?? "tests/fixtures/shdecom";
 const outDir = positional[1] ?? "out";
@@ -72,8 +90,8 @@ try {
   // to supply: two projects in, and a generator that knew nothing about the
   // pattern it is meant to embody.
   tree = machine
-    ? generate(files, machine, defaultName(machine), version)
-    : generateMerged(files, undefined, version);
+    ? generate(files, machine, defaultName(machine), version, undefined, drain)
+    : generateMerged(files, undefined, version, undefined, drain);
 } catch (e) { refuse(e); }
 for (const f of tree) writeFileSync(resolve(outDir, f.path), f.content, "utf8");
 

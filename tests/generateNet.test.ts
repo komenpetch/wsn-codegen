@@ -1082,3 +1082,57 @@ describe("structure 3 reports its own state accurately", () => {
       .toBe("pktFwdr");
   });
 });
+
+describe("--drain: the non-creating events are drained, the creating ones are not", () => {
+  // ⚠ THE DEFECT THIS FIXES, MEASURED. runEnabledEvents attempts each event ONCE
+  // per pass, so a node creating one ROUTE and one BEACON per tick gets one
+  // start_tx opportunity and transmits one. On the sink under [Config SinkBeacon]:
+  // 60s -> 22 created / 11 transmitted; 120s -> 46 created / 23 transmitted.
+  // Exactly linear, so the remainder accumulates in ndBuff and pktStore for ever.
+  // It is invisible under [Config Sink] because every arrival grants extra passes.
+  //
+  // ⚠ AND WHY THE CREATING EVENTS MUST STAY AT ONCE PER PASS: their guards are
+  // satisfiable indefinitely -- a fresh packet can always be minted -- so draining
+  // them originates unboundedly many per tick, which is worse than the backlog.
+  const src = { files: loadProject("MintRoute"), machine: "M4" };
+  const ccOf = (drain: boolean) =>
+    generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3, src, drain)
+      .find((f) => f.path.endsWith(".cc"))!.content;
+
+  const loopOf = (cc: string) => {
+    const at = cc.indexOf("for (int _round = 0;");
+    return at < 0 ? null : cc.slice(at, cc.indexOf("\n    }", at));
+  };
+
+  it("emits no drain loop by default, so recorded measurements stay reproducible", () => {
+    expect(loopOf(ccOf(false))).toBeNull();
+  });
+
+  it("drains the non-creating events when asked", () => {
+    const loop = loopOf(ccOf(true));
+    expect(loop).not.toBeNull();
+    expect(loop!).toContain("if (try_send_down()) _any = true;");
+    expect(loop!).toContain("if (!_any) break;");
+  });
+
+  it("never drains a creating event", () => {
+    // Derived from the mint, not from the name: a creating event is exactly a
+    // plan whose rollback erases the packet it minted. If this ever fails, the
+    // derivation has drifted and the module will originate without bound.
+    const loop = loopOf(ccOf(true))!;
+    for (const creator of ["try_create_routePkt", "try_create_beaconPkt"])
+      expect(loop).not.toContain(creator);
+  });
+
+  it("keeps the first pass exactly as it was, in model order", () => {
+    // The drain rounds are ADDED after the original pass, not a partition of it.
+    // Attempt ORDER is behaviour -- each attempt sees what the earlier ones left
+    // -- so moving the creating events ahead of everything else would change the
+    // flood even with draining off.
+    const plain = ccOf(false), drained = ccOf(true);
+    const firstPass = (cc: string) =>
+      cc.slice(cc.indexOf("bool Pm3Wsn::runEnabledEvents()"))
+        .split("\n").filter((l) => l.startsWith("    if (try_")).join("\n");
+    expect(firstPass(drained)).toBe(firstPass(plain));
+  });
+});

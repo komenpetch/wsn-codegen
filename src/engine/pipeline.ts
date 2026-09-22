@@ -9,7 +9,7 @@ import { installScheduler } from "./scheduler";
 import { bindNodeIdentity, nodeSetsOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
-import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, starvedByHoisting, senderFieldOf, mergeContexts } from "./packetOps";
+import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, hoistedReceiveEvents, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { routeTableOf, bindRoutingTable } from "./routingTable";
 import { patternExtensionFor } from "./patternExtension";
@@ -90,9 +90,9 @@ export function leafMachine(files: EbFiles): string {
 // Generate one class for a single target machine, flattened over its refines
 // chain (base first). `outputName` is the emitted class/file name.
 export function generate(files: EbFiles, target: string, outputName: string,
-  version: EmitVersion = 2, packetSource?: PacketSource): GeneratedTree {
+  version: EmitVersion = 2, packetSource?: PacketSource, drain = false): GeneratedTree {
   return emitOne(parsedMachines(files), target, outputName, version,
-    packetSourceFor(files, target, version, packetSource));
+    packetSourceFor(files, target, version, packetSource), drain);
 }
 
 // The one place the two halves of the generator meet.
@@ -135,8 +135,8 @@ function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
 }
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
-  packetSource?: PacketSource): GeneratedTree {
-  const tree = emitBody(raw, target, outputName, version, packetSource);
+  packetSource?: PacketSource, drain = false): GeneratedTree {
+  const tree = emitBody(raw, target, outputName, version, packetSource, drain);
   // ONE exit point for the namespace, so a future structure cannot be added
   // without it. A module emitted without the wrap compiles perfectly on its own
   // and fails only when linked beside a second generated module, with
@@ -147,7 +147,7 @@ function emitOne(raw: RawModel, target: string, outputName: string, version: Emi
 }
 
 function emitBody(raw: RawModel, target: string, outputName: string, version: EmitVersion,
-  packetSource?: PacketSource): GeneratedTree {
+  packetSource?: PacketSource, drain = false): GeneratedTree {
   // v5: the app layer's SensorApp shell, carrying PPkt. The shell is v4's --
   // codeEmitter treats 5 as 4 -- and the packet classes are spliced on top from
   // `packetSource`, which is why v4 itself does not move: it stays the frozen
@@ -471,7 +471,11 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // demoted every receive event to the end, which is the opposite of the fix.
     const inBatch = model.events.map((e) => e.label)
       .filter((l) => !creating.has(l) && !superseded.has(l));
-    const hoisted = recv.filter((l) => !starvedByHoisting(model, recv, inBatch).has(l));
+    // To a FIXPOINT, not one pass: demoting an event makes it a later filler,
+    // which can starve a different one that looked safe. See
+    // hoistedReceiveEvents, which is exported so the loop itself has a test —
+    // this call site needs the advisor's models and cannot be run on CI.
+    const hoisted = hoistedReceiveEvents(model, recv, inBatch);
     const delivery = [...hoisted, ...inBatch.filter((l) => !hoisted.includes(l))];
     const scheduled = installScheduler(tree, model, outputName, pm.fields, superseded, true,
       carrierSetsOf(raw, pRaw), delivery,
@@ -485,7 +489,9 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       drainLabels,
       // The forwarder is a property of the DELIVERY, so a receive event binds
       // it from what the arrival recorded rather than off the shared chunk.
-      fwdr);
+      fwdr,
+      // Drain the non-creating events to a bounded fixpoint. Off by default.
+      drain);
     // PRouteTable published to INET, when the model has a route table to
     // publish. Null is a legitimate answer -- a model with no node-relation
     // carrying per-entry data has no table, and one with TWO (RTMCS M5's
@@ -511,9 +517,9 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
 // exactly three files (<name>.h/.cc/.ned). `outputName` defaults to the leaf's
 // derived name. `version` selects the emitted structure (see EmitVersion).
 export function generateMerged(files: EbFiles, outputName?: string,
-  version: EmitVersion = 2, packetSource?: PacketSource): GeneratedTree {
+  version: EmitVersion = 2, packetSource?: PacketSource, drain = false): GeneratedTree {
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
   return emitOne(raw, leaf, outputName ?? defaultName(leaf), version,
-    packetSourceFor(files, leaf, version, packetSource));
+    packetSourceFor(files, leaf, version, packetSource), drain);
 }

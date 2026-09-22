@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { starvedByHoisting } from "../src/engine/packetOps";
+import { starvedByHoisting, hoistedReceiveEvents } from "../src/engine/packetOps";
 import type { EncodedMachine, FlatEvent } from "../src/engine/types";
 
 // THE DELIVERY BATCH ORDER IS BEHAVIOUR. `runDeliveryEvents()` attempts each
@@ -127,5 +127,43 @@ describe("starvedByHoisting reads each CONJUNCT, not the whole guard", () => {
     const mentions = ev("m", ["card(ran(ndBuff)) > 0 ∧ x ∈ ND"], []);
     expect(starvedByHoisting(machine([mentions, fwdr], TYPES),
       ["m"], ["m", "fwdr_receive_pkt"])).toEqual(new Set());
+  });
+});
+
+describe("hoistedReceiveEvents demotes to a FIXPOINT, not in one pass", () => {
+  // ⚠ ONE PASS IS NOT ENOUGH, and the reason is that demoting an event CHANGES
+  // the answer for the others. starvedByHoisting asks "is what this event needs
+  // filled by something NOT hoisted", i.e. by something that runs after it.
+  // Demote an event and it stops being hoisted -- so it becomes exactly such a
+  // later filler, and an event that looked safe in pass one is now starved.
+  //
+  // Three events make the smallest case:
+  //   A  needs ndBuff, which C fills. C is not a receive event -> A is starved.
+  //   B  needs sentUp, which A fills. In pass ONE, A is still hoisted, so B
+  //      looks safe. Once A is demoted, A runs later than B -> B is starved too.
+  const A = ev("a", ["pkt ∈ ran(ndBuff)"], ["sentUp ≔ sentUp ∪ {x ↦ pkt}"]);
+  const B = ev("b", ["x ↦ pkt ∈ sentUp"], []);
+  const C = ev("c", [], ["ndBuff ≔ ndBuff ∪ {x ↦ pkt}"]);
+  const m2 = machine([A, B, C], TYPES);
+  const recv = ["a", "b"];
+  const batch = ["a", "b", "c"];
+
+  it("one pass sees only the first victim", () => {
+    // Pins WHY the loop exists. If this ever returns both, the single-pass
+    // version was adequate after all and the fixpoint is dead weight.
+    expect(starvedByHoisting(m2, recv, batch)).toEqual(new Set(["a"]));
+  });
+
+  it("the fixpoint finds the one the demotion starved", () => {
+    expect(hoistedReceiveEvents(m2, recv, batch)).toEqual([]);
+  });
+
+  it("leaves a genuinely safe hoist alone", () => {
+    // No demotion, so no second round -- the fixpoint must not demote events
+    // that nothing starves, or every receive event ends up at the back of the
+    // batch and an arrival consumes nothing.
+    const safe = ev("s", ["x ∈ ND"], []);
+    expect(hoistedReceiveEvents(machine([safe, C], TYPES), ["s"], ["s", "c"]))
+      .toEqual(["s"]);
   });
 });
