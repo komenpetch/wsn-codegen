@@ -92,3 +92,40 @@ describe("starvedByHoisting", () => {
       .toEqual(new Set());
   });
 });
+
+describe("starvedByHoisting reads each CONJUNCT, not the whole guard", () => {
+  // ⚠ THE REQUIREMENT PATTERNS ARE `$`-ANCHORED, so before 2026-09-22 a
+  // COMPOUND guard contributed NOTHING: `pkt ∈ ran(ndBuff) ∧ pkt ∉ ran(sentUp)`
+  // matched neither pattern, because the trailing conjunct defeats the anchor.
+  //
+  // In the live corpus `finish_tx_pkt` was covered anyway -- by LUCK, because a
+  // second and separate guard happened to state the same requirement. These
+  // tests state it only ONCE, inside a compound guard, which is the case that
+  // silently fell through. Both real generation targets are byte-identical
+  // across the fix, so this seam is the only thing that can catch it.
+  const fwdr = ev("fwdr_receive_pkt", [], ["ndBuff ≔ ndBuff ∪ {nb ↦ pkt}"]);
+
+  it("sees a requirement stated only inside a compound guard", () => {
+    const compound = ev("cleanup", ["pkt ∈ ran(ndBuff) ∧ pkt ∉ ran(sentUp)"], []);
+    expect(starvedByHoisting(machine([compound, fwdr], TYPES),
+      ["cleanup"], ["cleanup", "fwdr_receive_pkt"])).toEqual(new Set(["cleanup"]));
+  });
+
+  it("still refuses a NEGATED conjunct, which needs no producer", () => {
+    // ∉ is U+2209, a different codepoint from ∈, so splitting on ∧ cannot admit
+    // it. Were this claimed, every receive event would be demoted to the back
+    // of the batch -- the opposite of the fix.
+    const negated = ev("r", ["x ∈ ND ∧ nb ↦ pkt ∉ ndBuff"], []);
+    expect(starvedByHoisting(machine([negated, fwdr], TYPES),
+      ["r"], ["r", "fwdr_receive_pkt"])).toEqual(new Set());
+  });
+
+  it("keeps the anchor doing its job within a conjunct", () => {
+    // `∈ ran(V)` must END the conjunct. A conjunct that merely mentions it is
+    // not a membership requirement, and widening to a substring match would
+    // claim it.
+    const mentions = ev("m", ["card(ran(ndBuff)) > 0 ∧ x ∈ ND"], []);
+    expect(starvedByHoisting(machine([mentions, fwdr], TYPES),
+      ["m"], ["m", "fwdr_receive_pkt"])).toEqual(new Set());
+  });
+});

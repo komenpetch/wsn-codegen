@@ -282,11 +282,25 @@ export function starvedByHoisting(model: EncodedMachine, recv: readonly string[]
     // What this event requires to be NON-EMPTY: `p ∈ ran(V)` or `a ↦ b ∈ V`.
     // Positive positions only — a `∉` guard states an absence and needs no
     // producer at all.
+    // ⚠ PER CONJUNCT, NOT PER GUARD. Both patterns are `$`-anchored on the
+    // whole guard, so a COMPOUND one contributed NOTHING: `pkt ∈ ran(sentUp) ∧
+    // pkt ∉ ran(sentDown)` matches neither, because the trailing conjunct
+    // defeats the anchor. `finish_tx_pkt` was covered only because a second,
+    // separate guard happened to state the same requirement — i.e. by luck.
+    //
+    // Splitting on ∧ keeps the anchors doing their job (each conjunct must end
+    // in the shape, so `∈ ran(V)` inside a larger expression still does not
+    // count) and cannot admit a negative: `∉` is U+2209, a different codepoint
+    // from `∈`, so a negated conjunct matches neither pattern. That is the
+    // "positive positions only" rule this function already relies on — a `∉`
+    // guard states an absence and needs no producer.
     const needs = new Set<string>();
     for (const g of ev.guards) {
-      const t = g.trim();
-      const m = /∈\s*ran\s*\(\s*(\w+)\s*\)$/.exec(t) ?? /↦\s*\w+\s*∈\s*(\w+)$/.exec(t);
-      if (m && model.variableTypes.has(m[1])) needs.add(m[1]);
+      for (const conj of g.split("∧")) {
+        const t = conj.trim();
+        const m = /∈\s*ran\s*\(\s*(\w+)\s*\)$/.exec(t) ?? /↦\s*\w+\s*∈\s*(\w+)$/.exec(t);
+        if (m && model.variableTypes.has(m[1])) needs.add(m[1]);
+      }
     }
     if (needs.size === 0) continue;
     // Filled by an event that is NOT itself hoisted — so hoisting jumps ahead
