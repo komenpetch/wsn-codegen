@@ -61,7 +61,7 @@ describe("the wire copy carries the sender the model named", () => {
 
   it("carries the sender all the way from the event to the wire", () => {
     // send_down's realisation has `x`; it used to discard it at the dispatch.
-    expect(cc).toContain("bool Pm3Wsn::sendSensorPacket(Node x, PktId pkt)");
+    expect(cc).toContain("bool Pm3Wsn::sendDown(Node x, PktId pkt)");
     expect(cc).toContain("transmitPacket(x, pkt);");
     expect(cc).toContain("void Pm3Wsn::transmitPacket(Node x, PktId pkt)");
     expect(cc).toContain("sendBeaconBroadcast(x, pkt); break;");

@@ -4,6 +4,7 @@ import { flatten, parentOf } from "./flattener";
 import { resolveEncodings } from "./encodingResolver";
 import { emit, type EmitVersion } from "./codeEmitter";
 import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
+import { installNetProtocolShell, renameCommPatternPair } from "./netProtocolShell";
 import { installScheduler } from "./scheduler";
 import { bindNodeIdentity, nodeSetsOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
@@ -251,6 +252,39 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     let tree = emitWithPacketClasses({
       raw: mergedRaw, model, name: outputName, pm, carriers: carrierSetsOf(raw, pRaw),
     });
+    // ── The shell ──────────────────────────────────────────────────────────
+    //
+    // Structure 3 is a NETWORK PROTOCOL, not an application. That is what the
+    // 4x4 pattern class diagram's GREEN column asks for -- Interface +
+    // Base -- and what the two network-layer outputs have emitted since
+    // 2026-09-08: `NetworkProtocolBase, INetworkProtocol`, on the advisor's
+    // direction and on INET's own evidence (MintRoute is a protocol IN the
+    // stack and carries data; AODV is a routing daemon over UDP and never
+    // carries a packet -- the machines forward packets).
+    //
+    // ⚠ THE SHELL IS INSTALLED BY STRUCTURE, NOT DERIVED FROM A MEDIUM, and
+    // that is a deliberate departure worth stating. Structure 2 picks its shell
+    // by asking `modelHasMedium`, because a model that serialises its own
+    // packets is telling you which layer it belongs to. This model does not
+    // have a medium and is not going to get one: the medium is "how nodes reach
+    // each other", which the project's scope rule puts on the per-case-study
+    // side. So here the STRUCTURE chooses -- which is a choice the user makes
+    // explicitly, not an implicit predicate a reader could not predict.
+    //
+    // ⚠ AND IT REPLACES THE SHELL RATHER THAN EMITTING A SECOND ONE.
+    // installNetProtocolShell rewrites the SensorApp shell the emitter just
+    // produced -- swapping the base class, the member block and the lifecycle
+    // methods, and adding the <Name>NetworkLayer wrapper to the .ned. Which is
+    // why it must run HERE, before anything patches those methods: the
+    // transmit, the identity binding and the arrival all attach to what this
+    // pass leaves behind.
+    tree = installNetProtocolShell(tree, outputName, target);
+    // The CommPattern pair takes INET's own names on this shell: Event-B
+    // send_down becomes a `sendDown` overload and send_up a `handleLowerPacket`
+    // overload, beside NetworkProtocolBase's own. Before the transmit and the
+    // arrival, both of which resolve the pair by reading the provenance comment
+    // the rename leaves in place.
+    tree = renameCommPatternPair(tree, outputName);
     // The transmit replaces the placeholder payload the CommPattern merge left
     // in send_down; the scheduler then fires the events that reach it. Without
     // the scheduler the creating events are emitted and never called, so the
@@ -268,7 +302,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // And having taken that record on, it must also put back the pair the
       // model's own delivery event would have removed -- which in a per-node
       // module it removes on the RECEIVER, never on the sender.
-      senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""));
+      senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""), "network");
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
@@ -280,7 +314,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // sink here and silently stops emitting the sink test. (Caught by the byte
     // gate; before it, structure 3 emitted that test correctly.)
     tree = bindNodeIdentity(tree, model, [...raw.contexts, ...pRaw.contexts],
-      outputName, "application");
+      outputName, "network");
     // The receive half: an arrival runs the model's own send_up, which publishes
     // who received the packet; the carried receive events then consume that and
     // re-queue it for transmission. That loop is the rebroadcast.
@@ -341,7 +375,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
         // Nothing restores the packet's fields on a receiving node otherwise:
         // this model's delivery event is the ABSTRACT one. See
         // deserialiseFieldsOf.
-        deserialiseFieldsOf(base, pm));
+        deserialiseFieldsOf(base, pm), "network");
     }
     // What an ARRIVAL may run: the events a delivery enables -- those that
     // consume what send_up publishes, and the transmits that carry the result
@@ -418,7 +452,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // analysis that confused the two would delete the flood. See
     // unreachableEvents.
     const neverRuns = new Set(superseded.keys());
-    superseded.set("send_up", "the socket arrival realises it, on a real reception");
+    superseded.set("send_up", "the arrival realises it, on a real reception");
     // The batch is the receive events FIRST — flattening puts a carried
     // refinement after every pM1 event, so `receive_controlPkt` would otherwise
     // run last and an arrival would consume nothing — then everything else in

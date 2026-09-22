@@ -25,6 +25,7 @@
 import type { EncodedMachine, GeneratedTree } from "./types";
 import { pairKeyedVars } from "./pairKeyed";
 import { headerOf, implOf, mustFind, mustReplace } from "./emitted";
+import { netLayerName } from "./netProtocolShell";
 
 /**
  * WHICH variable is the route table — read off the model, never named.
@@ -91,12 +92,17 @@ export function bindRoutingTable(tree: GeneratedTree, cls: string, table: string
     "    // it by. Nothing in the Event-B says what a node's address is, so the",
     "    // correspondence has to be observed rather than translated.",
     "    std::map<Node, inet::L3Address> nodeAddress;",
+    "    // MAC → L3, for the shell that has no IP layer to tag an arrival's",
+    "    // source. Held exactly as MintRoute holds its own.",
+    "    inet::ModuleRefByPar<inet::IArp> arp;",
     "    void publishOneHopRoutes();",
     stateAnchor,
   ].join("\n");
 
   const includes = [
     '#include "inet/common/ModuleRefByPar.h"',
+    '#include "inet/linklayer/common/MacAddressTag_m.h"',
+    '#include "inet/networklayer/contract/IArp.h"',
     '#include "inet/networklayer/contract/IRoute.h"',
     '#include "inet/networklayer/contract/IRoutingTable.h"',
   ].join("\n");
@@ -113,7 +119,12 @@ export function bindRoutingTable(tree: GeneratedTree, cls: string, table: string
   // loud failure at init rather than silently unrouted traffic.
   ccContent = mustReplace(ccContent, "    if (stage == INITSTAGE_LOCAL) {",
     '    if (stage == INITSTAGE_LOCAL) {\n'
-    + '        routingTable.reference(this, "routingTableModule", true);',
+    + '        routingTable.reference(this, "routingTableModule", true);\n'
+    // OPTIONAL (`false`): the ARP path is the fallback for a shell with no IP
+    // layer, and a host that has neither an arpModule nor an L3AddressInd
+    // simply learns no addresses. Making it required would refuse to start a
+    // module that is otherwise perfectly able to flood.
+    + '        arp.reference(this, "arpModule", false);',
     `${PASS} (init stage)`);
 
   // Published where the table has just changed: the arrival is the only thing
@@ -122,24 +133,53 @@ export function bindRoutingTable(tree: GeneratedTree, cls: string, table: string
   ccContent = mustReplace(ccContent, "    runDeliveryEvents();",
     "    runDeliveryEvents();\n    publishOneHopRoutes();", `${PASS} (publish call)`);
 
+  // ⚠ TWO WAYS TO LEARN IT, BECAUSE ONE OF THEM DOES NOT EXIST ON THIS SHELL.
+  //
+  // `L3AddressInd` is attached by an IP layer. Structure 3 ran as an
+  // ApplicationBase over full IPv4 until 2026-09-21 and the tag was always
+  // there; as a NetworkProtocolBase it sits directly ABOVE THE MAC and nothing
+  // attaches one. Measured: `nodeAddress` stayed empty for a whole 60 s run,
+  // every candidate hit `known == nodeAddress.end()`, and the module published
+  // ZERO routes while flooding correctly and reporting no error at all.
+  //
+  // The MAC does supply the sender's MacAddress, and mapping that to an
+  // L3Address is exactly what ARP is for. The wrapper already hands this
+  // module an `arpModule` parameter (MintRoute holds the same
+  // `ModuleRefByPar<IArp>` for the same reason) and nothing was reading it.
+  //
+  // Both paths are kept rather than one being chosen here: the tag is the
+  // better answer when it is present, ARP is the answer when it is not, and
+  // which shell this module is in is not something this pass should have to
+  // know. An address that resolves to neither is left unlearnt and its
+  // neighbour simply gets no route, which is what the `.end()` check below
+  // already means.
   ccContent = mustReplace(ccContent, "    deliveredBy[_pkt] = _f;",
     "    deliveredBy[_pkt] = _f;\n"
     + "    if (_srcInd != nullptr)\n"
-    + "        nodeAddress[_f] = _srcInd->getSrcAddress();   // ND ↦ L3Address, observed",
+    + "        nodeAddress[_f] = _srcInd->getSrcAddress();   // ND ↦ L3Address, observed\n"
+    + "    else if (auto _macInd = arp ? packet->findTag<inet::MacAddressInd>() : nullptr) {\n"
+    + "        // No IP layer above the MAC to tag the source, so ask ARP what\n"
+    + "        // L3 address that MAC belongs to.\n"
+    + "        inet::L3Address _viaArp = arp->getL3AddressFor(_macInd->getSrcAddress());\n"
+    + "        if (!_viaArp.isUnspecified())\n"
+    + "            nodeAddress[_f] = _viaArp;\n"
+    + "    }",
     `${PASS} (address learning)`);
 
   ccContent += `
 void ${cls}::publishOneHopRoutes() {
-    // ⚠ The interface is resolved here, not held as a member: this shell is an
-    // ApplicationBase and has no \`networkInterface\` -- that belongs to
-    // NetworkProtocolBase, which AODV's shape would have suggested. The app
-    // shell already reaches the interface table this way for isOwnAddress().
-    inet::IInterfaceTable *ift =
-        inet::L3AddressResolver().findInterfaceTableOf(inet::getContainingNode(this));
-    if (ift == nullptr) return;
-    inet::NetworkInterface *out = nullptr;
-    for (int i = 0; i < ift->getNumInterfaces() && out == nullptr; i++)
-        if (!ift->getInterface(i)->isLoopback()) out = ift->getInterface(i);
+    // The outgoing interface, from the one NetworkProtocolBase already holds.
+    //
+    // ⚠ This used to resolve the interface table through L3AddressResolver and
+    // walk it by hand, under a comment saying "this shell is an ApplicationBase
+    // and has no \`networkInterface\`". Both halves were wrong once structure 3
+    // became a network protocol: the shell is NOT an ApplicationBase, and what
+    // NetworkProtocolBase declares is \`interfaceTable\`, not \`networkInterface\`.
+    // The line below is MintRoute.cc's own (\`interfaceTable->
+    // findFirstNonLoopbackInterface()\`), which is what the hand-written loop
+    // was reimplementing.
+    inet::NetworkInterface *out =
+        interfaceTable ? interfaceTable->findFirstNonLoopbackInterface() : nullptr;
 
     // Every entry of the model's table is (me ↦ neighbour): \`add_newEntry\`
     // takes the pending pair (forwarder ↦ me) and files it flipped, which is
@@ -179,14 +219,66 @@ void ${cls}::publishOneHopRoutes() {
     if (f.path === h.path) return { ...f, content: hContent };
     if (f.path === cc.path) return { ...f, content: ccContent };
     if (!f.path.endsWith(".ned")) return f;
-    // The parameter the reference resolves through, spelled as AODV.ned spells
-    // it. `^` is the containing host, so it reads the same from an app as from
-    // a network-layer module.
-    return {
-      ...f,
-      content: mustReplace(f.content, "    parameters:",
-        '    parameters:\n        string routingTableModule = default("^.ipv4.routingTable");',
-        `${PASS} (NED parameter)`),
-    };
+
+    // ⚠ THE MODULE THAT PUBLISHES ROUTES MUST HAVE A TABLE TO PUBLISH INTO,
+    // AND ON THIS SHELL NOTHING ELSE PROVIDES ONE.
+    //
+    // The default used to be `^.ipv4.routingTable`, which is AODV's spelling
+    // and was right while this was an application running over a full IPv4
+    // stack. Structure 3 is a network protocol now: it sits directly above the
+    // MAC, the harness runs `**.hasIpv4 = false`, and there is no
+    // `ipv4.routingTable` anywhere in the node. Measured -- the run died at
+    // setup with "Module not found on path '^.ipv4.routingTable'".
+    //
+    // The fix is INET's own, from NextHopNetworkLayer.ned: the wrapper carries
+    // a `routingTable: NextHopRoutingTable` and points every submodule's
+    // `routingTableModule` at it with absPath. MintRouteNetworkLayer has no
+    // such submodule, which is why this shell did not start with one -- and
+    // that is consistent rather than an oversight, because MintRoute publishes
+    // no routes at all (zero occurrences of IRoutingTable in MintRoute.cc); it
+    // keeps its own std::map. A module that DOES publish needs the table.
+    //
+    // ⚠ ANCHORED ON THE SIMPLE MODULE'S OWN DECLARATION, not on the first
+    // "    parameters:" in the file. This .ned holds TWO modules -- the simple
+    // one and the <Name>NetworkLayer wrapper -- and the bare anchor found the
+    // right one only because `simple` happens to be emitted first. That is the
+    // defect a21dbdf fixed for the membership splice; the same reasoning
+    // applies here, and mustReplace cannot tell a wrong match from a right one.
+    const simpleAt = mustFind(f.content, `simple ${cls} `, `${PASS} (simple module)`);
+    const head = f.content.slice(0, simpleAt);
+    const rest = mustReplace(f.content.slice(simpleAt), "    parameters:",
+      '    parameters:\n        string routingTableModule;',
+      `${PASS} (NED parameter)`);
+
+    // And the wrapper gains the table itself. Keyed on the wrapper's own
+    // declaration so a tree without one (there is none today, but the shell is
+    // what decides) is left alone rather than silently half-wired.
+    const wrapper = `module ${netLayerName(cls)} `;
+    if (!rest.includes(wrapper)) return { ...f, content: head + rest };
+    const wired = mustReplace(rest,
+      "        *.interfaceTableModule = default(absPath(this.interfaceTableModule));",
+      "        *.interfaceTableModule = default(absPath(this.interfaceTableModule));\n"
+      + "        // Every submodule resolves the table through this, exactly as\n"
+      + "        // NextHopNetworkLayer.ned wires its own.\n"
+      + '        *.routingTableModule = default(absPath(".routingTable"));',
+      `${PASS} (wrapper parameter)`);
+    const withTable = mustReplace(wired, "    submodules:",
+      "    submodules:\n"
+      + "        // The one-hop routes the model derives from its neighbour table are\n"
+      + "        // published here. NextHop rather than Ipv4 because this layer runs\n"
+      + "        // with no IP stack under it.\n"
+      + "        routingTable: NextHopRoutingTable {\n"
+      + '            parameters:\n                @display("p=100,100");\n'
+      + "        }",
+      `${PASS} (wrapper submodule)`);
+    // ⚠ The import goes in the HEAD, not in `rest`: the .ned's import block
+    // sits ABOVE the simple module, so it is on the other side of the slice
+    // that scopes everything else here to the right module.
+    const imported = mustReplace(head,
+      "import inet.networklayer.contract.INetworkLayer;",
+      "import inet.networklayer.contract.INetworkLayer;\n"
+      + "import inet.networklayer.nexthop.NextHopRoutingTable;",
+      `${PASS} (wrapper import)`);
+    return { ...f, content: imported + withTable };
   });
 }

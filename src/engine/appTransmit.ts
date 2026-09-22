@@ -37,6 +37,7 @@ import { headerOf, implOf, mustFind } from "./emitted";
 import { esc } from "./text";
 import { emitLocalIdFor, identityMembers } from "./mediumBinding";
 import type { PacketIdentity } from "./mediumBinding";
+import type { ShellKind } from "./nodeIdentity";
 
 // Where the CommPattern merge put SensorApp's transmit inside the model's event.
 const PLACEHOLDER_START = "    // — SensorApp transmit structure (SensorApp::sendSensorPacket) —";
@@ -45,7 +46,7 @@ const DISPATCH = "transmitPacket";
 // only when the model's transmit event keeps no such record of its own.
 const TX_DONE = "txRealised";
 
-const decls = (tags: string[], once: boolean): string => [
+const decls = (tags: string[], once: boolean, shell: ShellKind): string => [
   "    // ── Transmit ──",
   "    // One method per packet type, named as MintRoute names its own. The",
   "    // application hands the frame to its socket where the network protocol",
@@ -55,7 +56,10 @@ const decls = (tags: string[], once: boolean): string => [
   "    // why the transmit takes it rather than reading it back off the chunk.",
   `    void ${DISPATCH}(Node x, PktId pkt);`,
   ...tags.map((t) => `    virtual void ${broadcastMethodOf(t)}(Node x, PktId pkt);`),
-  "    L3Address broadcastAddress() const;",
+  // The network shell already declares resolveBroadcast(), and addresses the
+  // frame at the MAC rather than through an L3AddressReq tag, so it needs no
+  // L3 broadcast helper of its own.
+  ...(shell === "application" ? ["    L3Address broadcastAddress() const;"] : []),
   ...(once ? [
     "    // Transmissions this module has already realised. The model's own",
     "    // send_down keeps no such record, and nothing clears the pair it",
@@ -65,14 +69,41 @@ const decls = (tags: string[], once: boolean): string => [
   ] : []),
 ].join("\n");
 
-const defs = (cls: string, tags: string[], senderSetter: string | null): string => {
+const defs = (cls: string, tags: string[], senderSetter: string | null,
+  shell: ShellKind): string => {
+  // The last three steps are the only thing the two shells do differently, and
+  // the network form is not invented here: it is the medium binding's own
+  // transmit, which ends every frame the network module sends. An
+  // ApplicationBase has a socket and an L3 destination tag; a
+  // NetworkProtocolBase has setDownControlInfo() and sendDown(), and addresses
+  // the frame at the MAC. `payloadLength` and `socket` are SensorApp shell
+  // members that installNetProtocolShell replaces, so neither may be named on
+  // the network side -- `headerLength` is the network shell's own parameter.
+  const send = (tag: string): string[] => shell === "network" ? [
+    "    chunk->setChunkLength(B(headerLength));",
+    `    Packet *packet = new Packet("eb-${tag.toLowerCase()}", chunk);`,
+    "    // setDownControlInfo tags the protocol in both directions, so there is",
+    "    // no separate PacketProtocolTag here as there is on the socket path.",
+    "    setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);",
+    "    emit(packetSentSignal, packet);",
+    "    sendDown(packet);",
+  ] : [
+    "    chunk->setChunkLength(B(payloadLength));",
+    `    Packet *packet = new Packet("eb-${tag.toLowerCase()}", chunk);`,
+    "    packet->addTag<PacketProtocolTag>()->setProtocol(&Protocol::manet);",
+    "    packet->addTag<L3AddressReq>()->setDestAddress(broadcastAddress());",
+    "    emit(packetSentSignal, packet);",
+    "    socket->send(packet);",
+  ];
   const one = (tag: string) => [
     `// Event-B: the model's own transmit, for a packet of type ${tag}.`,
     `// Shaped after MintRoute::${broadcastMethodOf(tag)}: build the frame from the`,
     "// packet the model made, address it to the broadcast address, send it, count it.",
     `void ${cls}::${broadcastMethodOf(tag)}(Node x, PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",
-    "    if (held == nullptr || socket == nullptr) return;",
+    shell === "network"
+      ? "    if (held == nullptr) return;"
+      : "    if (held == nullptr || socket == nullptr) return;",
     "    auto chunk = makeShared<PPkt>(*held);",
     ...(senderSetter ? [
       "    // ⚠ THE SENDER IS PINNED FROM THE MODEL, NOT READ BACK OFF THE CHUNK.",
@@ -95,24 +126,21 @@ const defs = (cls: string, tags: string[], senderSetter: string | null): string 
       "    // table entries for nodes outside its radio range.",
       `    chunk->${senderSetter}(x);`,
     ] : []),
-    "    chunk->setChunkLength(B(payloadLength));",
-    `    Packet *packet = new Packet("eb-${tag.toLowerCase()}", chunk);`,
-    "    packet->addTag<PacketProtocolTag>()->setProtocol(&Protocol::manet);",
-    "    packet->addTag<L3AddressReq>()->setDestAddress(broadcastAddress());",
-    "    emit(packetSentSignal, packet);",
-    "    socket->send(packet);",
+    ...send(tag),
     "    sentCount++;",
     "}",
   ].join("\n");
 
   return [
-    "// The broadcast address of whatever address type this node resolved, which is",
-    "// the same value the network-layer shell's resolveBroadcast() returns.",
-    `L3Address ${cls}::broadcastAddress() const {`,
-    "    return sinkAddress.isUnspecified()",
-    "        ? L3Address() : sinkAddress.getAddressType()->getBroadcastAddress();",
-    "}",
-    "",
+    ...(shell === "application" ? [
+      "// The broadcast address of whatever address type this node resolved, which is",
+      "// the same value the network-layer shell's resolveBroadcast() returns.",
+      `L3Address ${cls}::broadcastAddress() const {`,
+      "    return sinkAddress.isUnspecified()",
+      "        ? L3Address() : sinkAddress.getAddressType()->getBroadcastAddress();",
+      "}",
+      "",
+    ] : []),
     "// Dispatch on the packet's OWN type, as the model recorded it.",
     `void ${cls}::${DISPATCH}(Node x, PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",
@@ -133,7 +161,8 @@ const defs = (cls: string, tags: string[], senderSetter: string | null): string 
 // dispatch. The region runs from the marker the CommPattern merge writes to the
 // method's closing `return true;`, so the event's GUARDS and its accounting are
 // untouched -- only what is put on the wire changes.
-function rewriteSendDown(cc: string, once: boolean, drain: readonly string[]): string {
+function rewriteSendDown(cc: string, once: boolean, drain: readonly string[],
+  shell: ShellKind): string {
   // ⚠ A PRECONDITION, NOT AN OPTIONAL REWRITE — and the closing anchor two
   // lines below was already treated that way while this one gave up silently.
   //
@@ -160,7 +189,11 @@ function rewriteSendDown(cc: string, once: boolean, drain: readonly string[]): s
     "    // The model made this packet; send THAT, not a placeholder payload.",
     "    // (The CommPattern merge put SensorApp's own ByteCountChunk transmit here,",
     "    // which was right while the model had no packet of its own.)",
-    `    if (socket == nullptr) return false;`,
+    // `socket` and `sendSeqNo` are SensorApp shell members, and
+    // installNetProtocolShell replaces that whole member block. The network
+    // shell has no socket to check and no send counter beyond sentCount, which
+    // the per-type method below already increments.
+    ...(shell === "application" ? ["    if (socket == nullptr) return false;"] : []),
     ...(once ? [
       "    // ⚠ ONE TRANSMISSION PER (node, packet).",
       "    //",
@@ -180,7 +213,7 @@ function rewriteSendDown(cc: string, once: boolean, drain: readonly string[]): s
       "        return false;",
     ] : []),
     `    ${DISPATCH}(x, pkt);`,
-    "    sendSeqNo++;",
+    ...(shell === "application" ? ["    sendSeqNo++;"] : []),
     ...(drain.length ? [
       "    // ⚠ THE SENDER PUTS BACK ITS OWN PAIR, because the model's cleanup runs",
       "    // on the wrong node: `send_up` removes it, and in a per-node module that",
@@ -210,7 +243,10 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
   senderField: PacketField | null = null,
   // Pair-sets the sender must put back once the transmission is realised,
   // from senderSideDrainOf. Empty when the model limits itself.
-  drain: readonly string[] = []): GeneratedTree {
+  drain: readonly string[] = [],
+  // Which shell this transmit is being installed into. The three steps are the
+  // same; where the frame goes is not. See `send` in defs().
+  shell: ShellKind = "application"): GeneratedTree {
   // Ordered by tag value, the same order the PktType enum is emitted in.
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t);
   if (tags.length === 0) return tree;
@@ -222,18 +258,23 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
     throw new Error("appTransmit: no event block found to place the transmit declarations before.");
 
   return tree.map((f) => {
-    if (f.path.endsWith(".h"))
-      return { ...f, content: f.content
-        .replace(anchor, decls(tags, once) + "\n\n" + anchor)
-        // getAddressType() lives here; the app shell does not already include it.
-        .replace('#include "inet/networklayer/common/L3Address.h"',
+    if (f.path.endsWith(".h")) {
+      const withDecls = f.content.replace(anchor, decls(tags, once, shell) + "\n\n" + anchor);
+      // getAddressType() lives here; the app shell does not already include it.
+      // The network shell's own include list already carries it, so adding it
+      // again would duplicate the line rather than supply anything.
+      return { ...f, content: shell === "network" ? withDecls
+        : withDecls.replace('#include "inet/networklayer/common/L3Address.h"',
           '#include "inet/networklayer/common/L3Address.h"\n'
           + '#include "inet/networklayer/contract/IL3AddressType.h"') };
+    }
     if (f.path.endsWith(".cc")) {
-      const body = rewriteSendDown(f.content, once, drain);
+      const body = rewriteSendDown(f.content, once, drain, shell);
       const at = body.search(new RegExp(`^bool ${esc(cls)}::`, "m"));
       if (at < 0) throw new Error("appTransmit: no event method to place the transmit definitions before.");
-      return { ...f, content: body.slice(0, at) + defs(cls, tags, senderField ? setterOf(senderField) : null) + "\n\n" + body.slice(at) };
+      return { ...f, content: body.slice(0, at)
+        + defs(cls, tags, senderField ? setterOf(senderField) : null, shell)
+        + "\n\n" + body.slice(at) };
     }
     return f;
   });
@@ -298,10 +339,27 @@ function arrival(deliverMethod: string, senderGetter: string,
     "    // beacon at zero simulated time. 52,034 events at one instant.",
     "    //",
     "    // The L3 source address is the simulator's own record of who sent it.",
+    "    // ⚠ AND ON WHICHEVER TAG THIS SHELL ACTUALLY HAS.",
+    "    //",
+    "    // L3AddressInd is attached by an IP layer. A network protocol sits",
+    "    // directly above the MAC, where nothing attaches one -- measured on the",
+    "    // nine-node field: present on 0 of 1571 arrivals, so the L3 test alone",
+    "    // is a guard that cannot fire. The MAC's own source address is there",
+    "    // instead, on 1571 of 1571. Self-echo measured 0 either way, because a",
+    "    // radio does not receive its own transmission; the test is kept live",
+    "    // rather than deleted because \"this cannot happen\" is precisely what",
+    "    // was believed about the loopback case above, and it was wrong.",
     "    auto _srcInd = packet->findTag<L3AddressInd>();",
     "    if (_srcInd != nullptr && isOwnAddress(_srcInd->getSrcAddress())) {",
     "        delete packet;   // our own broadcast, looped back by the stack",
     "        return;",
+    "    }",
+    "    if (_srcInd == nullptr) {",
+    "        auto _macSrc = packet->findTag<inet::MacAddressInd>();",
+    "        if (_macSrc != nullptr && isOwnMacAddress(_macSrc->getSrcAddress())) {",
+    "            delete packet;   // our own frame, straight off the air",
+    "            return;",
+    "        }",
     "    }",
     `    Node _f = _wire->${senderGetter}();`,
     "    emit(packetReceivedSignal, packet);",
@@ -388,12 +446,27 @@ const isOwnAddressFn = (cls: string): string => [
   "    IInterfaceTable *ift = L3AddressResolver().findInterfaceTableOf(getContainingNode(this));",
   "    return ift != nullptr && ift->findInterfaceByAddress(addr) != nullptr;",
   "}",
+  "",
+  "// The same question one layer down, for a shell with no IP layer to attach an",
+  "// L3AddressInd. Every interface, not just the first: a node answers to all of",
+  "// its own MAC addresses, and the loopback bug above was caused by testing one",
+  "// address when the node had several.",
+  `bool ${cls}::isOwnMacAddress(const inet::MacAddress& mac) const {`,
+  "    if (mac.isUnspecified()) return false;",
+  "    IInterfaceTable *ift = L3AddressResolver().findInterfaceTableOf(getContainingNode(this));",
+  "    if (ift == nullptr) return false;",
+  "    for (int i = 0; i < ift->getNumInterfaces(); i++)",
+  "        if (ift->getInterface(i)->getMacAddress() == mac) return true;",
+  "    return false;",
+  "}",
 ].join("\n");
 
 export function installAppReceive(tree: GeneratedTree, cls: string,
   id: PacketIdentity, deliverMethod: string, senderField: PacketField,
   staged: MediumStaging = { insert: [], remove: [] },
-  deserialise: readonly { setter: string; getter: string; live: string }[] = []): GeneratedTree {
+  deserialise: readonly { setter: string; getter: string; live: string }[] = [],
+  // Which shell the arrival attaches to. See the hook derivation below.
+  shell: ShellKind = "application"): GeneratedTree {
   return tree.map((f) => {
     if (f.path.endsWith(".h"))
       return { ...f, content: f.content
@@ -405,25 +478,45 @@ export function installAppReceive(tree: GeneratedTree, cls: string,
 `
           + identityMembers
           + "\n    // True when the address is one of this node's own, loopback included."
-          + "\n    bool isOwnAddress(const L3Address& addr) const;\n"
+          + "\n    bool isOwnAddress(const L3Address& addr) const;"
+          + "\n    // The same, one layer down, for a shell with no IP layer to tag an arrival."
+          + "\n    bool isOwnMacAddress(const inet::MacAddress& mac) const;\n"
           + "\n    // ── Transmit ──")
         // findInterfaceByAddress lives here; the app shell includes neither.
         .replace('#include "inet/networklayer/contract/IL3AddressType.h"',
           '#include "inet/networklayer/contract/IL3AddressType.h"\n'
           + '#include "inet/networklayer/contract/IInterfaceTable.h"') };
     if (f.path.endsWith(".cc")) {
-      const at = f.content.indexOf(ARRIVAL_MARKER);
-      if (at < 0) return f;
+      // WHERE THE ARRIVAL GOES, which is the one thing the two shells disagree
+      // about. On the application shell it replaces the `EXTENSION POINT
+      // (send-up flow)` marker inside the socket callback. The network shell
+      // has no socket: a frame off the air arrives at handleLowerPacket, which
+      // installNetProtocolShell emits as a stub whose entire body is
+      // `delete packet;` above a comment saying the binding fills it in. Both
+      // regions run to the method's closing brace, and `arrival()` emits that
+      // brace itself, so one slice serves both.
+      //
+      // ⚠ LOUD ON A MISS. This used to `return f` when the marker was absent,
+      // which is the worst available outcome: the header still declares the
+      // arrival's members, the .cc never fills the callback, and the module
+      // compiles, links, runs and receives nothing.
+      const hook = shell === "network"
+        ? `void ${cls}::handleLowerPacket(Packet *packet) {`
+        : ARRIVAL_MARKER;
+      const found = mustFind(f.content, hook, "installAppReceive (arrival hook)");
+      const at = shell === "network" ? found + hook.length + 1 : found;
       const end = f.content.indexOf("\n}", at);
       if (end < 0) throw new Error("appTransmit: the arrival callback has no closing brace.");
       const body = f.content.slice(0, at)
         + arrival(deliverMethod, getterOf(senderField), staged, deserialise).join("\n")
         + f.content.slice(end + 2);
-      // localIdFor and isOwnAddress go beside the transmit methods.
-      const defAt = body.indexOf("// The broadcast address of whatever address type");
-      return { ...f, content: defAt < 0 ? body
-        : body.slice(0, defAt) + emitLocalIdFor(id, cls) + "\n\n"
-          + isOwnAddressFn(cls) + "\n\n" + body.slice(defAt) };
+      // localIdFor and isOwnAddress go beside the transmit methods. Anchored on
+      // the DISPATCH comment, which both shells emit -- the broadcast-address
+      // helper it used to key on exists only on the application side.
+      const defAt = mustFind(body, "// Dispatch on the packet's OWN type",
+        "installAppReceive (localIdFor placement)");
+      return { ...f, content: body.slice(0, defAt) + emitLocalIdFor(id, cls) + "\n\n"
+        + isOwnAddressFn(cls) + "\n\n" + body.slice(defAt) };
     }
     return f;
   });

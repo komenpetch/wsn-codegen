@@ -15,9 +15,35 @@ import type { GeneratedTree } from "../src/engine/types";
 const gen = (project: string, machine: string): GeneratedTree =>
   generate(loadProject(project), machine, defaultName(machine), 2);
 
+// ⚠ TWO EMITTED ARTIFACTS THAT HAVE TO AGREE, AND DID NOT.
+//
+// The shell calls setHasModulePathAddress(true) on every interface, so every
+// address in the network is a ModulePathAddress. GlobalArp switches on its own
+// `addressType`, which defaults to "ipv4": left at the default its
+// getL3AddressFor() scans the cache for L3Address::IPv4 entries, finds none,
+// and returns UNSPECIFIED every time.
+//
+// Measured on the nine-node field before the fix: unspecified on 100% of
+// lookups on every node, so the module published ZERO routes while flooding
+// correctly, compiling cleanly and reporting no error anywhere. Asserting the
+// string alone would not have caught it -- what makes this a regression test
+// is that it ties the .ned to what the .cc actually does, so changing either
+// one alone fails.
+const arpMatchesAddressing = (tree: GeneratedTree): void => {
+  const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
+  const ned = tree.find((f) => f.path.endsWith(".ned"))!.content;
+  if (!cc.includes("setHasModulePathAddress(true)")) return;   // not this shell
+  expect(ned).toContain("arp: GlobalArp {");
+  expect(ned).toContain('addressType = "modulepath";');
+};
+
 describe("generate (network branch) for MintRoute M4", () => {
   const tree = gen("MintRoute", "M4");
   const byExt = (e: string) => tree.find((f) => f.path.endsWith(e))!.content;
+
+  it("configures ARP for the addressing the shell actually installs", () => {
+    arpMatchesAddressing(tree);
+  });
 
   it("emits exactly three files", () => {
     expect(tree.map((f) => f.path.split(".").pop()).sort()).toEqual(["cc", "h", "ned"]);
@@ -466,20 +492,74 @@ describe("reserved-identifier handling", () => {
   });
 });
 
-// v5: the app layer's SensorApp shell carrying the packet pattern class.
+// Structure 3: the network-protocol shell carrying the packet pattern class.
 //
-// The point of the version is that PPkt is a PATTERN, not a possession of the
+// The point of the structure is that PPkt is a PATTERN, not a possession of the
 // protocol it was read off: the module is generated from the app-layer chain and
-// the packet classes come from MintRoute's partition. v4 must not move, because
-// it is the compare table's frozen artifact.
-describe("v5 = SensorApp shell + PPkt from another project", () => {
+// the packet classes come from MintRoute's partition. Structures 1 and 2 must
+// not move, because they are the compare table's frozen artifacts.
+//
+// ⚠ The shell was the SensorApp ApplicationBase until 2026-09-21; it is
+// NetworkProtocolBase now, so the diagram's green Interface + Base pair is
+// covered. What the packet source supplies is unchanged.
+describe("structure 3 = network-protocol shell + PPkt from another project", () => {
   const tree = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
     { files: loadProject("MintRoute"), machine: "M4" });
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
+  const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
 
-  it("keeps the app layer's shell, not the network protocol's", () => {
-    expect(h).toContain("class Pm3Wsn : public ApplicationBase, public INetworkSocket::ICallback {");
-    expect(h).not.toContain("NetworkProtocolBase");
+  it("takes the network protocol's shell, which is the diagram's green pair", () => {
+    // ⚠ THIS ASSERTED THE OPPOSITE UNTIL 2026-09-21, and the reversal is
+    // deliberate rather than a drift. Structure 3 used to keep the SensorApp
+    // ApplicationBase shell because it began as the app-layer module carrying
+    // PPkt. The 4x4 pattern class diagram's GREEN column is Interface + Base,
+    // and the classes that fill it were settled on 2026-09-08 from INET's own
+    // source: MintRoute is a protocol IN the stack and carries data, AODV is a
+    // routing daemon over UDP and never carries a packet, and the machines
+    // forward packets. Both network-layer outputs have emitted this pair ever
+    // since; structure 3 now matches them.
+    expect(h).toContain("class Pm3Wsn : public NetworkProtocolBase, public INetworkProtocol {");
+    expect(h).not.toContain("public ApplicationBase");
+  });
+
+  it("configures ARP for the addressing the shell actually installs", () => {
+    // The route publication depends on it: with ARP answering for the wrong
+    // address family, nodeAddress stays empty and every neighbour is skipped.
+    arpMatchesAddressing(tree);
+  });
+
+  it("gives the wrapper a routing table to publish into", () => {
+    // ⚠ MEASURED, NOT ANTICIPATED. The default used to be
+    // `^.ipv4.routingTable`, which is AODV's spelling and was right while this
+    // was an application over a full IPv4 stack. On the network shell the
+    // harness runs `**.hasIpv4 = false` and the run died at setup with
+    // "Module not found on path '^.ipv4.routingTable'". The wrapper carries a
+    // NextHopRoutingTable now, exactly as INET's own NextHopNetworkLayer.ned
+    // does -- MintRouteNetworkLayer has none, but MintRoute publishes no routes
+    // either (zero occurrences of IRoutingTable in MintRoute.cc).
+    const ned = tree.find((f) => f.path.endsWith(".ned"))!.content;
+    expect(ned).toContain("import inet.networklayer.nexthop.NextHopRoutingTable;");
+    expect(ned).toContain("routingTable: NextHopRoutingTable {");
+    expect(ned).toContain('*.routingTableModule = default(absPath(".routingTable"));');
+    expect(ned).not.toContain("^.ipv4.routingTable");
+    // ⚠ And the submodule declaration must be in the WRAPPER, not the simple
+    // module: a `simple` module cannot contain submodules at all, so landing it
+    // in the wrong one is a NED parse error rather than a subtle defect.
+    const wrapperAt = ned.indexOf("module Pm3WsnNetworkLayer ");
+    expect(wrapperAt).toBeGreaterThan(-1);
+    expect(ned.indexOf("routingTable: NextHopRoutingTable {")).toBeGreaterThan(wrapperAt);
+  });
+
+  it("keeps the packet pattern while changing the shell", () => {
+    // The point of the switch: the GREEN cells move and the AMBER ones do not.
+    // Reaching NetworkProtocolBase by giving the model a medium instead would
+    // have sent it down structure 2's branch, which consumes no packet source
+    // -- measured 2026-09-21: no control split, no neighbourTbl, no
+    // IRoutingTable. This is the assertion that would have caught that.
+    for (const c of ["class DataPkt : public PPkt", "class RoutePkt : public PPkt",
+                     "class BeaconPkt : public PPkt"]) expect(h).toContain(c);
+    expect(cc).toContain("neighbourTbl");
+    expect(cc).toContain("IRoutingTable");
   });
 
   it("carries the packet source's leaf classes, not its own", () => {
@@ -780,20 +860,29 @@ describe("v5 carries the packet pattern's operations", () => {
     }
   });
 
-  it("sends through the socket, since an application has no sendDown", () => {
+  it("sends through sendDown, since a network protocol has no socket", () => {
+    // The mirror of what this asserted before the shell switch. The three
+    // steps are unchanged; where the frame goes is not. The network form is
+    // not invented here -- it is the medium binding's own transmit, which is
+    // what every frame the network-layer modules send already goes through.
     const fn = cc.slice(cc.indexOf("void Pm3Wsn::sendBeaconBroadcast"));
     const body = fn.slice(0, fn.indexOf("\n}"));
-    expect(body).toContain("socket->send(packet);");
-    expect(body).not.toContain("sendDown(");
-    // Broadcast, because that is what the model means by a transmit.
-    expect(body).toContain("setDestAddress(broadcastAddress())");
+    expect(body).toContain("sendDown(packet);");
+    expect(body).not.toContain("socket->send");
+    // Broadcast, because that is what the model means by a transmit -- at the
+    // MAC now, rather than through an L3AddressReq tag.
+    expect(body).toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
+    // ⚠ `payloadLength` is a SensorApp shell member and the shell swap removes
+    // it. Naming it here would compile in the generator and fail in clang.
+    expect(body).toContain("setChunkLength(B(headerLength));");
+    expect(body).not.toContain("payloadLength");
   });
 
   it("sends the model's own packet, not the placeholder payload", () => {
     // The CommPattern merge put SensorApp's ByteCountChunk transmit inside
     // send_down, addressed to the sink. That was right while the model had no
     // packet of its own; now it has one.
-    const fn = cc.slice(cc.indexOf("bool Pm3Wsn::sendSensorPacket(Node x, PktId pkt)"));
+    const fn = cc.slice(cc.indexOf("bool Pm3Wsn::sendDown(Node x, PktId pkt)"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     // ⚠ WITH THE SENDER. The transmit pins the wire copy from send_down's own
     // `x` rather than reading it back off the shared local chunk, which an
@@ -853,7 +942,7 @@ describe("v5 arrival: the four fixes that made the flood propagate", () => {
     { files: loadProject("MintRoute"), machine: "M4" });
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
-  const arrival = cc.slice(cc.indexOf("void Pm3Wsn::socketDataArrived(INetworkSocket"));
+  const arrival = cc.slice(cc.indexOf("void Pm3Wsn::handleLowerPacket(Packet *packet)"));
   const body = arrival.slice(0, arrival.indexOf("\n}"));
 
   it("undoes the staged medium state when the delivery declines", () => {
@@ -907,7 +996,7 @@ describe("v5 arrival: the four fixes that made the flood propagate", () => {
     // it every tick. Measured before the fix: 57 frames on the air for one
     // start_tx_bconPkt. Re-firing the EVENT is legal (no actions, idempotent);
     // realising it is not, because the realisation is a transmission.
-    const tx = cc.slice(cc.indexOf("bool Pm3Wsn::sendSensorPacket(Node"));
+    const tx = cc.slice(cc.indexOf("bool Pm3Wsn::sendDown(Node"));
     const txBody = tx.slice(0, tx.indexOf("\n}"));
     expect(txBody).toContain("if (!txRealised.insert({x, pkt}).second)");
     expect(h).toContain("std::set<std::pair<Node, PktId>> txRealised;");
@@ -965,7 +1054,7 @@ describe("structure 3 reports its own state accurately", () => {
     expect(h).not.toContain("not schedulable: send_up");
     expect(h).toMatch(/not scheduled: send_up -- .*arrival realises it/);
     // ...and it must still be CALLED, or the label would be a lie too.
-    expect(cc).toMatch(/if \(socketDataArrived\(_f, _pkt, _nbrs\)\)/);
+    expect(cc).toMatch(/if \(handleLowerPacket\(_f, _pkt, _nbrs\)\)/);
   });
 
   it("derives the sender field instead of naming pktFwdr", () => {

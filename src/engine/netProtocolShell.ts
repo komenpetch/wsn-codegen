@@ -54,7 +54,10 @@ import { esc } from "./text";
 // half of it ran. `defaultName` is now the only source of the name and it is
 // layer-neutral ("M4Wsn"), so nothing has to be renamed when a model turns out
 // to have a network layer.
-const netLayerName = (cls: string): string =>
+// Exported because the routing-table binding has to find this same wrapper in
+// the emitted .ned to put the route table inside it. One spelling, one place:
+// two copies of a name derivation is how the two drift.
+export const netLayerName = (cls: string): string =>
   cls ? `${cls}NetworkLayer` : "NetworkLayer";
 
 // The app layer's class doc comment, verbatim from codeEmitter.ts, and what
@@ -349,6 +352,23 @@ function ned(cls: string, machine: string): string {
     "    submodules:",
     "        arp: GlobalArp {",
     "            parameters:",
+    "                // ⚠ MODULEPATH, NOT GlobalArp's OWN DEFAULT OF \"ipv4\".",
+    "                //",
+    "                // This shell calls setHasModulePathAddress(true) on every",
+    "                // interface at INITSTAGE_NETWORK_INTERFACE_CONFIGURATION, so",
+    "                // every address in the network -- and every key in ARP's own",
+    "                // globalArpCache -- is a ModulePathAddress. GlobalArp switches",
+    "                // on addressType: left at \"ipv4\" its getL3AddressFor() scans the",
+    "                // cache for entries of type L3Address::IPv4, finds none, and",
+    "                // returns UNSPECIFIED. Measured before this: unspecified on 100%",
+    "                // of lookups on every node, so the module published ZERO routes",
+    "                // while flooding correctly and reporting no error at all.",
+    "                //",
+    "                // These are two things this generator emits, and they have to",
+    "                // agree: an ARP configured for a different address family than",
+    "                // the layer it serves is misconfigured whether or not anything",
+    "                // happens to query it.",
+    "                addressType = \"modulepath\";",
     "                @display(\"p=100,300\");",
     "        }",
     `        np: ${cls} {`,
