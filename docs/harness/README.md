@@ -33,6 +33,7 @@ Kept — none of it can be regenerated:
 | `MinNetwork.ned` | the minimal network |
 | `build.sh` / `run.sh` | build and run, including the environment traps |
 | `loop.sh` | the route-publication feedback loop (generator → stage → build → run → assert) |
+| `probe_state.mjs` | instruments finish() with container sizes, for residues the battery cannot see |
 | `invariants.sh` | the flood's conservation laws, as a pass/fail battery |
 
 Deliberately **not** kept:
