@@ -1,9 +1,9 @@
 import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// ⚠ Six suites read a case-study Event-B model DIRECTLY off disk, and those
+// ⚠ Several suites read a case-study Event-B model DIRECTLY off disk, and those
 // models are the advisor's research sources, deliberately not published in this
 // repo (CLAUDE.md 2026-07-06 (vi)). They sit in sibling folders of this package,
 // so on a clean checkout -- CI, or anyone who clones it -- they are absent and
@@ -21,17 +21,35 @@ import { resolve } from "node:path";
 // that matched nothing, so a test walked every method and checked zero.
 const MODELS = ["../EventB_model", "../Update_wsn"].map((d) => resolve(process.cwd(), d));
 const haveModels = MODELS.every(existsSync);
-const needsModels = [
-  "tests/appLayerUnchanged.test.ts",
-  "tests/generateNet.test.ts",
-  "tests/mediumBinding.test.ts",
-  "tests/packetModel.test.ts",
-  "tests/packetRulesEvidence.test.ts",
-  "tests/packetTypes.test.ts",
-  // Reads C0_project and MintRoute to construct the one scenario in which an
-  // image-bound parameter is actually reached.
-  "tests/imageParamType.test.ts",
-];
+
+// ⚠ DERIVED BY SCANNING, NOT LISTED — and the list going stale is not
+// hypothetical, it is what broke the deployment.
+//
+// This was seven hardcoded filenames. Seven more model-reading suites were
+// added afterwards and nobody appended them, so on a clean checkout they failed
+// at ENOENT and took the whole run down with them. It went unnoticed for weeks
+// because the commits that added them were never pushed, so CI never saw them:
+// the first push after that ran straight into 8 errors and a failed Pages
+// deploy. A list a human has to remember to update is the defect.
+//
+// Three spellings reach a sibling model, all of them in use:
+//   loadProject(...)        scripts/projects.ts resolves the sibling folders
+//   "../EventB_model"       a literal path
+//   resolve(HERE, "../..")  the parent, from which a path is then built
+const REACHES_OUT = /loadProject|\.\.\/(EventB_model|Update_wsn)|"\.\.\/\.\."/;
+const needsModels = readdirSync(resolve(process.cwd(), "tests"))
+  .filter((f) => f.endsWith(".test.ts"))
+  .filter((f) => REACHES_OUT.test(readFileSync(resolve(process.cwd(), "tests", f), "utf8")))
+  .map((f) => `tests/${f}`)
+  .sort();
+
+// A scan that matches NOTHING would silently restore the exact breakage above,
+// so it is an error rather than an empty exclusion list.
+if (needsModels.length === 0)
+  throw new Error(
+    "vite.config: no suite matched the model-reading scan. Either every such suite was "
+    + "removed, or the signals in REACHES_OUT no longer match how they load a model. "
+    + "Refusing rather than shipping a config that excludes nothing on a clean checkout.");
 if (!haveModels)
   console.warn(
     `\n[vitest] Case-study Event-B models not found beside this repo.\n` +
