@@ -200,3 +200,44 @@ describe("per-leaf creating events are derived from the project's own split", ()
     expect((x.match(/org\.eventb\.core\.target="creatingControlPacket"/g) ?? [])).toHaveLength(2);
   });
 });
+
+// ⚠ THE ORIGINATOR MUST RECORD ITS OWN PACKET AS SEEN.
+//
+// MintRoute M1 `create_controlPkt` carries it and our derived events did not:
+//   g5  s ∈ dom(floodTbl) ∧ pkt ∉ floodTbl(s)
+//   a3  floodTbl(s) ≔ floodTbl(s) ∪ {pkt}
+// Without it a neighbour's rebroadcast of this node's own packet can be consumed
+// by NEITHER receive event: `receive_<ctl>Pkt` rejects it on `s ≠ nb` (I am the
+// source) and `receive_dup_<ctl>Pkt` on `pkt ∈ floodTbl(nb)` (never recorded).
+// The delivery then sits in `ctlNeighbours` for ever and blocks every later copy
+// of that packet at `send_up`'s `pkt ∉ dom(ctlNeighbours)`. Measured 2026-09-27
+// on the nine-node field: 84 of 93 stuck deliveries at 60 s were exactly this.
+describe("a derived creating event records its own packet as seen", () => {
+  const creatingEvents = (x: string) =>
+    x.split("<org.eventb.core.event ").filter((e) => /label="create_\w+Pkt"/.test(e));
+
+  const shapes: [string, EbFiles][] = [
+    ["a split control set", [
+      machine("pM3", "CONTROL"),
+      ctx("C1", ["partition(TYPE, CONTROL, {DATA})", "partition(CONTROL, {ROUTE}, {BEACON})"],
+        ["DATA", "CONTROL", "ROUTE", "BEACON", "type"])]],
+    ["an unsplit control set", [
+      machine("pM3", "FLOOD"),
+      ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"])]],
+  ];
+
+  for (const [shape, files] of shapes) {
+    it(`adds the packet to the originator's own floodTbl — ${shape}`, () => {
+      const events = creatingEvents(uM4Of(files));
+      expect(events.length).toBeGreaterThan(0);   // or the loop below proves nothing
+      for (const e of events)
+        expect(e).toContain('org.eventb.core.assignment="floodTbl(x) ≔ floodTbl(x) ∪ {pkt}"');
+    });
+
+    it(`guards the domain it writes into, as MintRoute's g5 does — ${shape}`, () => {
+      // Well-definedness of `floodTbl(x)`: the action applies the function at x.
+      for (const e of creatingEvents(uM4Of(files)))
+        expect(e).toContain('org.eventb.core.predicate="x ∈ dom(floodTbl) ∧ pkt ∉ floodTbl(x)"');
+    });
+  }
+});

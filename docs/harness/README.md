@@ -35,6 +35,7 @@ Kept — none of it can be regenerated:
 | `loop.sh` | the route-publication feedback loop (generator → stage → build → run → assert) |
 | `probe_state.mjs` | instruments finish() with container sizes, for residues the battery cannot see |
 | `invariants.sh` | the flood's conservation laws, as a pass/fail battery |
+| `leak_check.sh` / `leak_probe.mjs` | no delivery left waiting > 2 s — the regression check for the 2026-09-27 delivery leak, red-capable (101 stuck on the pre-fix build), and it restores and rebuilds the module whatever the outcome |
 
 Deliberately **not** kept:
 

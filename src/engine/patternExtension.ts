@@ -233,12 +233,14 @@ function deriveControlEvents(raw: RawModel): { vars: string; invs: string; inits
       <org.eventb.core.guard name="grd06" org.eventb.core.label="User_defined_guard_g1" org.eventb.core.predicate="data = CTL_VAL" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd07" org.eventb.core.label="User_defined_guard_g2" org.eventb.core.predicate="type(pkt) ${isSet ? "∈" : "="} ${leaf}" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd08" org.eventb.core.label="MPacket_${ctr}_g" org.eventb.core.predicate="pkt ∉ dom(pktSeqNo) ∧ x ∈ dom(${ctr}) ∧ sno = ${ctr}(x) + 1" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd09" org.eventb.core.label="MFlood_own_g" org.eventb.core.predicate="x ∈ dom(floodTbl) ∧ pkt ∉ floodTbl(x)" org.eventb.core.comment="MintRoute M1 create_controlPkt g5." org.eventb.core.theorem="false"/>
       <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_creating_pkt_a1" org.eventb.core.assignment="createdPkts ≔ createdPkts ∪ {pkt}"/>
       <org.eventb.core.action name="act02" org.eventb.core.label="MPacket_creating_pkt_a2" org.eventb.core.assignment="pktFwdr ≔ pktFwdr ∪ {pkt ↦ x}"/>
       <org.eventb.core.action name="act03" org.eventb.core.label="MPacket_creating_pkt_a3" org.eventb.core.assignment="pktData ≔ pktData ∪ {pkt ↦ data}"/>
       <org.eventb.core.action name="act04" org.eventb.core.label="MNDbuffMgt_record_ndBuff_a1" org.eventb.core.assignment="ndBuff ≔ ndBuff ∪ {x ↦ pkt}"/>
       <org.eventb.core.action name="act05" org.eventb.core.label="MPacket_pktSeqNo_a1" org.eventb.core.assignment="pktSeqNo ≔ pktSeqNo ∪ {pkt ↦ sno}"/>
       <org.eventb.core.action name="act06" org.eventb.core.label="MPacket_${ctr}_a" org.eventb.core.assignment="${ctr} ≔ ${ctr} ⊕ {x ↦ sno}"/>
+      <org.eventb.core.action name="act07" org.eventb.core.label="MFlood_own_a" org.eventb.core.assignment="floodTbl(x) ≔ floodTbl(x) ∪ {pkt}" org.eventb.core.comment="MintRoute M1 create_controlPkt a3: the originator has seen its own packet. Without it a neighbour's rebroadcast of it can be consumed by neither receive event (s ≠ nb rejects it; it is not in floodTbl) and blocks every later copy -- measured 2026-09-27: 84 of 93 stuck deliveries."/>
    </org.eventb.core.event>`);
   });
 

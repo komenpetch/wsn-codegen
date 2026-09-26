@@ -90,7 +90,7 @@ export function leafMachine(files: EbFiles): string {
 // Generate one class for a single target machine, flattened over its refines
 // chain (base first). `outputName` is the emitted class/file name.
 export function generate(files: EbFiles, target: string, outputName: string,
-  version: EmitVersion = 2, packetSource?: PacketSource, drain = false): GeneratedTree {
+  version: EmitVersion = 2, packetSource?: PacketSource, drain = true): GeneratedTree {
   return emitOne(parsedMachines(files), target, outputName, version,
     packetSourceFor(files, target, version, packetSource), drain);
 }
@@ -135,7 +135,7 @@ function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
 }
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
-  packetSource?: PacketSource, drain = false): GeneratedTree {
+  packetSource?: PacketSource, drain = true): GeneratedTree {
   const tree = emitBody(raw, target, outputName, version, packetSource, drain);
   // ONE exit point for the namespace, so a future structure cannot be added
   // without it. A module emitted without the wrap compiles perfectly on its own
@@ -147,7 +147,7 @@ function emitOne(raw: RawModel, target: string, outputName: string, version: Emi
 }
 
 function emitBody(raw: RawModel, target: string, outputName: string, version: EmitVersion,
-  packetSource?: PacketSource, drain = false): GeneratedTree {
+  packetSource?: PacketSource, drain = true): GeneratedTree {
   // v5: the app layer's SensorApp shell, carrying PPkt. The shell is v4's --
   // codeEmitter treats 5 as 4 -- and the packet classes are spliced on top from
   // `packetSource`, which is why v4 itself does not move: it stays the frozen
@@ -490,7 +490,8 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // The forwarder is a property of the DELIVERY, so a receive event binds
       // it from what the arrival recorded rather than off the shared chunk.
       fwdr,
-      // Drain the non-creating events to a bounded fixpoint. Off by default.
+      // Drain the non-creating events to a bounded fixpoint. ON by default since
+      // 2026-09-27; `--no-drain` reproduces the per-pass backlog it fixes.
       drain);
     // PRouteTable published to INET, when the model has a route table to
     // publish. Null is a legitimate answer -- a model with no node-relation
@@ -517,7 +518,7 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
 // exactly three files (<name>.h/.cc/.ned). `outputName` defaults to the leaf's
 // derived name. `version` selects the emitted structure (see EmitVersion).
 export function generateMerged(files: EbFiles, outputName?: string,
-  version: EmitVersion = 2, packetSource?: PacketSource, drain = false): GeneratedTree {
+  version: EmitVersion = 2, packetSource?: PacketSource, drain = true): GeneratedTree {
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
   return emitOne(raw, leaf, outputName ?? defaultName(leaf), version,

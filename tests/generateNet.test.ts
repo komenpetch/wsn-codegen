@@ -1083,6 +1083,76 @@ describe("structure 3 reports its own state accurately", () => {
   });
 });
 
+// ⚠ THE DELIVERY LEAK (2026-09-27). ~7-9 % of deliveries were published by
+// `send_up` and never consumed, growing linearly with run length (51 / 111 / 218
+// stuck at 30 / 60 / 120 s), and one stuck delivery also blocks every later copy
+// of its packet — so the real cost was 247 of 1571 decoded frames. TWO causes,
+// each proven by intervention on the nine-node field; each alone left the leak
+// growing, both together took it to zero at every run length.
+//
+// These assertions read the SHIPPED structure 3 (AppLayer + the bundled
+// extension). They pin the emitted shape; the behavioural seam is the
+// simulation, where Simulation/v3_net/leak_check.sh asserts no delivery is left
+// waiting for more than 2 s.
+describe("structure 3 consumes every delivery it publishes", () => {
+  const cc = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
+    .find((f) => f.path.endsWith(".cc"))!.content;
+  const body = (sig: string) => cc.slice(cc.indexOf(sig)).split("\n}")[0];
+
+  // CAUSE 1a, as C++. The Rodin side is pinned in controlLeaves.test.ts; this
+  // pins that it TRANSLATES — an untranslated clause makes the creating event
+  // refuse to fire, which would silently end all origination.
+  it("records the created packet in the originator's own floodTbl", () => {
+    for (const ev of ["create_routePkt", "create_beaconPkt"]) {
+      const b = body(`bool Pm3Wsn::${ev}(`);
+      expect(b).toContain("floodTbl[x].insert(pkt);");
+      expect(b).not.toContain("UNTRANSLATED");
+    }
+  });
+
+  // CAUSE 1b. `localIdFor` learnt a wire key only from ARRIVALS, so a packet
+  // this node created was never registered, and its echo resolved to a freshly
+  // minted id. Recording the created id in floodTbl (cause 1a) then changed
+  // NOTHING — measured — because the echo was not that id.
+  it("registers every packet it transmits under the key localIdFor looks up", () => {
+    const keyOf = (sig: string) => body(sig).match(/std::vector<long> key\{([^}]*)\}/)?.[1];
+    const lookup = keyOf("PktId Pm3Wsn::localIdFor(");
+    expect(lookup).toBeTruthy();
+    expect(keyOf("void Pm3Wsn::rememberSentPacket(")).toBe(lookup);
+  });
+
+  it("registers it before the frame leaves", () => {
+    const send = body("bool Pm3Wsn::sendDown(Node x, PktId pkt)");
+    const remember = send.indexOf("rememberSentPacket(pkt);");
+    expect(remember).toBeGreaterThan(-1);
+    expect(remember).toBeLessThan(send.indexOf("transmitPacket(x, pkt);"));
+  });
+
+  // CAUSE 2. Each reception queues `(f, nb)` in `updateNbrs`, which blocks every
+  // later delivery from f until `update_nbr` drains it — and update_nbr ran
+  // ONCE, AFTER the receive events, so a delivery it freed waited for a pass
+  // that might never take it. `--drain` could not help: it loops the TIMER pass,
+  // which contains no update_nbr.
+  it("runs the delivery events to a bounded fixpoint", () => {
+    const d = body("bool Pm3Wsn::runDeliveryEvents()");
+    const loop = d.slice(d.indexOf("for (int _round = 0;"));
+    expect(d).toContain("for (int _round = 0;");
+    expect(loop).toContain("if (!_any) break;");
+    // Both halves of the handshake are inside the loop, so a delivery the drain
+    // frees is retried in the same arrival.
+    expect(loop).toContain("if (try_receive_dup_controlPkt()) _any = true;");
+    expect(loop).toContain("if (update_nbr(");
+  });
+
+  it("still creates nothing on an arrival, fixpoint or not", () => {
+    // The zero-time storm (52,034 events at one instant) is what excluding the
+    // creating events from the arrival prevents; a loop must not let one back in.
+    const d = body("bool Pm3Wsn::runDeliveryEvents()");
+    expect(d).not.toContain("try_create_");
+    expect(d).not.toContain("newPktId()");
+  });
+});
+
 describe("--drain: the non-creating events are drained, the creating ones are not", () => {
   // ⚠ THE DEFECT THIS FIXES, MEASURED. runEnabledEvents attempts each event ONCE
   // per pass, so a node creating one ROUTE and one BEACON per tick gets one
@@ -1095,16 +1165,27 @@ describe("--drain: the non-creating events are drained, the creating ones are no
   // satisfiable indefinitely -- a fresh packet can always be minted -- so draining
   // them originates unboundedly many per tick, which is worse than the backlog.
   const src = { files: loadProject("MintRoute"), machine: "M4" };
-  const ccOf = (drain: boolean) =>
+  const ccOf = (drain?: boolean) =>
     generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3, src, drain)
       .find((f) => f.path.endsWith(".cc"))!.content;
 
+  // ⚠ SCOPED TO runEnabledEvents. runDeliveryEvents has a bounded loop of its
+  // own since 2026-09-27, spelled the same way, so an unscoped search for the
+  // first `for (int _round` would find THAT one and pass whatever the timer did.
   const loopOf = (cc: string) => {
-    const at = cc.indexOf("for (int _round = 0;");
-    return at < 0 ? null : cc.slice(at, cc.indexOf("\n    }", at));
+    const run = cc.slice(cc.indexOf("bool Pm3Wsn::runEnabledEvents()")).split("\n}")[0];
+    const at = run.indexOf("for (int _round = 0;");
+    return at < 0 ? null : run.slice(at, run.indexOf("\n    }", at));
   };
 
-  it("emits no drain loop by default, so recorded measurements stay reproducible", () => {
+  // ⚠ ON BY DEFAULT since 2026-09-27 (user decision). It was off so recorded
+  // measurements stayed reproducible; the delivery-leak fix moved every one of
+  // them anyway, so the two were re-baselined in one round rather than two.
+  it("drains by default", () => {
+    expect(loopOf(ccOf())).not.toBeNull();
+  });
+
+  it("emits no drain loop when switched off (--no-drain)", () => {
     expect(loopOf(ccOf(false))).toBeNull();
   });
 

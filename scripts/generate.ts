@@ -36,10 +36,13 @@ const flag = argv.find((a) => /^--v[123]$/.test(a));
 const version = (flag ? Number(flag.slice(3)) : 2) as EmitVersion;
 // Drain the non-creating events to a bounded fixpoint each pass (structure 3).
 //
-// OFF by default so every recorded measurement stays reproducible: this is the
-// fix for the per-pass backlog, and turning it on moves flood numbers, so the
-// two want measuring side by side rather than one replacing the other.
-const drain = argv.includes("--drain");
+// ON by default since 2026-09-27 (user decision). It was off so the recorded
+// measurements stayed reproducible; the delivery-leak fix of the same day moved
+// every one of them anyway, so both were re-baselined in one round. `--no-drain`
+// turns it off, to reproduce the per-pass backlog it fixes; `--drain` is
+// accepted and changes nothing.
+const noDrain = argv.includes("--no-drain");
+const drain = !noDrain;
 const mIdx = argv.indexOf("--machine");
 const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
 // `mIdx + 1` is only a real index to skip when --machine was actually given.
@@ -47,20 +50,22 @@ const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
 // argument silently disappears.
 const named = new Set(["--machine"]);
 const valueAt = new Set([mIdx].filter((i) => i >= 0).map((i) => i + 1));
-// ⚠ REFUSED rather than silently ignored. --drain is wired into structure 3's
-// scheduler only; accepting it elsewhere would report success and emit a module
-// with no drain in it, which is the "flag that does nothing" failure this
-// project has paid for before.
-if (drain && version !== 3) {
-  console.error("\n--drain applies to structure 3 (--v3); it is not wired into the "
-    + "other structures. Re-run with --v3, or drop --drain.\n");
+// ⚠ REFUSED rather than silently ignored. Draining is wired into structure 3's
+// scheduler only; accepting either flag elsewhere would report success and emit
+// a module the flag never touched, which is the "flag that does nothing"
+// failure this project has paid for before.
+const drainFlag = argv.find((a) => a === "--drain" || a === "--no-drain");
+if (drainFlag && version !== 3) {
+  console.error(`\n${drainFlag} applies to structure 3 (--v3); it is not wired into the `
+    + `other structures. Re-run with --v3, or drop ${drainFlag}.\n`);
   process.exit(2);
 }
-// ⚠ `--drain` has to be excluded here too, or it is taken as the INPUT
-// directory: the filter drops only the version flags and the named pairs, so an
-// unlisted flag silently becomes positional[0].
+// ⚠ Both drain flags have to be excluded here too, or one is taken as the
+// INPUT directory: the filter drops only the version flags and the named pairs,
+// so an unlisted flag silently becomes positional[0].
 const positional = argv.filter((a, i) =>
-  !/^--v[12345]$/.test(a) && a !== "--drain" && !named.has(a) && !valueAt.has(i));
+  !/^--v[12345]$/.test(a) && a !== "--drain" && a !== "--no-drain"
+  && !named.has(a) && !valueAt.has(i));
 
 const input = positional[0] ?? "tests/fixtures/shdecom";
 const outDir = positional[1] ?? "out";

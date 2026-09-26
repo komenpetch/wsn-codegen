@@ -33,9 +33,9 @@
 import type { GeneratedTree } from "./types";
 import type { PacketModel, PacketField } from "./packetModel";
 import { broadcastMethodOf, getterOf, setterOf, DELIVERED_BY } from "./packetModel";
-import { headerOf, implOf, mustFind } from "./emitted";
+import { headerOf, implOf, mustFind, mustReplace } from "./emitted";
 import { esc } from "./text";
-import { emitLocalIdFor, identityMembers } from "./mediumBinding";
+import { emitLocalIdFor, emitRememberSentPacket, identityMembers } from "./mediumBinding";
 import type { PacketIdentity } from "./mediumBinding";
 import type { ShellKind } from "./nodeIdentity";
 
@@ -477,6 +477,8 @@ export function installAppReceive(tree: GeneratedTree, cls: string,
     std::map<PktId, Node> ${DELIVERED_BY};
 `
           + identityMembers
+          + "\n    // Register a packet this node transmits, so its echo resolves to it."
+          + "\n    void rememberSentPacket(PktId pkt);"
           + "\n    // True when the address is one of this node's own, loopback included."
           + "\n    bool isOwnAddress(const L3Address& addr) const;"
           + "\n    // The same, one layer down, for a shell with no IP layer to tag an arrival."
@@ -507,15 +509,22 @@ export function installAppReceive(tree: GeneratedTree, cls: string,
       const at = shell === "network" ? found + hook.length + 1 : found;
       const end = f.content.indexOf("\n}", at);
       if (end < 0) throw new Error("appTransmit: the arrival callback has no closing brace.");
-      const body = f.content.slice(0, at)
+      const received = f.content.slice(0, at)
         + arrival(deliverMethod, getterOf(senderField), staged, deserialise).join("\n")
         + f.content.slice(end + 2);
+      // Every packet that leaves is registered before it leaves, so a
+      // neighbour's rebroadcast of it resolves to this id. Here rather than in
+      // the transmit pass because it is the ARRIVAL's identity map it feeds.
+      const body = mustReplace(received, `    ${DISPATCH}(x, pkt);\n`,
+        `    rememberSentPacket(pkt);   // so its echo resolves to this id\n    ${DISPATCH}(x, pkt);\n`,
+        "installAppReceive (register the transmitted packet)");
       // localIdFor and isOwnAddress go beside the transmit methods. Anchored on
       // the DISPATCH comment, which both shells emit -- the broadcast-address
       // helper it used to key on exists only on the application side.
       const defAt = mustFind(body, "// Dispatch on the packet's OWN type",
         "installAppReceive (localIdFor placement)");
       return { ...f, content: body.slice(0, defAt) + emitLocalIdFor(id, cls) + "\n\n"
+        + emitRememberSentPacket(id, cls) + "\n\n"
         + isOwnAddressFn(cls) + "\n\n" + body.slice(defAt) };
     }
     return f;

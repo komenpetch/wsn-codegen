@@ -163,8 +163,9 @@ interface Plan {
   method?: string;      // emitted name, when the CommPattern merge renamed it
 }
 
-// How many extra rounds `runEnabledEvents` may drain when draining is on.
-// A bound, not a fixpoint-forever: two events can enable each other.
+// How many extra rounds `runEnabledEvents` may drain when draining is on, and
+// how many rounds an arrival's `runDeliveryEvents` may run. A bound, not a
+// fixpoint-forever: two events can enable each other.
 const DRAIN_ROUNDS = 64;
 
 const NUM = String.raw`(?:−|-)?\d+`;
@@ -802,9 +803,10 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   leaves: ReadonlySet<string> = new Set(),
   // See planFor.
   senderField: PacketField | null = null,
-  // Drain the non-creating events to a bounded fixpoint each pass. Off by
-  // default, so every recorded measurement stays reproducible and the fix can
-  // be measured against them side by side rather than replacing them.
+  // Drain the non-creating events to a bounded fixpoint each pass. False HERE
+  // because the network branch (structure 2's M4Wsn/M6Wsn) calls this without
+  // it and never had it; structure 3's pipeline passes true by default since
+  // 2026-09-27.
   drain = false): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
@@ -993,18 +995,41 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   //
   // Derived, not listed: the receive events come from what send_up publishes,
   // the transmit events from what send_down observes.
+  //
+  // ⚠ AND IT RUNS TO A BOUNDED FIXPOINT, not once. The receive events and the
+  // inline drains are two halves of one handshake: a reception queues
+  // `(f, nb)` in `updateNbrs`, which blocks every later delivery from f until
+  // `update_nbr` removes it -- and update_nbr runs only here, AFTER the receive
+  // events. Run once, a delivery the drain freed waited for a pass that might
+  // never take it (the timer's has no drain in it at all). Measured 2026-09-27:
+  // with the echo fix in, stuck deliveries still grew 16 / 40 / 65 at
+  // 30 / 60 / 120 s; with the fixpoint, 0 at every length.
+  //
+  // Safe for the same reason the arrival was safe to begin with: the creating
+  // events are NOT in this set, so every event here consumes state and none
+  // mints it. The bound is DRAIN_ROUNDS all the same.
   if (deliveryLabels.length > 0 || inlined.size > 0) {
     const usable = deliveryLabels.filter((l) => scheduled.some((p) => p.label === l));
-    defs.push(
-      "// The events a DELIVERY enables -- the subset an arrival may run.\n" +
-      `bool ${cls}::runDeliveryEvents()\n{\n    bool fired = false;\n` +
-      usable.map((l) => `    if (try_${l}()) fired = true;`).join("\n") +
+    const indent = (block: string) => block.split("\n").map((l) => `    ${l}`).join("\n");
+    const round = [
+      ...usable.map((l) => `    if (try_${l}()) _any = true;`),
       // ⚠ After the receive events, never before: they are what fills the
       // state these drain, so running them first would find nothing.
-      (inlined.size
-        ? "\n" + firable.filter((p) => inlined.has(p.label)).map(inlineAt).join("\n")
-        : "") +
-      "\n    return fired;\n}",
+      ...firable.filter((p) => inlined.has(p.label))
+        .map((p) => inlineAt(p).replace(/\}\(\)\) fired = true;$/, "}()) _any = true;")),
+    ].join("\n");
+    defs.push(
+      "// The events a DELIVERY enables -- the subset an arrival may run -- to a\n" +
+      "// bounded fixpoint, so a delivery one of them frees is taken in the same\n" +
+      "// arrival rather than left waiting.\n" +
+      `bool ${cls}::runDeliveryEvents()\n{\n    bool fired = false;\n` +
+      `    for (int _round = 0; _round < ${DRAIN_ROUNDS}; _round++) {\n` +
+      "        bool _any = false;\n" +
+      indent(round) + "\n" +
+      "        if (!_any) break;   // fixpoint reached\n" +
+      "        fired = true;\n" +
+      "    }\n" +
+      "    return fired;\n}",
     );
   }
 

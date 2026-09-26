@@ -499,15 +499,21 @@ export const identityMembers = [
   "    PktId localIdFor(const PPkt *w);",
 ].join("\n");
 
+// The key a packet is known by across nodes, over a chunk named `w`. ONE
+// builder, because the two places that compute it -- the lookup an arrival makes
+// and the registration a transmit makes -- must agree exactly, or an echo misses
+// the entry its own sender made.
+const wireKeyLine = (identity: PacketIdentity["identity"]): string =>
+  `std::vector<long> key{ ${identity.map((i) => `static_cast<long>(w->${i.getter}())`).join(", ")} };`;
+
 export function emitLocalIdFor({ identity, carried }: PacketIdentity, cls: string): string {
-  const key = identity.map((i) => `static_cast<long>(w->${i.getter}())`);
   return [
     "// Resolve an arriving chunk to THIS node's id for that packet, minting one",
     "// the first time. Two receptions of the same packet -- over different hops,",
     "// from different forwarders -- must land on the same id, or the model's own",
     "// duplicate test can never be true and the flood never terminates.",
     `PktId ${cls}::localIdFor(const PPkt *w) {`,
-    `    std::vector<long> key{ ${key.join(", ")} };`,
+    `    ${wireKeyLine(identity)}`,
     "    auto it = pktIdByWire.find(key);",
     "    if (it != pktIdByWire.end()) return it->second;",
     "    PktId id = newPktId();",
@@ -518,6 +524,31 @@ export function emitLocalIdFor({ identity, carried }: PacketIdentity, cls: strin
     "    local->setType(w->getType());",
     ...carried.map((c) => `    local->${c.setter}(w->${c.getter}());`),
     "    return id;",
+    "}",
+  ].join("\n");
+}
+
+// The other half of localIdFor: a packet this node puts on the air is registered
+// under the same key, so that its ECHO resolves to the id it was sent under.
+export function emitRememberSentPacket({ identity }: PacketIdentity, cls: string): string {
+  return [
+    "// Register a packet this node transmits under the key an arrival looks it up",
+    "// by, so that its ECHO -- a neighbour's rebroadcast of it -- resolves to the",
+    "// id it was sent under.",
+    "//",
+    "// ⚠ localIdFor learnt keys only from ARRIVALS, so a packet this node CREATED",
+    "// was never registered and its echo was minted a fresh id. Neither receive",
+    "// event can consume that: the originator test rejects it, and it is in no",
+    "// floodTbl. The delivery then waits for ever and blocks every later copy of",
+    "// the packet. Measured 2026-09-27: 84 of 93 stuck deliveries at 60 s.",
+    "//",
+    "// emplace, not assignment: a forwarded packet was registered by its arrival,",
+    "// under this same id, and keeps it.",
+    `void ${cls}::rememberSentPacket(PktId pkt) {`,
+    "    const PPkt *w = pktOf(pkt);",
+    "    if (w == nullptr) return;",
+    `    ${wireKeyLine(identity)}`,
+    "    pktIdByWire.emplace(key, pkt);",
     "}",
   ].join("\n");
 }
