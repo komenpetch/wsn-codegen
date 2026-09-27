@@ -36,6 +36,7 @@ Kept — none of it can be regenerated:
 | `probe_state.mjs` | instruments finish() with container sizes, for residues the battery cannot see |
 | `invariants.sh` | the flood's conservation laws, as a pass/fail battery |
 | `leak_check.sh` / `leak_probe.mjs` | no delivery left waiting > 2 s — the regression check for the 2026-09-27 delivery leak, red-capable (101 stuck on the pre-fix build), and it restores and rebuilds the module whatever the outcome |
+| `type_check.sh` / `type_probe.mjs` / `type_analyse.mjs` | the flood's conservation laws **per packet type** (a per-type defect can hide inside `invariants.sh`'s sums) plus per-type reach; takes an optional module dir to stage instead of `loop.sh`'s, so it checks both the flooding and the AODV routing; red-capable (proven on a hand-broken `.sca`); restores and rebuilds whatever the outcome |
 
 Deliberately **not** kept:
 
@@ -45,6 +46,21 @@ Deliberately **not** kept:
 - `Makefile` — written by `opp_makemake`, and it bakes in the source list at
   generation time. Regenerate it whenever a file is added, removed or renamed.
 - `out/`, `results*/` — build output and measurement data.
+
+## v3_aodv and v3_flood — one folder per routing (2026-09-27)
+
+Both folders generate from **`Update_wsn/C0_project` as it is** — read in place,
+never copied, never edited, nothing added: both routings come from the pattern the
+tool ships. The scripts are identical; the ONLY difference is the `ROUTING` file
+(`aodv` / `flooding`), which `loop.sh` passes to the generator as `--routing` to
+choose the pattern's control split (flooding ROUTE/BEACON, AODV RREQ/RREP/RRER).
+`loop.sh` **refuses (exit 3) when the generator produced the other routing** —
+proven by making the generator ignore `--routing`. Each folder has its own
+`README.md`. Every script derives the folder and the executable name from where it
+lives, so nothing in either points at `v3_net`.
+
+**v3_net stays as it is**: every measurement recorded before these two existed
+was made there.
 
 ## v3_net
 

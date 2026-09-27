@@ -31,13 +31,20 @@ const modelWith = (...actions: string[]) => ({
   variables: [], variableTypes: new Map(),
 } as unknown as EncodedMachine);
 
-const tree = (): GeneratedTree => [
+// ⚠ The constructor carries the emitter's UNTRANSLATED marker for every
+// INITIALISATION action, as codeEmitter writes it: bindNodeIdentity rewrites the
+// markers of the ones it realises (2026-09-27, the untranslated over-count) and
+// refuses when one is missing, so a fixture without them is not the module the
+// pass receives.
+const tree = (model: EncodedMachine): GeneratedTree => [
   { path: "X.h", content: "    // ── Event-B machine state ──\n" },
-  { path: "X.cc", content: "void X::initialize(int stage) {\n    base();\n}\n" },
+  { path: "X.cc", content: "X::X() {\n"
+    + model.events[0].actions.map((a) => `    // UNTRANSLATED ACTION: ${a}\n`).join("")
+    + "}\nvoid X::initialize(int stage) {\n    base();\n}\n" },
 ];
 const cc = (t: GeneratedTree) => t.find((f) => f.path.endsWith(".cc"))!.content;
 const bind = (model: EncodedMachine, contexts: RawContext[]) =>
-  cc(bindNodeIdentity(tree(), model, contexts, "X"));
+  cc(bindNodeIdentity(tree(model), model, contexts, "X"));
 
 describe("a cartesian INITIALISATION is specialised only over a NODE carrier", () => {
   const nodeCtx = ctx({ constants: [], axioms: ax("Dests ⊆ ND") });

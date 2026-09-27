@@ -13,6 +13,7 @@ import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablin
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { routeTableOf, bindRoutingTable } from "./routingTable";
 import { patternExtensionFor } from "./patternExtension";
+import type { RoutingStyle } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
 import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
@@ -89,10 +90,13 @@ export function leafMachine(files: EbFiles): string {
 
 // Generate one class for a single target machine, flattened over its refines
 // chain (base first). `outputName` is the emitted class/file name.
+// `routing` (structure 3 only) picks which of the tool's bundled control splits
+// to apply instead of reading it off the project's shape — see patternExtensionFor.
 export function generate(files: EbFiles, target: string, outputName: string,
-  version: EmitVersion = 2, packetSource?: PacketSource, drain = true): GeneratedTree {
+  version: EmitVersion = 2, packetSource?: PacketSource, drain = true,
+  routing?: RoutingStyle): GeneratedTree {
   return emitOne(parsedMachines(files), target, outputName, version,
-    packetSourceFor(files, target, version, packetSource), drain);
+    packetSourceFor(files, target, version, packetSource, routing), drain);
 }
 
 // The one place the two halves of the generator meet.
@@ -129,9 +133,18 @@ export interface PacketSource { files: EbFiles; machine: string; }
 // Removing the parameter outright would have deleted the cover for four
 // hard-won fixes along with it.
 function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
-  override?: PacketSource): PacketSource | undefined {
+  override?: PacketSource, routing?: RoutingStyle): PacketSource | undefined {
+  // ⚠ Refused rather than ignored: a routing is a choice between the bundled
+  // pattern's splits, which only structure 3 carries, and an override brings its
+  // own packet source instead of the bundle.
+  if (routing !== undefined && version !== 3)
+    throw new Error(`A routing (${routing}) applies to structure 3, which carries the pattern `
+      + "extension; this is structure " + version + ".");
+  if (routing !== undefined && override)
+    throw new Error("A routing chooses the bundled pattern's control split; an explicit packet "
+      + "source replaces the bundle, so the two cannot be combined.");
   if (version !== 3) return override;
-  return override ?? patternExtensionFor(files, base);
+  return override ?? patternExtensionFor(files, base, routing);
 }
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
@@ -518,9 +531,10 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
 // exactly three files (<name>.h/.cc/.ned). `outputName` defaults to the leaf's
 // derived name. `version` selects the emitted structure (see EmitVersion).
 export function generateMerged(files: EbFiles, outputName?: string,
-  version: EmitVersion = 2, packetSource?: PacketSource, drain = true): GeneratedTree {
+  version: EmitVersion = 2, packetSource?: PacketSource, drain = true,
+  routing?: RoutingStyle): GeneratedTree {
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
   return emitOne(raw, leaf, outputName ?? defaultName(leaf), version,
-    packetSourceFor(files, leaf, version, packetSource), drain);
+    packetSourceFor(files, leaf, version, packetSource, routing), drain);
 }

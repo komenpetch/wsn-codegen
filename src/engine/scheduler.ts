@@ -334,7 +334,9 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
   const isFresh = (p: string) =>
     clauses.some((c) => new RegExp(`^${p}\\s*∉`).test(c.trim())) && !existsAlready(p);
 
-  let progress = true;
+  // Set false at the top of every pass and true by any branch that resolves a
+  // parameter, so it needs no initial value.
+  let progress: boolean;
   // ⚠ `p ∈ dom(F)` is a LAST RESORT and is switched on only once every other
   // branch has stalled, because it can otherwise steal a parameter that
   // belongs to a stronger binding. Measured: RTMCS's `create_rreq` guards both
@@ -555,7 +557,7 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
         for (const q of chosenAtCreation(clauses, p, params.map((v) => v.name),
           resolved, nodeFields)) {
           lines.push(`    for (Node ${q} : ND) {`); depth++;
-          resolved.add(q); progress = true;
+          resolved.add(q);   // `progress` is set once, below, when p itself resolves
         }
         lines.push(`    ${par.cppType} ${p} = newPktId();`);
         minted.add(p);

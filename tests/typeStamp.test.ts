@@ -35,7 +35,10 @@ const MINTROUTE = "../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_compl
 // `creatingControlPacket`: the derived event supersedes the abstract one,
 // exactly as MintRoute's per-leaf events supersede it there.
 //
-// ⚠ AND IT IS `create_beaconPkt` NOW, WHICH COSTS THIS SUITE ITS ORIGINAL
+// ⚠ (2026-09-27: briefly `create_rrepPkt`, while a project naming no sink read
+// as AODV; flooding is the default again, so it is `create_beaconPkt`.)
+//
+// ⚠ AND IT IS `create_beaconPkt`, WHICH COSTS THIS SUITE ITS ORIGINAL
 // SUBJECT. It read `create_controlPkt` while the app-layer chain left CONTROL
 // unsplit, so CONTROL was a lattice LEAF and `type(pkt) ∈ CONTROL` -- a
 // MEMBERSHIP in a one-element part -- pinned the tag. That is the branch the

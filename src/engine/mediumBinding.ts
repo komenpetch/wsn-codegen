@@ -2,7 +2,7 @@ import { mapletAddedTo, variableGainingMaplet, variableLosingMaplet } from "./ac
 import type { EncodedMachine, GeneratedTree, FlatEvent } from "./types";
 import { splitConjuncts } from "./ruleEngine";
 import type { PacketModel, PacketField } from "./packetModel";
-import { getterOf, setterOf, broadcastMethodOf, liveSetOf } from "./packetModel";
+import { getterOf, setterOf, broadcastMethodOf, liveSetOf, BROADCAST_SHAPE } from "./packetModel";
 import { OVERRIDE_GLYPHS, OVERRIDE_OR_UNION_GLYPHS } from "./text";
 import { methodForLabel, splitParams } from "./emitted";
 import { deserialiseFieldsOf, arrivalPacketSetsOf, receiveEventsOf } from "./packetOps";
@@ -435,7 +435,7 @@ function members(plan: MediumPlan): string {
 function transmitFn(plan: MediumPlan, cls: string): string {
   const one = (tag: string) => [
     `// Event-B: ${plan.transmit} (the model's own hand-to-the-medium), for a`,
-    `// packet of type ${tag}. Shaped after MintRoute::${sendName(tag)}: build the`,
+    `// packet of type ${tag}. Shaped after ${BROADCAST_SHAPE}: build the`,
     "// frame, address it to the MAC broadcast, send it down, count it.",
     `void ${cls}::${sendName(tag)}(PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",

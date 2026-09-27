@@ -64,6 +64,42 @@ export const carrierSetsOf = (...contextOwners: { contexts: { sets: string[] }[]
  * VARIABLE (`xmittedPkts ⊆ PKT`), so its declaration is an invariant and a
  * context-only version cannot see it.
  */
+/**
+ * A context axiom or machine invariant written as a conjunction of
+ * declarations, split into those declarations: `Sink ∈ ND ∧ Sink = 0` →
+ * `Sink ∈ ND`, `Sink = 0`. The parser applies it, so every reader that matches
+ * one declaration per axiom sees each one (2026-09-27: a conjunction axiom read
+ * the WRONG routing and silently dropped its constant).
+ *
+ * ⚠ Returned WHOLE unless `∧` is the only connective at the top level. An `∧`
+ * inside brackets of any kind belongs to what the brackets hold; and a top-level
+ * quantifier, lambda or comprehension marker (`∀ ∃ λ · ∣`) takes the rest of the
+ * predicate as its scope — MintRoute TCL.buc's `∀t·t∈wsnfn∧(…)⇒…` has its `∧`
+ * at paren depth 0 inside one, and cutting there makes two false axioms. `⇒`,
+ * `⇔` and `∨` bind looser than `∧`, and a top-level `¬` is left to its reader:
+ * none of those is a conjunction of declarations.
+ */
+export function splitDeclaration(text: string): string[] {
+  const cuts: number[] = [];
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") depth--;
+    else if (depth === 0) {
+      if ("∀∃λ·∣⇒⇔∨¬".includes(ch)) return [text];
+      if (ch === "∧") cuts.push(i);
+    }
+  }
+  if (cuts.length === 0) return [text];
+  const parts: string[] = [];
+  let start = 0;
+  for (const c of cuts) { parts.push(text.slice(start, c)); start = c + 1; }
+  parts.push(text.slice(start));
+  const trimmed = parts.map((p) => p.trim());
+  return trimmed.some((p) => p.length === 0) ? [text] : trimmed;
+}
+
 export function subsetClosure(root: string, predicates: readonly string[]): Set<string> {
   const inside = new Set([root]);
   for (let grew = true; grew;) {

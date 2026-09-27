@@ -1,6 +1,6 @@
 import { INITIALISATION } from "./types";
 import type { EncodedMachine, GeneratedTree, RawContext } from "./types";
-import { mustFind } from "./emitted";
+import { mustFind, markRealised } from "./emitted";
 import { subsetClosure } from "./text";
 
 // The node-level identity binding: bind the model's carrier set to the
@@ -189,18 +189,28 @@ export function cartesianInitLine(i: CartesianInit, root: string = NODE_ROOT): s
 // `netSeqNo[myNodeId] = 0;` -- a node id used as a key in a PKT-keyed map --
 // under a comment that read `≔ ND × {…}` when the model had said PKT. The
 // comment was the visible half of the matcher being too loose.
-function cartesianInits(model: EncodedMachine, nodeSets: ReadonlySet<string>): CartesianInit[] {
+function cartesianInits(model: EncodedMachine, nodeSets: ReadonlySet<string>):
+  { init: CartesianInit; action: string }[] {
   const init = model.events.find((e) => e.label === INITIALISATION);
   if (!init) return [];
-  const out: CartesianInit[] = [];
+  const out: { init: CartesianInit; action: string }[] = [];
   for (const a of init.actions) {
     const m = /^\s*(\w+)\s*≔\s*\(?\s*(\w+)\s*(?:∖\s*\{\s*(\w+)\s*\})?\s*\)?\s*×\s*\{\s*(∅|\w+)\s*\}\s*$/.exec(a);
     if (!m) continue;
     if (!nodeSets.has(m[2])) continue;   // keyed by something that is not a node
     const cpp = m[4] === "∅" ? null : m[4] === "FALSE" ? "false" : m[4] === "TRUE" ? "true" : m[4];
-    out.push({ target: m[1], carrier: m[2], excluded: m[3] ?? null, value: cpp ?? "" });
+    out.push({ init: { target: m[1], carrier: m[2], excluded: m[3] ?? null, value: cpp ?? "" }, action: a });
   }
   return out;
+}
+
+/**
+ * The INITIALISATION actions `bindNodeIdentity` realises, as the model writes
+ * them. Exported so the untranslated recount (translationTally) and the emitted
+ * markers are decided by ONE derivation — the thing that makes them agree.
+ */
+export function identityRealisedInits(model: EncodedMachine, contexts: readonly RawContext[]): string[] {
+  return cartesianInits(model, nodeSetsOf(contexts)).map((c) => c.action);
 }
 
 // Which shell the module has decides only HOW the two addresses are obtained,
@@ -268,7 +278,8 @@ const selfAddressOnly: Record<ShellKind, string[]> = {
 
 export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
   contexts: readonly RawContext[], cls: string, shell: ShellKind = "network"): GeneratedTree {
-  const inits = cartesianInits(model, nodeSetsOf(contexts));
+  const realised = cartesianInits(model, nodeSetsOf(contexts));
+  const inits = realised.map((c) => c.init);
   const sink = sinkConstantOf(contexts);
   const openSubsets = openNodeSubsetsOf(contexts);
 
@@ -314,7 +325,13 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
     "    }",
   ].join("\n");
 
-  return tree.map((f) => {
+  // The constructor marked each of these UNTRANSLATED — at construction ND is
+  // empty, so it could not. They are realised below, so the marker becomes a
+  // pointer to where (see markRealised: the count must not lie).
+  const marked = markRealised(tree, realised.map((c) => c.action),
+    "per node at INITSTAGE_LAST (node identity binding)", "bindNodeIdentity");
+
+  return marked.map((f) => {
     if (f.path.endsWith(".h")) {
       const anchor = "    // ── Event-B machine state ──";
       mustFind(f.content, anchor, "bindNodeIdentity (myNodeId declaration)");

@@ -32,7 +32,7 @@
 
 import type { GeneratedTree } from "./types";
 import type { PacketModel, PacketField } from "./packetModel";
-import { broadcastMethodOf, getterOf, setterOf, DELIVERED_BY } from "./packetModel";
+import { broadcastMethodOf, getterOf, setterOf, DELIVERED_BY, BROADCAST_SHAPE } from "./packetModel";
 import { headerOf, implOf, mustFind, mustReplace } from "./emitted";
 import { esc } from "./text";
 import { emitLocalIdFor, emitRememberSentPacket, identityMembers } from "./mediumBinding";
@@ -97,7 +97,7 @@ const defs = (cls: string, tags: string[], senderSetter: string | null,
   ];
   const one = (tag: string) => [
     `// Event-B: the model's own transmit, for a packet of type ${tag}.`,
-    `// Shaped after MintRoute::${broadcastMethodOf(tag)}: build the frame from the`,
+    `// Shaped after ${BROADCAST_SHAPE}: build the frame from the`,
     "// packet the model made, address it to the broadcast address, send it, count it.",
     `void ${cls}::${broadcastMethodOf(tag)}(Node x, PktId pkt) {`,
     "    PPkt *held = pktOf(pkt);",

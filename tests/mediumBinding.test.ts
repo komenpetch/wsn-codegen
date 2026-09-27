@@ -251,11 +251,20 @@ describe("an event that refuses to fire changes nothing", () => {
 
   it("puts the refusal before the actions in every incomplete event", () => {
     const bad: string[] = [];
-    const methods = new RegExp(`^bool ${CLS}::(\w+)\([^)]*\) \{\n([\s\S]*?)\n\}`, "gm");
+    // ⚠ DOUBLE backslashes: this is a TEMPLATE LITERAL, where `\w` is just `w`
+    // and `\(` just `(`. It was written with single ones, so the pattern looked
+    // for method names made of the letter w, matched NOTHING, and this test
+    // passed vacuously from the day it was written until lint caught it
+    // (2026-09-27). Hence the two counts below: a loop that inspects nothing
+    // must fail, not pass.
+    const methods = new RegExp(`^bool ${CLS}::(\\w+)\\([^)]*\\) \\{\\n([\\s\\S]*?)\\n\\}`, "gm");
+    let seen = 0, refusing = 0;
     for (const m of cc.matchAll(methods)) {
+      seen++;
       const [, method, body] = m;
       const at = body.indexOf(REFUSAL);
       if (at < 0) continue;                       // event translates fully
+      refusing++;
       const after = body.slice(at).split("\n").slice(1);
       const executable = after.filter((l) => {
         const t = l.trim();
@@ -263,6 +272,8 @@ describe("an event that refuses to fire changes nothing", () => {
       });
       if (executable.length > 0) bad.push(`${method}: ${executable[0].trim()}`);
     }
+    expect(seen).toBeGreaterThan(0);        // the pattern matches emitted methods at all
+    expect(refusing).toBeGreaterThan(0);    // and some of them refuse, so the check had work
     expect(bad, `\n${bad.join("\n")}`).toEqual([]);
   });
 

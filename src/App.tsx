@@ -255,7 +255,7 @@ export default function App() {
               value={outputName}
               disabled={busy}
               onChange={(e) => setOutputName(e.target.value)}
-              placeholder="Pm3App"
+              placeholder={target ? defaultName(target) : ""}
               className="rounded border border-gray-300 px-2 py-1"
             />
           </label>

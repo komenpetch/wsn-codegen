@@ -12,6 +12,7 @@
 //   npm run generate -- <dir|project> <outDir>
 //   npm run generate -- MintRoute out-m4 --machine M4
 //   npm run generate -- AppLayer out-v3 --v3          # + the bundled pattern extension
+//   npm run generate -- AppLayer out-v3 --v3 --routing aodv   # choose the bundled split
 //   npm run generate -- <dir|project> <outDir> --v1     # emitted-structure version
 //
 // <dir|project> is a path, or one of the labels in scripts/projects.ts
@@ -30,6 +31,7 @@ import { resolve } from "node:path";
 import { generate, generateMerged, machineNames, leafMachine, defaultName } from "../src/engine/pipeline";
 import { loadProject, resolveInput } from "./projects";
 import type { EmitVersion } from "../src/engine/codeEmitter";
+import type { RoutingStyle } from "../src/engine/patternExtension";
 
 const argv = process.argv.slice(2);
 const flag = argv.find((a) => /^--v[123]$/.test(a));
@@ -45,16 +47,33 @@ const noDrain = argv.includes("--no-drain");
 const drain = !noDrain;
 const mIdx = argv.indexOf("--machine");
 const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
+// Which of the pattern's two control splits structure 3 applies: flooding
+// (MintRoute's ROUTE/BEACON) or aodv (RTMCS's RREQ/RREP/RRER). Without it the
+// tool reads the project's shape, and a project that names no sink floods. The
+// input is never edited to choose (user, 2026-09-27) -- the choice is made here.
+const rIdx = argv.indexOf("--routing");
+const routingArg = rIdx >= 0 ? argv[rIdx + 1] : undefined;
+if (rIdx >= 0 && routingArg !== "flooding" && routingArg !== "aodv") {
+  console.error(`\n--routing takes flooding or aodv, got ${routingArg ?? "nothing"}.\n`);
+  process.exit(2);
+}
+const routing = routingArg as RoutingStyle | undefined;
 // `mIdx + 1` is only a real index to skip when --machine was actually given.
 // Without that guard mIdx is -1, mIdx + 1 is 0, and the FIRST positional
 // argument silently disappears.
-const named = new Set(["--machine"]);
-const valueAt = new Set([mIdx].filter((i) => i >= 0).map((i) => i + 1));
+const named = new Set(["--machine", "--routing"]);
+const valueAt = new Set([mIdx, rIdx].filter((i) => i >= 0).map((i) => i + 1));
 // ⚠ REFUSED rather than silently ignored. Draining is wired into structure 3's
 // scheduler only; accepting either flag elsewhere would report success and emit
 // a module the flag never touched, which is the "flag that does nothing"
 // failure this project has paid for before.
 const drainFlag = argv.find((a) => a === "--drain" || a === "--no-drain");
+// Same reason: only structure 3 carries the pattern whose split it chooses.
+if (routing && version !== 3) {
+  console.error("\n--routing applies to structure 3 (--v3), which carries the pattern "
+    + "extension. Re-run with --v3, or drop --routing.\n");
+  process.exit(2);
+}
 if (drainFlag && version !== 3) {
   console.error(`\n${drainFlag} applies to structure 3 (--v3); it is not wired into the `
     + `other structures. Re-run with --v3, or drop ${drainFlag}.\n`);
@@ -95,8 +114,8 @@ try {
   // to supply: two projects in, and a generator that knew nothing about the
   // pattern it is meant to embody.
   tree = machine
-    ? generate(files, machine, defaultName(machine), version, undefined, drain)
-    : generateMerged(files, undefined, version, undefined, drain);
+    ? generate(files, machine, defaultName(machine), version, undefined, drain, routing)
+    : generateMerged(files, undefined, version, undefined, drain, routing);
 } catch (e) { refuse(e); }
 for (const f of tree) writeFileSync(resolve(outDir, f.path), f.content, "utf8");
 

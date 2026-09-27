@@ -1,5 +1,7 @@
-import type { PacketModel } from "./packetModel";
+import type { PacketModel, PacketField } from "./packetModel";
 import { getterOf, setterOf } from "./packetModel";
+import type { EncodedMachine } from "./types";
+import { INITIALISATION } from "./types";
 
 
 // Chunk length in bytes. Every field is emitted as a 4-byte quantity, so the
@@ -7,6 +9,29 @@ import { getterOf, setterOf } from "./packetModel";
 // declared length against the data, so a wrong constant surfaces as a runtime
 // assertion, not a silent truncation.
 const BYTES_PER_FIELD = 4;
+
+// What every PPkt field starts at. Named once, because chunkRealisedInits below
+// relies on it being exactly what the chunk declares.
+export const fieldDefault = (f: PacketField): string => (f.cppType === "Node" ? "-1" : "0");
+
+/**
+ * INITIALISATION actions `F ≔ PKT × {v}` that the chunk itself realises: F is a
+ * packet field and v is the value the field is DECLARED with, so every packet
+ * starts there by construction (`netSeqNo ≔ PKT × {0}` and `int netSeqNo = 0;`).
+ * Over PKT only — a proper subset of packets would give the rest a value the
+ * model never states. Exported for the same reason identityRealisedInits is:
+ * the emitted markers and the recount are decided by one derivation.
+ */
+export function chunkRealisedInits(model: EncodedMachine, fields: readonly PacketField[]): string[] {
+  const init = model.events.find((e) => e.label === INITIALISATION);
+  if (!init) return [];
+  const byName = new Map(fields.map((f) => [f.ebName, f]));
+  return init.actions.filter((a) => {
+    const m = /^\s*(\w+)\s*≔\s*PKT\s*×\s*\{\s*(−?-?\d+)\s*\}\s*$/.exec(a);
+    const f = m ? byName.get(m[1]) : undefined;
+    return f !== undefined && m![2].replace(/−/g, "-") === fieldDefault(f);
+  });
+}
 
 export function emitPacketClasses(pm: PacketModel): { header: string; impl: string } {
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]);
@@ -19,7 +44,7 @@ export function emitPacketClasses(pm: PacketModel): { header: string; impl: stri
   }).join("\n");
 
   const members = pm.fields.map((f) =>
-    `    ${f.cppType} ${f.name} = ${f.cppType === "Node" ? "-1" : "0"};   // Event-B: ${f.ebName}`
+    `    ${f.cppType} ${f.name} = ${fieldDefault(f)};   // Event-B: ${f.ebName}`
   ).join("\n");
 
   const header =

@@ -23,7 +23,8 @@ import { fileURLToPath } from "node:url";
 import { parseModel } from "../src/engine/parser";
 import { flatten } from "../src/engine/flattener";
 import { resolveEncodings } from "../src/engine/encodingResolver";
-import { translateEvent } from "../src/engine/ruleEngine";
+import { translationTally } from "../src/engine/codeEmitter";
+import { networkTranslationFor, withRules, initsRealisedAfterEmit } from "../src/engine/netPipeline";
 import { generate, defaultName } from "../src/engine/pipeline";
 
 // Model paths resolve from THIS FILE, not the working directory: the runner
@@ -73,19 +74,24 @@ for (const [proj, dir] of Object.entries(PROJECTS)) {
     const emitted = (all.match(/UNTRANSLATED/g) ?? []).length;
 
     // --- bookkeeping: same clauses, with text + provenance ---
+    // ⚠ Through the generator's own path, not a second copy of it. This used to
+    // call translateEvent with the base catalog alone -- no network-layer rules,
+    // no subsets, no member-initialiser filter -- so on every network-layer
+    // machine it counted clauses the generator DOES translate and printed
+    // MISMATCH for weeks (found 2026-09-27). A network model is translated under
+    // networkTranslationFor's rules, exactly as tryNetworkLayer does.
     const model = resolveEncodings(flatten(raw, target));
+    const net = networkTranslationFor(raw, model);
+    const tally = net
+      ? withRules(net.rules, () => translationTally(model, raw.contexts, initsRealisedAfterEmit(raw, model, net)))
+      : translationTally(model, raw.contexts);
     const distinct = new Map<string, string[]>();
-    let engine = 0, clauses = 0, translated = 0;
-    for (const ev of model.events) {
-      const t = translateEvent(ev, model);
-      const untr = [...t.untranslatedGuards, ...t.untranslatedActions];
-      engine += untr.length;
-      translated += t.guards.length + t.actions.length;
-      clauses += t.guards.length + t.actions.length + untr.length;
-      for (const u of untr) {
-        if (!distinct.has(u)) distinct.set(u, []);
-        distinct.get(u)!.push(ev.label);
-      }
+    const engine = tally.untranslated.length;
+    const translated = tally.translated;
+    const clauses = translated + engine;
+    for (const { event, clause } of tally.untranslated) {
+      if (!distinct.has(clause)) distinct.set(clause, []);
+      distinct.get(clause)!.push(event);
     }
     perMachine[target] = distinct;
 

@@ -124,6 +124,44 @@ function initialValues(model: EncodedMachine):
   return { values, consumed };
 }
 
+// What `emit` translates and what it marks UNTRANSLATED, counted the way it
+// counts them: each event's guards and actions, with the INITIALISATION actions
+// a member initialiser realises (initialValues' `consumed`) counted as
+// TRANSLATED, not missing. Rules are whatever the caller has installed -- a
+// network-layer model's are, under withRules.
+//
+// For scripts/scan.ts and scripts/shapes.ts. Their recount called translateEvent
+// on its own -- without the subsets, the network rules or the initialiser filter
+// -- and on every network-layer machine reported clauses the generator does
+// translate as missing (scan flagged MISMATCH; shapes grouped them into its
+// gap). A test pins that this agrees with the emitted markers, so the two cannot
+// drift apart unnoticed again.
+export interface TranslationTally {
+  translated: number;
+  untranslated: { event: string; clause: string }[];
+}
+
+//
+// `realisedAfterEmit`: INITIALISATION actions a LATER pass realises (the
+// network branch's identity binding and chunk initialisers --
+// netPipeline.initsRealisedAfterEmit). Empty for a module no such pass runs on.
+export function translationTally(model: EncodedMachine, contexts: RawContext[],
+  realisedAfterEmit: ReadonlySet<string> = new Set()): TranslationTally {
+  const subsets = subsetConstants(contexts);
+  const { consumed } = initialValues(model);
+  let translated = 0;
+  const untranslated: { event: string; clause: string }[] = [];
+  for (const ev of model.events) {
+    const t = translateEvent(ev, model, subsets);
+    const missing = ev.label === INITIALISATION
+      ? t.untranslatedActions.filter((a) => !consumed.has(a.trim()) && !realisedAfterEmit.has(a.trim()))
+      : t.untranslatedActions;
+    translated += t.guards.length + t.actions.length + (t.untranslatedActions.length - missing.length);
+    for (const clause of [...t.untranslatedGuards, ...missing]) untranslated.push({ event: ev.label, clause });
+  }
+  return { translated, untranslated };
+}
+
 function cppType(form: EncodingForm, inv: string | undefined): string {
   const { dom = "int", ran = "int" } = domRan(inv);
   switch (form) {

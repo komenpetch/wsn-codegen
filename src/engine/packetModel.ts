@@ -43,6 +43,14 @@ export const liveSetOf = (f: PacketField): string => `live_${f.ebName}`;
 // same question in both, and the advisor named these methods specifically.
 export const broadcastMethodOf = (tag: string): string => `send${capTag(tag)}Broadcast`;
 
+// What the per-type send methods are SHAPED AFTER, for their provenance comment.
+// ⚠ Fixed wording, not `MintRoute::${broadcastMethodOf(tag)}`: that invented a
+// MintRoute method for every packet type, and INET's MintRoute.h (152–153)
+// declares only these two — so every structure-3 module cited a
+// `MintRoute::sendDataBroadcast`, and an AODV-shaped one three more
+// (2026-09-27 bug hunt). Generated code must not assert what is not so.
+export const BROADCAST_SHAPE = "MintRoute's own sendRouteBroadcast() / sendBeaconBroadcast()";
+
 // The binding-layer record of WHO DELIVERED each packet to this node.
 //
 // The sender is a property of the TRANSMISSION, and the forwarder a property of

@@ -19,7 +19,7 @@ import type { Rule } from "./rules";
 import type { EncodedMachine, GeneratedTree, RawModel } from "./types";
 import { packetModelFor } from "./packetModel";
 import type { PacketModel } from "./packetModel";
-import { emitPacketClasses } from "./packetEmitter";
+import { emitPacketClasses, chunkRealisedInits } from "./packetEmitter";
 import { packetRules } from "./packetRules";
 import { miscRules } from "./miscRules";
 import { scalarRules } from "./scalarRules";
@@ -27,7 +27,7 @@ import { composedRules } from "./composedRules";
 import { nestedMapVars, nestedMapRules, fixNestedMapDeclarations } from "./nestedMap";
 import { pairKeyedVars, pairKeyedRules, fixPairKeyedDeclarations } from "./pairKeyed";
 import { installScheduler } from "./scheduler";
-import { bindNodeIdentity } from "./nodeIdentity";
+import { bindNodeIdentity, identityRealisedInits } from "./nodeIdentity";
 import { installNetProtocolShell, renameCommPatternPair } from "./netProtocolShell";
 import { imageRules, insertImageHelper } from "./imageRules";
 import { composeRules } from "./compose";
@@ -35,7 +35,7 @@ import { mediumRules } from "./mediumRules";
 import { planMedium, bindMedium, modelHasMedium } from "./mediumBinding";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
 import { carrierSetsOf } from "./text";
-import { implText } from "./emitted";
+import { implText, markRealised } from "./emitted";
 
 // PPkt and everything that follows from it, WITHOUT the network-layer shell.
 //
@@ -62,22 +62,8 @@ export function emitWithPacketClasses(
   // app-layer catalog module is never mutated for other callers.
   const nested = nestedMapVars(model);
   const pairKeyed = pairKeyedVars(model);
-  // ⚠ pairKeyedRules FIRST, and rule order here is BEHAVIOUR, not style. With
-  // them last, SETEXPR-PAIR-MEM claims `y ↦ x ∈ dom(sentEst)` and emits "" --
-  // the deliberate intercept-and-refuse technique -- so update_route stayed
-  // untranslated even though PK-DOM matched the clause in isolation. That cost
-  // a debugging round the first time this was built.
-  //
-  // ⚠ AND imageRules BEFORE composedRules, FOR THE SAME REASON. `composedRules`
-  // claims any `x ∈ <compound>` whose right-hand side mentions `ran(` -- which
-  // `des ∈ ran({pkt} ◁ ctlNeighbours)` does -- and then its parser gives up on
-  // `◁` and it emits "". With imageRules last, IMAGE-MEM never got a turn and
-  // all four of RTMCS's `dest_recv_*` events stayed refusing. Nothing is taken
-  // the other way: SETEXPR could only ever refuse these.
-  const composed = composeRules([...pairKeyedRules(pairKeyed, model),
-    ...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
-    ...scalarRules(), ...imageRules(), ...composedRules(carriers), ...nestedMapRules(nested)]);
-  let tree = withRules(composed, () => emit(model, name, 2, raw.contexts));
+  let tree = withRules(networkRules(model, pm, carriers),
+    () => emit(model, name, 2, raw.contexts));
 
   // Splice the packet classes into the header, above the module class.
   const { header, impl } = emitPacketClasses(pm);
@@ -85,6 +71,10 @@ export function emitWithPacketClasses(
     f.path.endsWith(".h") ? { ...f, content: spliceHeader(f.content, header) }
     : f.path.endsWith(".cc") ? { ...f, content: spliceImpl(f.content, impl) }
     : f);
+  // A packet field's initialisation is the chunk's own member initialiser, so
+  // its constructor marker would report as missing what the chunk realises.
+  tree = markRealised(tree, chunkRealisedInits(model, pm.fields),
+    "by the PPkt field initialiser (every packet starts there)", "emitWithPacketClasses");
 
   tree = renameReservedIdentifiers(tree);
   tree = stripDeadPacketFieldMaps(tree, pm.fields);
@@ -127,21 +117,53 @@ export interface NetworkLayerAttempt {
   tree: GeneratedTree | null;
 }
 
-export function tryNetworkLayer(raw: RawModel, machine: string, name: string): NetworkLayerAttempt {
-  const model = resolveEncodings(flatten(raw, machine));
+// The rule set a network-layer model is translated with.
+//
+// ONE place, because two things must translate identically: generation, and
+// scripts/scan.ts's recount of what stayed untranslated. The recount kept its
+// own translation -- the base catalog alone -- and reported MISMATCH on every
+// network-layer machine for weeks, because nothing checked it (2026-09-27).
+function networkRules(model: EncodedMachine, pm: PacketModel, carriers: Set<string>): Rule[] {
+  // ⚠ pairKeyedRules FIRST, and rule order here is BEHAVIOUR, not style. With
+  // them last, SETEXPR-PAIR-MEM claims `y ↦ x ∈ dom(sentEst)` and emits "" --
+  // the deliberate intercept-and-refuse technique -- so update_route stayed
+  // untranslated even though PK-DOM matched the clause in isolation. That cost
+  // a debugging round the first time this was built.
+  //
+  // ⚠ AND imageRules BEFORE composedRules, FOR THE SAME REASON. `composedRules`
+  // claims any `x ∈ <compound>` whose right-hand side mentions `ran(` -- which
+  // `des ∈ ran({pkt} ◁ ctlNeighbours)` does -- and then its parser gives up on
+  // `◁` and it emits "". With imageRules last, IMAGE-MEM never got a turn and
+  // all four of RTMCS's `dest_recv_*` events stayed refusing. Nothing is taken
+  // the other way: SETEXPR could only ever refuse these.
+  return composeRules([...pairKeyedRules(pairKeyedVars(model), model),
+    ...packetRules(pm.fields), ...mediumRules(pm.lattice), ...miscRules(),
+    ...scalarRules(), ...imageRules(), ...composedRules(carriers),
+    ...nestedMapRules(nestedMapVars(model))]);
+}
 
-  // Both bail-outs come BEFORE the two encoding fixes below, and that ordering
-  // is the reason the model can be handed back at all. The fixes MUTATE it; a
-  // model returned to the app-layer path after they had run would be a
-  // different model from the one that path builds for itself, so the app layer's
-  // output would silently depend on how far into this function a bail-out got.
+// What a network-layer model is translated ON and WITH, or null when it has no
+// network layer (it then gets the app-layer catalog, untouched). Shared by
+// tryNetworkLayer and scripts/scan.ts for the reason networkRules gives.
+//
+// ⚠ It MUTATES `model` -- the two encoding fixes below -- but only once both
+// bail-outs have passed, and that ordering is why tryNetworkLayer can hand the
+// model back at all: a model returned to the app-layer path after the fixes had
+// run would be a different model from the one that path builds for itself, so
+// the app layer's output would silently depend on how far a bail-out got.
+export interface NetworkTranslation {
+  pm: PacketModel;
+  carriers: Set<string>;
+  rules: Rule[];
+}
 
+export function networkTranslationFor(raw: RawModel, model: EncodedMachine): NetworkTranslation | null {
   // No packet-type partition means no PPkt, so nothing here applies.
   const pm = packetModelFor(raw, model);
-  if (!pm) return { model, tree: null };
+  if (!pm) return null;
   // The medium decides. Asked BEFORE emitting, because the answer chooses the
   // shell, and the shell is what the rest of this pipeline attaches to.
-  if (!modelHasMedium(model, pm)) return { model, tree: null };
+  if (!modelHasMedium(model, pm)) return null;
 
   // wsn-codegen's encodingResolver never dereferences a context-level type
   // alias (MintRoute's `WSN = ND ↔ ND`), so a variable declared merely
@@ -158,6 +180,26 @@ export function tryNetworkLayer(raw: RawModel, machine: string, name: string): N
   // The model's carrier sets: membership in one is a typing statement, not a
   // container lookup (setExpr.ts memberOfLeaf).
   const carriers = carrierSetsOf(raw);
+  return { pm, carriers, rules: networkRules(model, pm, carriers) };
+}
+
+/**
+ * The INITIALISATION actions the network branch realises AFTER the emitter has
+ * marked them UNTRANSLATED: the node-keyed ones the identity binding specialises,
+ * and the packet-field ones the chunk's member initialiser already holds. The
+ * untranslated recount subtracts exactly these, so it agrees with the markers.
+ */
+export function initsRealisedAfterEmit(raw: RawModel, model: EncodedMachine,
+  net: NetworkTranslation): Set<string> {
+  return new Set([...identityRealisedInits(model, raw.contexts),
+    ...chunkRealisedInits(model, net.pm.fields)].map((a) => a.trim()));
+}
+
+export function tryNetworkLayer(raw: RawModel, machine: string, name: string): NetworkLayerAttempt {
+  const model = resolveEncodings(flatten(raw, machine));
+  const net = networkTranslationFor(raw, model);
+  if (!net) return { model, tree: null };
+  const { pm, carriers } = net;
 
   let tree = emitWithPacketClasses({ raw, model, name, pm, carriers });
 
@@ -191,7 +233,8 @@ export function tryNetworkLayer(raw: RawModel, machine: string, name: string): N
 // the duration of the call and restore them afterwards. Mutating a shared array
 // is ugly; the alternative is threading a rule set through six engine
 // signatures in wsn-codegen, which this plan is not allowed to modify.
-function withRules<T>(rules: Rule[], fn: () => T): T {
+// Exported for scripts/scan.ts, whose recount must translate under the same rules.
+export function withRules<T>(rules: Rule[], fn: () => T): T {
   const saved = RULES.slice();
   RULES.length = 0; RULES.push(...rules);
   try { return fn(); } finally { RULES.length = 0; RULES.push(...saved); }

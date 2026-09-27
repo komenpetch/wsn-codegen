@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<org.eventb.core.contextFile org.eventb.core.configuration="org.eventb.core.fwd" version="3">
+   <org.eventb.core.extendsContext name="ext1" org.eventb.core.target="C1"/>
+   <org.eventb.core.constant name="cst0" org.eventb.core.identifier="RREQ"/>
+   <org.eventb.core.constant name="cst1" org.eventb.core.identifier="RREP"/>
+   <org.eventb.core.constant name="cst2" org.eventb.core.identifier="RRER"/>
+   <org.eventb.core.axiom name="axm01" org.eventb.core.label="axm4_1" org.eventb.core.predicate="RREQ ∈ TYPE" org.eventb.core.comment="a control packet subtype: route request (RTMCS C4)" org.eventb.core.theorem="false"/>
+   <org.eventb.core.axiom name="axm02" org.eventb.core.label="axm4_2" org.eventb.core.predicate="RREP ∈ TYPE" org.eventb.core.comment="a control packet subtype: route reply (RTMCS C4)" org.eventb.core.theorem="false"/>
+   <org.eventb.core.axiom name="axm03" org.eventb.core.label="axm4_3" org.eventb.core.predicate="RRER ∈ TYPE" org.eventb.core.comment="a control packet subtype: route error (RTMCS C4)" org.eventb.core.theorem="false"/>
+   <org.eventb.core.axiom name="axm04" org.eventb.core.label="axm4_4" org.eventb.core.predicate="partition(CONTROL, {RREQ}, {RREP}, {RRER})" org.eventb.core.comment="RTMCS C4's split, verbatim. CONTROL stays a SET; this splits it, so type(pkt) ∈ CONTROL in the abstract event and type(pkt) = RREP in the refinement stay consistent" org.eventb.core.theorem="false"/>
+</org.eventb.core.contextFile>

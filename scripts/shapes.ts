@@ -18,7 +18,9 @@ import { fileURLToPath } from "node:url";
 import { parseModel } from "../src/engine/parser";
 import { flatten } from "../src/engine/flattener";
 import { resolveEncodings } from "../src/engine/encodingResolver";
-import { translateEvent, isTypingPredicate } from "../src/engine/ruleEngine";
+import { isTypingPredicate } from "../src/engine/ruleEngine";
+import { translationTally } from "../src/engine/codeEmitter";
+import { networkTranslationFor, withRules, initsRealisedAfterEmit } from "../src/engine/netPipeline";
 import { RULES } from "../src/engine/rules";
 import type { EncodedMachine } from "../src/engine/types";
 
@@ -207,14 +209,19 @@ const loadDir = (dir: string) =>
 const models: Record<string, EncodedMachine> = {};
 const gaps: Record<string, Map<string, number>> = {};
 for (const [proj, dir, leaf] of PROJECTS) {
-  const model = resolveEncodings(flatten(parseModel(loadDir(dir)), leaf));
+  const raw = parseModel(loadDir(dir));
+  const model = resolveEncodings(flatten(raw, leaf));
   models[proj] = model;
+  // ⚠ The gap is what the GENERATOR leaves untranslated, so it is taken through
+  // the generator's own path -- the network-layer rules included -- not through
+  // translateEvent with the base catalog alone, which is what this did until
+  // 2026-09-27 and which grouped clauses the generator translates as "gap".
+  const net = networkTranslationFor(raw, model);
+  const tally = net
+    ? withRules(net.rules, () => translationTally(model, raw.contexts, initsRealisedAfterEmit(raw, model, net)))
+    : translationTally(model, raw.contexts);
   const g = new Map<string, number>();
-  for (const ev of model.events) {
-    const t = translateEvent(ev, model);
-    for (const u of [...t.untranslatedGuards, ...t.untranslatedActions])
-      g.set(u, (g.get(u) ?? 0) + 1);
-  }
+  for (const { clause } of tally.untranslated) g.set(clause, (g.get(clause) ?? 0) + 1);
   gaps[proj] = g;
 }
 

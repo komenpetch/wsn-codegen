@@ -8,6 +8,8 @@ import { packetTypeLattice } from "./packetTypes";
 import uM4 from "../assets/pattern-extension/uM4.bum?raw";
 import pM5 from "../assets/pattern-extension/pM5.bum?raw";
 import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
+import C2aodv from "../assets/pattern-extension/C2_aodv.buc?raw";
+import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
 
 // The pattern extension — PPkt and PRouteTable — SHIPPED INSIDE THE TOOL.
 //
@@ -20,8 +22,13 @@ import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
 // The two files are real Rodin sources rather than strings embedded here, so
 // they open in Rodin for proof and review, and there is one copy of each.
 //
-//   C2_ctl.buc   Tier A — the DEFAULT control split, `partition(CONTROL,
-//                {ROUTE}, {BEACON})`, bundled only when the project has none
+//   C2_ctl.buc   Tier A — the FLOODING control split, MintRoute C3's
+//                `partition(CONTROL, {ROUTE}, {BEACON})`
+//   C2_aodv.buc  Tier A — the AODV control split, RTMCS C4's
+//                `partition(CONTROL, {RREQ}, {RREP}, {RRER})`
+//                At most ONE of the two is bundled, only when the project has no
+//                split of its own, and which one is read off the project's shape
+//                (routingStyleOf, below).
 //   uM4.bum      Tier A — the per-packet sequence number, plus the per-leaf
 //                creating events DERIVED into it (see deriveControlEvents)
 //   pM5.bum      Tier B — the neighbour table and its pair-keyed metrics
@@ -56,28 +63,93 @@ import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
 // and does not itself declare; supplying them is what the tool carrying PPkt
 // means. ⚠ The uploaded project is NOT edited to obtain them — that was tried
 // on 2026-09-21 and reversed.
+//
+// ✅ AND THERE ARE TWO NOW (2026-09-27): MintRoute's split for a flooding-shaped
+// project and RTMCS's for an AODV-shaped one, chosen by routingStyleOf. The
+// events derived from either are the same derivation; only the leaves differ.
+// ⚠ Under the current scope (no unicast) an AODV-shaped module FLOODS all three
+// of RREQ, RREP and RRER, where RTMCS sends RREP and RRER to one next hop — a
+// deliberate stand-in (user decision d2), recorded in
+// docs/findings/netlayer/2026-09-27-rreq-rrep-rrer-pattern-study.md.
 export const PATTERN_EXTENSION_LEAF = "pM5";
 
-// The bundled default split, the context uM4 sees when it is in play, and the
-// context it sees when it is not (the pattern's own, which C2_ctl extends).
-const CTL_SPLIT = "C2_ctl.buc";
-const CTL_SPLIT_CTX = "C2_ctl";
+// The context uM4 sees when no bundled split is in play: the pattern's own,
+// which both bundled splits extend.
 const SEES_WITHOUT_SPLIT = "C1";
 
-// WHICH set the bundled default splits, read off the bundled file rather than
-// written here twice. It is `CONTROL`, and that MATTERS: the default may only
+/** Which routing a structure-3 module is generated for. */
+export type RoutingStyle = "flooding" | "aodv";
+
+interface BundledSplit { file: string; ctx: string; xml: string; splits: string }
+
+// WHICH set each bundled split partitions, read off the bundled file rather than
+// written here twice. It is `CONTROL` in both, and that MATTERS: a split may only
 // be applied to a project whose own control set is that same set. A project
 // whose control set is named otherwise — the advisor's flooding case study
 // calls it FLOOD — would otherwise receive a partition of a set it never
 // declares, and a project with no control set at all would receive one of a
 // set that does not exist.
-const DEFAULT_SPLIT_OF = (() => {
-  const m = /partition\(\s*(\w+)\s*,/.exec(C2ctl);
+function bundledSplit(file: string, xml: string): BundledSplit {
+  const m = /partition\(\s*(\w+)\s*,/.exec(xml);
   if (!m)
-    throw new Error("patternExtension: the bundled C2_ctl.buc declares no partition, so there is "
-      + "no way to tell which control set its default split applies to.");
-  return m[1];
-})();
+    throw new Error(`patternExtension: the bundled ${file} declares no partition, so there is `
+      + "no way to tell which control set it splits.");
+  return { file, ctx: file.replace(/\.buc$/, ""), xml, splits: m[1] };
+}
+
+const SPLITS: Record<RoutingStyle, BundledSplit> = {
+  flooding: bundledSplit("C2_ctl.buc", C2ctl),
+  aodv: bundledSplit("C2_aodv.buc", C2aodv),
+};
+
+/**
+ * Which routing the project's own shape points to, read off its contexts.
+ *
+ * ⚠ A GUESS FROM SHAPE, BY DECISION (user, 2026-09-27: "guess from input shape";
+ * the tool must produce either flooding or AODV depending on the model it is
+ * given, and no model is edited to say which).
+ *
+ * The signal is how the model names its sink, and it separates every case study
+ * on disk:
+ *
+ *   MintRoute        `Sink ∈ ND`            one sink node; everything flows to it
+ *   flooding study   `Sink ∈ ND`            the same
+ *   RTMCS            `Sink ∈ Destination`, `partition(Destination, {Sink}, Actuators)`
+ *                                           the sink is ONE OF a set of destinations
+ *   C0_project       no sink at all
+ *
+ * So: a node constant declared a member of a PROPER SUBSET of the nodes — a
+ * destination set with a named member — is RTMCS's shape, and the model gets
+ * RTMCS's RREQ/RREP/RRER split. Anything else gets MintRoute's ROUTE/BEACON
+ * split: flooding is the DEFAULT.
+ *
+ * ⚠ THE DEFAULT IS A RULING, NOT A READING (user, 2026-09-27: "for flooding can
+ * we use normal C0_project since our v3 can gen and run the sim. no addition").
+ * A project that names no sink carries no signal either way — see the next
+ * paragraph — so something has to decide it. It was AODV for part of that day;
+ * it is flooding, which is what structure 3 generated before the two routings
+ * existed and what every earlier v3 measurement ran.
+ *
+ * ⚠ WHY NOT THE PER-PACKET DESTINATION. It is the obvious signal and it is
+ * useless here: `des = ran({pkt} ◁ finalDestAddr)` and `x ∈ ND ∖ Dests` are in
+ * pM1's own `creatingPkt`, the shared pattern every structure-3 input refines,
+ * so every input carries it and it cannot tell two of them apart. Checked on
+ * all four pattern-based projects on disk.
+ *
+ * ⚠ LIMITATION, STATED RATHER THAN HIDDEN: the DSR stub (`WBAN_1_0/C0.buc`)
+ * declares `Sink ∈ ND` and reads flooding, though DSR discovers routes on
+ * demand the way AODV does. It has no network-layer model and no control set,
+ * so structure 3 never sees it. Shape predicts the case study, not the algorithm.
+ */
+export function routingStyleOf(contexts: RawModel["contexts"]): RoutingStyle {
+  const declared = new Set(contexts.flatMap((c) => c.constants));
+  const destinationSets = new Set([...nodeSetsOf(contexts)].filter((s) => s !== NODE_ROOT));
+  const member = /^(\w+)\s*∈\s*(\w+)$/;
+  const namedDestination = contexts
+    .flatMap((c) => c.axioms.map((a) => member.exec(a.text.trim())))
+    .some((m) => m !== null && declared.has(m[1]) && destinationSets.has(m[2]));
+  return namedDestination ? "aodv" : "flooding";
+}
 
 // The machine `uM4` is authored against the app-layer pattern's own leaf name.
 const AUTHORED_AGAINST = "pM3";
@@ -471,7 +543,8 @@ function instantiateB(xml: string, raw: RawModel): string {
  * events (create_routePkt, create_bconPkt, add_newEntry, update_nbr) the
  * difference between the two.
  */
-export function patternExtensionFor(files: EbFiles, base: string): { files: EbFiles; machine: string } {
+export function patternExtensionFor(files: EbFiles, base: string,
+  routing?: RoutingStyle): { files: EbFiles; machine: string } {
   const project = parseModel(files);
 
   const declared = new Set(project.machines.flatMap((m) => m.variables));
@@ -494,9 +567,30 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
   //   another set    — the bundled file splits CONTROL. A project whose control
   //                    set is FLOOD, or which declares none, would receive a
   //                    partition of a set it does not have.
+  //
+  // WHICH of the two bundled splits is read off the project's shape
+  // (routingStyleOf). Only one is ever added: the two partition the same set
+  // differently and would contradict each other.
+  //
+  // ⚠ OR BY THE CALLER (`routing`, the CLI's `--routing`). Both routings come
+  // from the pattern the tool ships, and the input is never edited to say which
+  // (user, 2026-09-27: "we not try to edit the input, everything that we build
+  // came from pattern"), so a project that names no sink can still be generated
+  // either way. It only ever chooses between the TOOL's two splits: a project
+  // that declares its own, or whose control set is not the one they split, is
+  // REFUSED rather than silently left as it is — a flag that does nothing is the
+  // failure this project has paid for before.
+  const split = SPLITS[routing ?? routingStyleOf(project.contexts)];
   const ctlSet = controlSetOf(project);
-  const useDefault = ctlSet === DEFAULT_SPLIT_OF && controlLeavesOf(project).length === 0;
-  const withCtl: EbFiles = useDefault ? [...files, { name: CTL_SPLIT, xml: C2ctl }] : files;
+  const ownLeaves = controlLeavesOf(project);
+  if (routing !== undefined && ownLeaves.length > 0)
+    throw new Error(`--routing ${routing} chooses between the tool's bundled control splits, and `
+      + `this project declares its own (${ownLeaves.join(", ")}), which is what it gets. Drop --routing.`);
+  if (routing !== undefined && ctlSet !== split.splits)
+    throw new Error(`--routing ${routing} applies a split of ${split.splits}, and this project's `
+      + `control set is ${ctlSet ?? "not declared"}. Drop --routing.`);
+  const useDefault = ctlSet === split.splits && ownLeaves.length === 0;
+  const withCtl: EbFiles = useDefault ? [...files, { name: split.file, xml: split.xml }] : files;
 
   // ⚠ RE-PARSED, and this is the whole of why the context alone is not enough.
   // Every derivation below reads the control LEAVES off a parsed model, and
@@ -510,8 +604,27 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
   // per-leaf creating events from whichever control split is in play. `uM4` is
   // authored against the pattern's own `pM3`, and a project whose machine has
   // another name would leave that refinement dangling.
+  // ⚠ uM4 must SEE the context that declares the leaves its derived events
+  // name. This changes no emitted C++ — the emitter merges every context it is
+  // given and never reads `sees` — but a machine whose events guard
+  // `type(pkt) = BEACON` while seeing a context that does not declare BEACON
+  // will not open in Rodin, and these files ship as real Rodin sources
+  // precisely so they can be proved and reviewed there.
+  // ⚠ AND SO MUST pM5, which refines uM4: a refinement has to see its
+  // abstraction's contexts. The swap used to reach uM4 alone (2026-09-27 bug
+  // hunt), leaving pM5 on C1 — so ONE helper, applied to both.
+  const seeSplit = (xml: string, file: string): string => {
+    if (!useDefault) return xml;
+    const sees = (c: string) =>
+      `<org.eventb.core.seesContext name="sees1" org.eventb.core.target="${c}"/>`;
+    if (!xml.includes(sees(SEES_WITHOUT_SPLIT)))
+      throw new Error(`patternExtension: ${file} no longer sees ${SEES_WITHOUT_SPLIT}, so the `
+        + `bundled control split cannot be wired to it. The extension changed shape.`);
+    return xml.replace(sees(SEES_WITHOUT_SPLIT), sees(split.ctx));
+  };
+
   const retarget = (f: { name: string; xml: string }) => {
-    if (f.name === "pM5.bum") return { ...f, xml: instantiateB(f.xml, raw) };
+    if (f.name === "pM5.bum") return { ...f, xml: instantiateB(seeSplit(f.xml, f.name), raw) };
     if (f.name !== "uM4.bum") return f;
     // ⚠ Loud, because a silent miss here is invisible until Rodin: uM4 would
     // keep refining `pM3`, a machine the user's project does not contain, and
@@ -525,21 +638,7 @@ export function patternExtensionFor(files: EbFiles, base: string): { files: EbFi
           + `cannot be retargeted onto ${base}. The bundled extension changed shape.`);
       xml = xml.replace(refines(AUTHORED_AGAINST), refines(base));
     }
-    // ⚠ And uM4 must SEE the context that declares the leaves its derived
-    // events name. This changes no emitted C++ — the emitter merges every
-    // context it is given and never reads `sees` — but a machine whose events
-    // guard `type(pkt) = BEACON` while seeing a context that does not declare
-    // BEACON will not open in Rodin, and these files ship as real Rodin
-    // sources precisely so they can be proved and reviewed there.
-    if (useDefault) {
-      const sees = (c: string) =>
-        `<org.eventb.core.seesContext name="sees1" org.eventb.core.target="${c}"/>`;
-      if (!xml.includes(sees(SEES_WITHOUT_SPLIT)))
-        throw new Error(`patternExtension: uM4.bum no longer sees ${SEES_WITHOUT_SPLIT}, so the `
-          + `bundled control split cannot be wired to it. The extension changed shape.`);
-      xml = xml.replace(sees(SEES_WITHOUT_SPLIT), sees(CTL_SPLIT_CTX));
-    }
-    return { ...f, xml: instantiate(xml, raw) };
+    return { ...f, xml: instantiate(seeSplit(xml, f.name), raw) };
   };
 
   // A new array: the caller's list is theirs.

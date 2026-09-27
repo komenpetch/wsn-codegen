@@ -36,6 +36,16 @@ SCA=$(ls "$OUT"/*.sca | head -1)
 NODES="sink sensor1 sensor2 sensor3 sensor4 sensor5 sensor6 sensor7 sensor8"
 FAILED=0
 
+# The control leaves, read off the STAGED module rather than named here. Since
+# 2026-09-27 the generator bundles MintRoute's ROUTE/BEACON split for a
+# flooding-shaped project and RTMCS's RREQ/RREP/RRER for an AODV-shaped one, so
+# a battery that named route and beacon would read 0 for every origination on an
+# AODV module and report a confident RED about the harness. Empty is BROKEN,
+# not green: no leaves means the battery would check nothing.
+LEAVES=$(grep -oE 'bool try_create_[a-z]+Pkt\(\)' Pm3Wsn.h | sed -E 's/bool try_create_([a-z]+)Pkt\(\)/\1/' | sort -u)
+[ -n "$LEAVES" ] || { echo "BROKEN: no try_create_<leaf>Pkt in the staged Pm3Wsn.h"; exit 3; }
+created() { local s=0 l; for l in $LEAVES; do s=$((s + $(v "$1" "fired:create_${l}Pkt"))); done; echo "$s"; }
+
 # scalar lookup; absent counter reads 0, which is what "the event never fired" means
 v() { local x; x=$(grep -E "^scalar SensorScopeNetwork\.$1\.generic\.np $2 " "$SCA" \
        | awk '{print $4}' | head -1); echo "${x:-0}"; }
@@ -60,11 +70,10 @@ chk() { # chk <name> <node> <lhs> <op> <rhs> <detail>
   fi
 }
 
-echo "config=$CFG"
+echo "config=$CFG  leaves=$(echo $LEAVES)"
 echo "--- per-node invariants ---"
-tRoute=0; tBeacon=0
 for n in $NODES; do
-  route=$(v "$n" fired:create_routePkt);   beacon=$(v "$n" fired:create_beaconPkt)
+  orig=$(created "$n")
   stx=$(v "$n" fired:start_tx_controlPkt); sdn=$(v "$n" fired:send_down)
   acc=$(v "$n" fired:receive_controlPkt);  dup=$(v "$n" fired:receive_dup_controlPkt)
   fwd=$(v "$n" fired:fwdr_receive_pkt);    dst=$(v "$n" fired:dest_recv_pkt)
@@ -72,11 +81,10 @@ for n in $NODES; do
   mtx=$(m "$n" nbTxDataPackets);           mrx=$(m "$n" nbRxDataPackets)
   drop=$(q "$n" droppedPacketsQueueOverflow)
   inq=$(q "$n" incomingPackets);           outq=$(q "$n" outgoingPackets)
-  tRoute=$((tRoute+route)); tBeacon=$((tBeacon+beacon))
 
   # I1  every transmit attempt is either an origination or a forward.
-  chk "I1 tx=origin+forward" "$n" "$stx" "==" "$((route+beacon+fwd))" \
-      "start_tx=$stx  route+beacon+fwdr=$((route+beacon+fwd))"
+  chk "I1 tx=origin+forward" "$n" "$stx" "==" "$((orig+fwd))" \
+      "start_tx=$stx  created+fwdr=$((orig+fwd))"
   # I2  a node forwards at most once per packet it accepted, never more.
   chk "I2 fwdr<=accept" "$n" "$fwd" "<=" "$acc" "fwdr=$fwd accept=$acc"
   # I3  nothing leaves that was not queued to leave.
@@ -107,12 +115,17 @@ for n in $NODES; do
 done
 
 echo "--- whole-network invariants ---"
-# I9  both control leaves originate on the same tick, so their totals match.
-chk "I9 route==beacon total" "all" "$tRoute" "==" "$tBeacon" \
-    "route=$tRoute beacon=$tBeacon"
+# I9  every control leaf originates on the same tick, so their totals match.
+first=""; totals=""
+for l in $LEAVES; do
+  t=0; for n in $NODES; do t=$((t + $(v "$n" "fired:create_${l}Pkt"))); done
+  totals="$totals $l=$t"
+  [ -z "$first" ] && first=$t
+  chk "I9 leaf totals equal" "all" "$t" "==" "$first" "$totals"
+done
 # I10 a destination consumes and does not forward (this config names the sink).
 if [ "$CFG" = "Sink" ]; then
-  chk "I10 sink originates 0" "sink" "$(v sink fired:create_routePkt)" "==" "0" "-"
+  chk "I10 sink originates 0" "sink" "$(created sink)" "==" "0" "-"
   chk "I10 sink forwards 0"   "sink" "$(v sink fired:fwdr_receive_pkt)" "==" "0" "-"
   chk "I10 sink macTx 0"      "sink" "$(m sink nbTxDataPackets)" "==" "0" "-"
 fi

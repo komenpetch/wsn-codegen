@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import type { RawModel, RawMachine, RawContext, RawEvent, Labelled } from "./types";
+import { splitDeclaration } from "./text";
 
 const EB = "org.eventb.core.";
 
@@ -89,7 +90,7 @@ function parseMachine(name: string, node: XmlNode): RawMachine {
     refines: refinesNode ? attr(refinesNode, `${EB}target`) : undefined,
     sees: nodes(node, `${EB}seesContext`).map((s) => attr(s, `${EB}target`)),
     variables: nodes(node, `${EB}variable`).map((v) => attr(v, `${EB}identifier`)),
-    invariants: nodes(node, `${EB}invariant`).map(labelPred),
+    invariants: nodes(node, `${EB}invariant`).map(labelPred).flatMap(declarations),
     events: nodes(node, `${EB}event`).map(parseEvent),
   };
 }
@@ -113,9 +114,20 @@ function parseContext(name: string, node: XmlNode): RawContext {
     extendsCtx: extNode ? attr(extNode, `${EB}target`) : undefined,
     sets: nodes(node, `${EB}carrierSet`).map((s) => attr(s, `${EB}identifier`)),
     constants: nodes(node, `${EB}constant`).map((c) => attr(c, `${EB}identifier`)),
-    axioms: nodes(node, `${EB}axiom`).map(labelPred),
+    axioms: nodes(node, `${EB}axiom`).map(labelPred).flatMap(declarations),
   };
 }
 
 const labelPred = (n: XmlNode): Labelled => ({ label: attr(n, `${EB}label`), text: attr(n, `${EB}predicate`) });
+
+// An axiom or invariant written as a conjunction of declarations is those
+// declarations, one by one: every reader matches one declaration per predicate,
+// so `Sink ∈ ND ∧ Sink = 0` used to be invisible to all of them (see
+// splitDeclaration for what is deliberately left whole). A split part is
+// labelled after its axiom — `axm2.1`, `axm2.2` — so provenance still names it;
+// an unsplit one keeps its label exactly, which keeps every corpus output as is.
+const declarations = (l: Labelled): Labelled[] => {
+  const parts = splitDeclaration(l.text);
+  return parts.length === 1 ? [l] : parts.map((text, i) => ({ label: `${l.label}.${i + 1}`, text }));
+};
 const labelAssign = (n: XmlNode): Labelled => ({ label: attr(n, `${EB}label`), text: attr(n, `${EB}assignment`) });

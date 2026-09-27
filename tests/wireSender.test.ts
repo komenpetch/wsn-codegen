@@ -31,9 +31,10 @@ const load = (d: string) =>
 
 // ⚠ THE LEAF NAMED HERE IS BEACON, AND IT USED TO BE CONTROL. On 2026-09-21 the
 // app-layer chain took `partition(CONTROL, {ROUTE}, {BEACON})`, so CONTROL
-// stopped being a lattice leaf and the per-leaf transmit it names became
-// `sendBeaconBroadcast`. Nothing about what this suite proves moved — it needs
-// SOME per-leaf transmit to look at, and that is now the beacon's.
+// stopped being a lattice leaf. On 2026-09-27 the tool began reading the split
+// off the project's shape; this project names no sink, and flooding (ROUTE/
+// BEACON) is the default for that. Nothing about what this suite proves moved —
+// it needs SOME per-leaf transmit to look at.
 describe("the wire copy carries the sender the model named", () => {
   const tree = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;

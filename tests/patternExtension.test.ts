@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { patternExtensionFor, PATTERN_EXTENSION_LEAF } from "../src/engine/patternExtension";
+import { patternExtensionFor, PATTERN_EXTENSION_LEAF, routingStyleOf } from "../src/engine/patternExtension";
+import { parseModel } from "../src/engine/parser";
 import type { EbFiles } from "../src/engine/pipeline";
 
 // Structure 3 is V2's shell carrying PPkt and PRouteTable, and the pattern it
@@ -57,12 +58,22 @@ ${axioms.map((a, i) => `   <org.eventb.core.axiom name="a${i}" org.eventb.core.l
 // deleted the bundled context because two partitions of one set are
 // CONTRADICTORY in Event-B and RTMCS declares its own — so the default may only
 // apply where that cannot happen, and these three pin exactly when.
-describe("the bundled default control split", () => {
-  it("applies to a project whose control set is CONTROL and which does not split it", () => {
-    const src = patternExtensionFor(
-      [withCtlSet("CONTROL"), ctx("C1", ["partition(TYPE, CONTROL, {DATA})"], ["DATA", "CONTROL", "type"])],
-      "pM3");
-    expect(src.files.map((f) => f.name)).toContain("C2_ctl.buc");
+// ⚠ AND SINCE 2026-09-27 THERE ARE TWO, chosen by the project's shape
+// (routingStyleOf): RTMCS's RREQ/RREP/RRER for a project that names a sink as ONE
+// OF its destinations, MintRoute's ROUTE/BEACON for anything else — flooding is
+// the default (user ruling, 2026-09-27). The C1 below is the pattern's own; only
+// the sink context differs.
+const C1_PATTERN = ctx("C1", ["partition(TYPE, CONTROL, {DATA})"], ["DATA", "CONTROL", "type"]);
+const C0_SINK = ctx("C0", ["Sink ∈ ND", "Sink = 0"], ["Sink"]);
+const C0_DESTS = ctx("C0", ["Dests ⊆ ND"], ["Dests"]);   // no sink: the default
+const C0_SINK_IN_DESTS = ctx("C0", ["Dests ⊆ ND", "Sink ∈ Dests", "Sink = 0"], ["Dests", "Sink"]);
+
+describe("the bundled control split", () => {
+  it("gives a project that names one sink node MintRoute's flooding split", () => {
+    const src = patternExtensionFor([withCtlSet("CONTROL"), C0_SINK, C1_PATTERN], "pM3");
+    const names = src.files.map((f) => f.name);
+    expect(names).toContain("C2_ctl.buc");
+    expect(names).not.toContain("C2_aodv.buc");
     // And the derived per-leaf events come from it — the context alone would
     // be two dead constants, because every derivation reads a parsed model and
     // the upload does not contain the bundle.
@@ -76,6 +87,27 @@ describe("the bundled default control split", () => {
     expect(uM4).toContain('org.eventb.core.target="C2_ctl"');
   });
 
+  it("gives a project that names a sink among its destinations RTMCS's AODV split", () => {
+    const src = patternExtensionFor([withCtlSet("CONTROL"), C0_SINK_IN_DESTS, C1_PATTERN], "pM3");
+    const names = src.files.map((f) => f.name);
+    expect(names).toContain("C2_aodv.buc");
+    expect(names).not.toContain("C2_ctl.buc");
+    const uM4 = src.files.find((f) => f.name === "uM4.bum")!.xml;
+    // The SAME derivation as the flooding branch — only the leaves differ.
+    expect(uM4.match(/label="create_\w+"/g)).toEqual(
+      ['label="create_rreqPkt"', 'label="create_rrepPkt"', 'label="create_rrerPkt"']);
+    expect(uM4.match(/predicate="type\(pkt\) = (\w+)"/g)).toEqual(
+      ['predicate="type(pkt) = RREQ"', 'predicate="type(pkt) = RREP"', 'predicate="type(pkt) = RRER"']);
+    expect(uM4).toContain('org.eventb.core.target="C2_aodv"');
+  });
+
+  it("never bundles both — the two partition CONTROL differently and would contradict", () => {
+    for (const c0 of [C0_SINK, C0_DESTS, C0_SINK_IN_DESTS]) {
+      const names = patternExtensionFor([withCtlSet("CONTROL"), c0, C1_PATTERN], "pM3").files.map((f) => f.name);
+      expect(names.filter((n) => n === "C2_ctl.buc" || n === "C2_aodv.buc")).toHaveLength(1);
+    }
+  });
+
   it("STANDS DOWN for a project that splits the control set itself", () => {
     // RTMCS's shape. Adding ours beside it is not additive — it is a second,
     // contradictory partition of one set.
@@ -85,6 +117,7 @@ describe("the bundled default control split", () => {
           ["DATA", "CONTROL", "RREQ", "RREP", "type"])],
       "pM3");
     expect(src.files.map((f) => f.name)).not.toContain("C2_ctl.buc");
+    expect(src.files.map((f) => f.name)).not.toContain("C2_aodv.buc");
     const uM4 = src.files.find((f) => f.name === "uM4.bum")!.xml;
     // ⚠ SCOPED TO THE DERIVED GUARDS, not searched as a bare word. `uM4.bum`'s
     // own prose cites MintRoute's BEACON as the worked example, so
@@ -103,7 +136,9 @@ describe("the bundled default control split", () => {
       [withCtlSet("FLOOD"), ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"])],
       "pM3");
     expect(src.files.map((f) => f.name)).not.toContain("C2_ctl.buc");
+    expect(src.files.map((f) => f.name)).not.toContain("C2_aodv.buc");
     expect(src.files.find((f) => f.name === "uM4.bum")!.xml).not.toContain("ROUTE");
+    expect(src.files.find((f) => f.name === "uM4.bum")!.xml).not.toContain("RREQ");
   });
 });
 
@@ -125,6 +160,7 @@ describe("patternExtensionFor", () => {
     // controlLeaves.test.ts, and the stand-down-for-a-project-that-splits case
     // beside it.
     expect(names).not.toContain("C2_ctl.buc");
+    expect(names).not.toContain("C2_aodv.buc");
   });
 
   it("targets the extension's own leaf, so the table machine is what is read", () => {
@@ -165,5 +201,61 @@ describe("patternExtensionFor", () => {
     const before = base.length;
     patternExtensionFor(base, "pM3");
     expect(base).toHaveLength(before);
+  });
+});
+
+// Which routing the project's shape points to. Synthetic here so it runs on a
+// clean checkout; the four real projects are pinned in routingStyle.test.ts.
+describe("routingStyleOf", () => {
+  const style = (...files: ReturnType<typeof ctx>[]) => routingStyleOf(parseModel(files).contexts);
+
+  it("reads one sink node declared directly in ND as flooding (MintRoute's shape)", () => {
+    expect(style(C0_SINK)).toBe("flooding");
+  });
+
+  it("reads a project that names no sink as flooding — the default, by ruling", () => {
+    // C0_project's own shape. The destination set and the per-packet destination
+    // are in pM1, so every input has them; they cannot tell two inputs apart.
+    expect(style(C0_DESTS)).toBe("flooding");
+  });
+
+  it("reads a sink named among the destinations as AODV", () => {
+    expect(style(C0_SINK_IN_DESTS)).toBe("aodv");
+  });
+
+  it("reads a sink that is ONE OF a destination set as AODV (RTMCS's shape)", () => {
+    // RTMCS C2: `Sink ∈ Destination`, `partition(Destination, {Sink}, Actuators)`.
+    // A sink that is one destination among several is not a collection root.
+    expect(style(ctx("C0", ["Destination ⊆ ND"], ["Destination"]),
+      ctx("C2", ["Sink ∈ Destination", "Actuators ⊆ Destination", "partition(Destination, {Sink}, Actuators)"],
+        ["Sink", "Actuators"]))).toBe("aodv");
+  });
+
+  it("does not count a destination member the context never declares as a constant", () => {
+    // A membership axiom about something that is not a constant (a typo, or a
+    // variable's name reused) is not the model naming a sink.
+    expect(style(ctx("C0", ["Dests ⊆ ND", "Sink ∈ Dests"], ["Dests"]))).toBe("flooding");
+  });
+});
+
+// ⚠ pM5 REFINES uM4, so it must see what uM4 sees. The split swap used to touch
+// uM4 alone, leaving pM5 on `C1` while its abstraction saw `C2_ctl`/`C2_aodv` —
+// a refinement that does not see its abstraction's contexts, which Rodin's
+// static checker rejects (2026-09-27 bug hunt). Nothing writes these machines
+// out, so no C++ moved; the claim that they open in Rodin did.
+describe("the bundled machines see the same context", () => {
+  const sees = (xml: string) => [...xml.matchAll(/seesContext [^>]*target="(\w+)"/g)].map((m) => m[1]);
+  it.each([["flooding", C0_DESTS, "C2_ctl"], ["aodv", C0_SINK_IN_DESTS, "C2_aodv"]] as const)(
+    "%s: uM4 and pM5 both see the bundled split", (_s, c0, split) => {
+      const src = patternExtensionFor([withCtlSet("CONTROL"), c0, C1_PATTERN], "pM3");
+      const xml = (n: string) => src.files.find((f) => f.name === n)!.xml;
+      expect(sees(xml("uM4.bum"))).toEqual([split]);
+      expect(sees(xml("pM5.bum"))).toEqual([split]);
+    });
+  it("both stay on C1 when no split is bundled", () => {
+    const src = patternExtensionFor([withCtlSet("FLOOD"), ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"])], "pM3");
+    const xml = (n: string) => src.files.find((f) => f.name === n)!.xml;
+    expect(sees(xml("uM4.bum"))).toEqual(["C1"]);
+    expect(sees(xml("pM5.bum"))).toEqual(["C1"]);
   });
 });

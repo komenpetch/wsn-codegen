@@ -448,7 +448,7 @@ export function installNetProtocolShell(tree: GeneratedTree, cls: string, machin
       const [between, afterMethods] = cut(afterMembers, SHELL_METHODS_START, SHELL_METHODS_END, "methods");
       // What sat between the two regions is the emitter's `protected:` label,
       // which the replacement block supplies for itself.
-      h = beforeMembers + header() + between.replace(/\n\n  protected:\n$/, "\n") + afterMethods;
+      h = beforeMembers + header() + between.replace(/\n\n {2}protected:\n$/, "\n") + afterMethods;
       return { ...f, content: h };
     }
 

@@ -367,25 +367,40 @@ export function stripDeadPacketFieldMaps(tree: GeneratedTree, fields: PacketFiel
   let h = hFile.content, cc = ccFile.content;
   const ccNoComments = cc.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
 
+  // ⚠ THE HEADER CHECK IS SCOPED TO THE MODULE CLASS (2026-09-27). It used to
+  // count the name across the whole header, and the PPkt chunk declares a field
+  // of the SAME name with its accessor pair — `int netSeqNo = 0;`,
+  // `getNetSeqNo() … return netSeqNo;` — so every field the chunk keeps under its
+  // Event-B name read as "used elsewhere" and its dead machine map survived:
+  // five in M6Wsn (vPktData, netSeqNo, netDestAddr, envDestAddr, pktErrND), one
+  // in M4Wsn and in structure 3. The member lives in the module class, which is
+  // the one holding the machine-state anchor, so that class is what is searched.
+  const stateAt = h.indexOf("// ── Event-B machine state ──");
+  const moduleClassAt = stateAt < 0 ? 0 : Math.max(0, h.lastIndexOf("\nclass ", stateAt));
+
   for (const field of fields) {
     const id = esc(field.ebName);
     const declRe = new RegExp(`^[ \\t]*std::(?:map|set)<[^;\\n]*>\\s+${id};.*\\n`, "m");
     if (!declRe.test(h)) continue;                       // not a declared machine-state member
+    // ⚠ The clear() line is removed WITH the member when there is one, but its
+    // absence no longer protects a dead member: `netSeqNo ≔ PKT × {0}` is
+    // realised by the chunk field, so no clear() is emitted for it, and that
+    // alone kept an unused `std::map<PktId, int> netSeqNo;` in every module.
     const clearLineRe = new RegExp(`^[ \\t]*${id}\\.clear\\(\\);[ \\t]*\\n`, "m");
-    if (!clearLineRe.test(cc)) continue;                 // no clear() call to remove alongside it
+    const hasClear = clearLineRe.test(cc);
     const occurrences = ccNoComments.match(new RegExp(`\\b${id}\\b`, "g")) ?? [];
-    if (occurrences.length !== 1) continue;               // referenced somewhere besides the clear() call -- leave it
+    if (occurrences.length !== (hasClear ? 1 : 0)) continue;   // referenced besides its own clear() -- leave it
     // The header must be checked too. Counting only the .cc was enough to
     // prove the member unused there, but the declaration being REMOVED lives
     // in the .h -- an inline accessor, in-class initializer or default
     // argument mentioning the field would have been deleted out from under
     // (audit finding). Strip comments, then require the single remaining
     // mention to be the declaration itself.
-    const hNoComments = h.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    const hNoComments = h.slice(moduleClassAt).split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
     const hOccurrences = hNoComments.match(new RegExp(`\\b${id}\\b`, "g")) ?? [];
-    if (hOccurrences.length !== 1) continue;              // used elsewhere in the header -- leave it
+    if (hOccurrences.length !== 1) continue;              // used elsewhere in the module class -- leave it
     h = h.replace(declRe, "");
-    cc = cc.replace(clearLineRe, "");
+    if (hasClear) cc = cc.replace(clearLineRe, "");
   }
   return tree.map((f) =>
     f.path.endsWith(".h") ? { ...f, content: h }

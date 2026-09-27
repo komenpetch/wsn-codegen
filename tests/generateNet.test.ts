@@ -6,6 +6,8 @@ import { flatten } from "../src/engine/flattener";
 import { resolveEncodings } from "../src/engine/encodingResolver";
 import { packetModelOf } from "../src/engine/packetModel";
 import { senderFieldOf, transmitEventsOf } from "../src/engine/packetOps";
+import { networkTranslationFor, withRules, initsRealisedAfterEmit } from "../src/engine/netPipeline";
+import { translationTally } from "../src/engine/codeEmitter";
 import type { GeneratedTree } from "../src/engine/types";
 
 // Through the ONE public entry point. `generate` takes the network branch by
@@ -157,10 +159,16 @@ describe("generate (network branch) for MintRoute M4", () => {
   // every counter, every node: `lose_pkt` guards that the delivery image is
   // exactly `{FAILED_XMIT}`, which never happens when `send_up` publishes a
   // real node id.
+  // 2026-09-27: 27 -> 15, and NOTHING NEW IS TRANSLATED -- the count stopped
+  // counting what other passes realise. 11 node-keyed initialisations
+  // (`floodTbl ≔ ND × {∅}` …) are specialised per node at INITSTAGE_LAST by the
+  // identity binding, and `netSeqNo ≔ PKT × {0}` is the chunk field's own `= 0`;
+  // their markers now say so (markRealised). Every rewritten note was checked
+  // against a real specialisation line or field initialiser before this moved.
   it("translates more of MintRoute than the app-layer catalog alone", () => {
     const all = tree.map((f) => f.content).join("\n");
     const after = (all.match(/UNTRANSLATED/g) ?? []).length;
-    expect(after).toBe(27);
+    expect(after).toBe(15);
   });
 
   // ⚠ AND THE ORDER THAT MAKES THE IMAGE RULES REACHABLE AT ALL. composedRules
@@ -654,9 +662,55 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     // shapes, including "treats an UNSPLIT control set as its own single
     // target", which is the case this file can no longer construct from a real
     // project. What remains here is that the chunk classes track the lattice.
+    //
+    // ⚠ (2026-09-27) The tool reads which split to bundle off the project's
+    // shape (routingStyleOf). This project names no sink, and FLOODING is the
+    // default for that (user ruling), so the lattice is MintRoute's.
     expect(h).toContain("class DataPkt : public PPkt");
     expect(h).toContain("class RoutePkt : public PPkt");
     expect(h).toContain("class BeaconPkt : public PPkt");
+    expect(h).not.toContain("class RreqPkt");
+    expect(h).toContain("(derived from C0, C1, C2_ctl)");
+  });
+
+  // The other branch, on the same project plus ONE context naming a sink AMONG
+  // ITS DESTINATIONS — RTMCS C2's form, `Sink ∈ Destination` — and nothing else.
+  // The upload is a new file beside the project, never an edit of it.
+  it("gives the same project, once it names a sink among its destinations, the AODV split", () => {
+    const sink = {
+      name: "C2_dest.buc",
+      xml: `<?xml version="1.0" encoding="UTF-8"?>
+<org.eventb.core.contextFile org.eventb.core.configuration="org.eventb.core.fwd" version="3">
+   <org.eventb.core.extendsContext name="ext1" org.eventb.core.target="C1"/>
+   <org.eventb.core.constant name="cst0" org.eventb.core.identifier="Sink"/>
+   <org.eventb.core.axiom name="a1" org.eventb.core.label="axm1" org.eventb.core.predicate="Sink ∈ Dests" org.eventb.core.theorem="false"/>
+   <org.eventb.core.axiom name="a2" org.eventb.core.label="axm2" org.eventb.core.predicate="Sink = 0" org.eventb.core.theorem="false"/>
+</org.eventb.core.contextFile>`,
+    };
+    const h = generate([...loadProject("AppLayer"), sink], "pM3", "Pm3Wsn", 3)
+      .find((f) => f.path.endsWith(".h"))!.content;
+    expect(h).toContain("class RreqPkt : public PPkt");
+    expect(h).toContain("class RrepPkt : public PPkt");
+    expect(h).toContain("class RrerPkt : public PPkt");
+    expect(h).not.toContain("class BeaconPkt");
+    expect(h).toContain("(derived from C0, C1, C2_dest, C2_aodv)");
+  });
+
+  // And the way the harness gets AODV: the UNEDITED project, with the routing
+  // chosen on the tool side (user, 2026-09-27: "we not try to edit the input,
+  // everything that we build came from pattern").
+  it("gives the unedited project the AODV split when the routing is chosen", () => {
+    const h = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3, undefined, true, "aodv")
+      .find((f) => f.path.endsWith(".h"))!.content;
+    expect(h).toContain("class RreqPkt : public PPkt");
+    expect(h).toContain("class RrerPkt : public PPkt");
+    expect(h).not.toContain("class BeaconPkt");
+    expect(h).toContain("(derived from C0, C1, C2_aodv)");
+  });
+
+  it("refuses a routing outside structure 3 rather than ignoring it", () => {
+    expect(() => generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 2, undefined, true, "aodv"))
+      .toThrow(/applies to structure 3/);
   });
 });
 
@@ -1103,6 +1157,7 @@ describe("structure 3 consumes every delivery it publishes", () => {
   // pins that it TRANSLATES — an untranslated clause makes the creating event
   // refuse to fire, which would silently end all origination.
   it("records the created packet in the originator's own floodTbl", () => {
+    // MintRoute's leaves: this project names no sink, so it takes the default.
     for (const ev of ["create_routePkt", "create_beaconPkt"]) {
       const b = body(`bool Pm3Wsn::${ev}(`);
       expect(b).toContain("floodTbl[x].insert(pkt);");
@@ -1215,5 +1270,74 @@ describe("--drain: the non-creating events are drained, the creating ones are no
       cc.slice(cc.indexOf("bool Pm3Wsn::runEnabledEvents()"))
         .split("\n").filter((l) => l.startsWith("    if (try_")).join("\n");
     expect(firstPass(drained)).toBe(firstPass(plain));
+  });
+});
+
+// scripts/scan.ts reports two counts per machine that MUST agree: UNTRANSLATED
+// markers in the emitted files, and the same clauses recounted through
+// translateEvent. Its recount used the base catalog alone, so on every
+// network-layer machine it counted clauses the generator does translate and
+// reported MISMATCH -- for weeks, because nothing checked it (found 2026-09-27).
+// The recount now goes through networkTranslationFor, the one place the
+// generator's own network-layer rules and model preparation live, so it cannot
+// drift from generation again. This pins the agreement.
+describe("the untranslated recount agrees with the emitted output", () => {
+  const recount = (project: string, machine: string) => {
+    const raw = parseModel(loadProject(project));
+    const model = resolveEncodings(flatten(raw, machine));
+    const net = networkTranslationFor(raw, model);
+    const count = () => translationTally(model, raw.contexts,
+      net ? initsRealisedAfterEmit(raw, model, net) : new Set()).untranslated.length;
+    return net ? withRules(net.rules, count) : count();
+  };
+  const emitted = (project: string, machine: string) =>
+    (gen(project, machine).map((f) => f.content).join("\n").match(/UNTRANSLATED/g) ?? []).length;
+
+  for (const [project, machine] of [["MintRoute", "M4"], ["RTMCS", "M6"], ["AppLayer", "pM3"]])
+    it(`${project} ${machine}`, () => {
+      expect(emitted(project, machine)).toBeGreaterThan(0);   // or agreement proves nothing
+      expect(recount(project, machine)).toBe(emitted(project, machine));
+    });
+});
+
+// ── 2026-09-27 bug hunt, the fixes that have no suite of their own ──────────
+describe("what the emitted modules claim is true", () => {
+  const v3 = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
+  const text = (t: GeneratedTree, ext: string) => t.find((f) => f.path.endsWith(ext))!.content;
+  const m4 = gen("MintRoute", "M4");
+  const m6 = gen("RTMCS", "M6");
+
+  // Defect 3. The AODV module reported 8 untranslated where 1 was genuine.
+  it("reports as untranslated only what nothing realises", () => {
+    const cc = text(v3, ".cc");
+    expect(cc.match(/UNTRANSLATED/g) ?? []).toEqual(["UNTRANSLATED"]);
+    expect(cc).toContain("// UNTRANSLATED GUARD: data ≥ safetyThreshold");
+    // and every marker it stopped emitting is realised where the note says
+    expect(cc).toContain("// realised per node at INITSTAGE_LAST (node identity binding): routeSeqNo ≔ ND × {0}");
+    expect(cc).toContain("routeSeqNo[myNodeId] = 0;");
+    expect(cc).toContain("// realised by the PPkt field initialiser (every packet starts there): netSeqNo ≔ PKT × {0}");
+    expect(text(v3, ".h")).toMatch(/int netSeqNo = 0;\s+\/\/ Event-B: netSeqNo/);
+  });
+
+  // Defect 4. `MintRoute::sendDataBroadcast` and three AODV names do not exist.
+  it("cites no MintRoute method MintRoute does not have", () => {
+    for (const t of [v3, m4, m6]) expect(text(t, ".cc")).not.toMatch(/MintRoute::send\w*Broadcast/);
+    expect(text(v3, ".cc")).toContain("Shaped after MintRoute's own sendRouteBroadcast() / sendBeaconBroadcast()");
+  });
+
+  // Defect 6. A field the chunk keeps under its Event-B name shared that name
+  // with the dead machine map, so the header check read the map as in use.
+  it("keeps no dead machine map for a field the chunk carries", () => {
+    expect(text(v3, ".h")).not.toMatch(/std::map<PktId, int> netSeqNo;/);
+    expect(text(m4, ".h")).not.toMatch(/std::map<PktId, int> netSeqNo;/);
+    // MEMBERS of the module class (indented). ⚠ Not the namespace-scope
+    // `inline std::map<PktId, Node> finalDestAddr;` the CONTEXT emitter leaves
+    // for a relocated context constant — also dead, but a different pass and
+    // the residue recorded on 2026-09-19. An unanchored pattern caught that one
+    // and read as a failure of this fix.
+    for (const f of ["vPktData", "netSeqNo", "netDestAddr", "envDestAddr", "pktErrND", "finalDestAddr"])
+      expect(text(m6, ".h")).not.toMatch(new RegExp(`^ {4}std::map<[^;]*>\\s+${f};`, "m"));
+    // and the pattern still sees a member when one is there, so it is not vacuous
+    expect(text(m6, ".h")).toMatch(/^ {4}std::set<PktId> live_finalDestAddr;/m);
   });
 });

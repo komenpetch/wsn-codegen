@@ -173,6 +173,34 @@ export function mustReplace(text: string, pattern: string | RegExp, replacement:
   return text.replace(pattern, replacement);
 }
 
+/**
+ * Turn the constructor's `// UNTRANSLATED ACTION: <a>` marker into a note saying
+ * what realises `<a>` instead, for each action a later pass realises.
+ *
+ * ⚠ THE UNTRANSLATED COUNT IS THIS PROJECT'S MEASURE OF WHAT IS VISIBLY MISSING,
+ * and a marker left beside a realisation makes it lie. Measured 2026-09-27: the
+ * AODV structure-3 module reported 8 untranslated where 1 was genuine — 6
+ * node-keyed initialisations the identity binding realises at INITSTAGE_LAST
+ * and `netSeqNo ≔ PKT × {0}`, which the chunk field's own `= 0` realises.
+ * codeEmitter already applies this to what a MEMBER initialiser realises; this
+ * is the same rule for the two realisers that run after it.
+ *
+ * Loud, because a realiser whose marker is missing means the two passes no
+ * longer agree about what the model said, and a quiet skip would leave the
+ * count wrong in the other direction.
+ */
+export function markRealised(tree: GeneratedTree, actions: readonly string[], how: string,
+  pass: string): GeneratedTree {
+  if (actions.length === 0) return tree;
+  return tree.map((f) => {
+    if (!f.path.endsWith(".cc")) return f;
+    let cc = f.content;
+    for (const a of actions)
+      cc = mustReplace(cc, `// UNTRANSLATED ACTION: ${a}\n`, `// realised ${how}: ${a}\n`, pass);
+    return { ...f, content: cc };
+  });
+}
+
 // ── Reachability: events nothing can ever enable ────────────────────────────
 //
 // An event is schedulable when its parameters can be BOUND. That is a different
