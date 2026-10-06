@@ -1,9 +1,20 @@
 import { useRef, useState, type DragEvent } from "react";
-import { generate, generateMerged, machineNames, leafMachine, defaultName } from "./engine/pipeline";
-import type { EmitVersion } from "./engine/codeEmitter";
+import { generateMerged, machineNames, leafMachine, defaultName } from "./engine/pipeline";
 import { readFolder, readZip, writeTree } from "./io/fileOutput";
 
 type EbFiles = { name: string; xml: string }[];
+
+// The page does one thing: one project in, one module out. It always emits
+// structure 3 (structure 2's module carrying the bundled PPkt + PRouteTable
+// extension) from the leaf machine, which the whole chain merges into.
+//
+// ⚠ The target-machine and structure selectors were removed on purpose
+// (2026-10-06). Structures 1 and 2 are paper2's V1/V2 compare-table artifacts
+// and a non-leaf target exists for MintRoute, whose leaf M5 does not compile;
+// both stay reachable from the command line (`--v1/--v2`, `--machine`). A
+// project the extension does not fit is REFUSED by the engine, with a message
+// pointing there, rather than silently given another structure.
+const STRUCTURE = 3;
 
 export default function App() {
   const [log, setLog] = useState<string[]>([]);
@@ -12,13 +23,8 @@ export default function App() {
   const [files, setFiles] = useState<EbFiles>([]);
   const [machines, setMachines] = useState<string[]>([]);
   const [outputName, setOutputName] = useState("");
-  // Which machine of the chain to emit. Defaults to the leaf, which is what the
-  // tool merges into — but it MUST be selectable: MintRoute's leaf is M5, whose
-  // route-table clauses do not translate yet, so a user who uploads MintRoute
-  // and takes the default gets a module that does not compile. M4 does.
-  const [target, setTarget] = useState("");
-  // The emitted structure, numbered as the paper numbers them.
-  const [structure, setStructure] = useState<EmitVersion>(2);
+  // The leaf's derived name, kept as the placeholder once the user clears the field.
+  const [defaultOut, setDefaultOut] = useState("");
   const zipInput = useRef<HTMLInputElement>(null);
   const append = (s: string) => setLog((l) => [...l, s]);
 
@@ -31,10 +37,11 @@ export default function App() {
     try {
       const f = await read();
       const names = f.length ? machineNames(f) : [];
+      const name = names.length ? defaultName(leafMachine(f)) : "";
       setFiles(f);
       setMachines(names);
-      setTarget(names.length ? leafMachine(f) : "");
-      setOutputName(names.length ? defaultName(leafMachine(f)) : "");
+      setDefaultOut(name);
+      setOutputName(name);
       if (names.length) {
         append(`Loaded ${f.length} file(s); machines (base → leaf): ${names.join(" → ")}.`);
       } else if (f.length) {
@@ -63,7 +70,7 @@ export default function App() {
     if (!outputName.trim()) return append("Enter an output name.");
     setBusy(true);
     try {
-      append(`Emitting structure ${structure} from ${target || "the leaf machine"} → ${outputName.trim()}…`);
+      append(`Merging ${machines.join(" → ")} → ${outputName.trim()}…`);
       // v4: self-contained output. Earlier structures #include the eb_context.h
       // / eb_helpers.h fixtures, which only the CLI staged — a download from
       // here shipped neither and could not compile.
@@ -81,15 +88,9 @@ export default function App() {
       // and an exact post-GC heap baseline. The caveat travels with the number,
       // in the console object below, so it cannot be quoted out of context.
       const t0 = performance.now();
-      // `generate` when a machine is chosen, `generateMerged` for the leaf —
-      // the same two entry points the CLI uses.
-      //
-      // ⚠ Structure 3 no longer takes a second project. It carries the pattern
-      // extension — PPkt and PRouteTable — and that ships inside the tool, so
-      // one project in, one module out.
-      const tree = target && target !== leafMachine(files)
-        ? generate(files, target, outputName.trim(), structure)
-        : generateMerged(files, outputName.trim(), structure);
+      // The pattern extension ships inside the tool, so there is no second
+      // project to upload: the leaf, structure 3, nothing else to choose.
+      const tree = generateMerged(files, outputName.trim(), STRUCTURE);
       const genMs = performance.now() - t0;
 
       const outLines = tree.reduce(
@@ -99,8 +100,7 @@ export default function App() {
         generationMs: Number(genMs.toFixed(3)),
         inputFiles: files.length,
         machines: machines.length,
-        structure,
-        targetMachine: target,
+        structure: STRUCTURE,
         mergedInto: outputName.trim(),
         emittedFiles: tree.map((f) => f.path),
         emittedLines: outLines,
@@ -217,37 +217,10 @@ export default function App() {
             <strong>{machines.length} machine(s)</strong> ({machines.join(" → ")}) → merged into one
             module ({outputName || "…"}.h/.cc/.ned).
           </p>
-          <label className="flex flex-col gap-1 text-sm text-gray-700">
-            Target machine
-            <select
-              value={target}
-              disabled={busy}
-              onChange={(e) => {
-                setTarget(e.target.value);
-                setOutputName(defaultName(e.target.value));
-              }}
-              className="rounded border border-gray-300 px-2 py-1"
-            >
-              {machines.map((m) => (
-                <option key={m} value={m}>
-                  {m}{m === leafMachine(files) ? " (leaf)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-gray-700">
-            Structure
-            <select
-              value={structure}
-              disabled={busy}
-              onChange={(e) => setStructure(Number(e.target.value) as EmitVersion)}
-              className="rounded border border-gray-300 px-2 py-1"
-            >
-              <option value={1}>1 — shell, extension point</option>
-              <option value={2}>2 — parity, self-contained</option>
-              <option value={3}>3 — 2 + packet class (PPkt)</option>
-            </select>
-          </label>
+          <p className="w-full text-sm text-gray-700">
+            The module carries the <em>PPkt</em> and <em>PRouteTable</em> patterns, which ship
+            inside the tool, so there is nothing more to upload.
+          </p>
           <label className="flex flex-col gap-1 text-sm text-gray-700">
             Output name
             <input
@@ -255,19 +228,10 @@ export default function App() {
               value={outputName}
               disabled={busy}
               onChange={(e) => setOutputName(e.target.value)}
-              placeholder={target ? defaultName(target) : ""}
+              placeholder={defaultOut}
               className="rounded border border-gray-300 px-2 py-1"
             />
           </label>
-          {structure === 3 && (
-            <div className="w-full rounded border border-amber-300 bg-amber-50 p-3 text-sm">
-              <p className="text-gray-700">
-                <strong>Pattern extension</strong> — structure 3 is structure 2's module
-                carrying <em>PPkt</em> and <em>PRouteTable</em>. The extension ships inside
-                the tool, so there is nothing more to upload: one project in, one module out.
-              </p>
-            </div>
-          )}
           <button
             onClick={() => void runGenerate()}
             disabled={busy}

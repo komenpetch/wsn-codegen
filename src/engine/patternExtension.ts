@@ -553,7 +553,8 @@ export function patternExtensionFor(files: EbFiles, base: string,
     throw new Error(
       `The pattern extension (PPkt + PRouteTable) refines the CommPattern, and this project does `
       + `not declare ${missing.join(", ")}. Structure 3 carries that extension, so it only applies `
-      + `to a project built on the pattern; use structure 2 for a model that is not.`);
+      + `to a project built on the pattern. For a model that is not, use structure 2 from the `
+      + `command line (npm run generate -- <project> <out> --v2).`);
 
   // THE DEFAULT APPLIES ONLY TO A PROJECT WHOSE CONTROL SET IS THE ONE IT
   // SPLITS, AND ONLY WHERE THAT SET IS NOT ALREADY SPLIT.
