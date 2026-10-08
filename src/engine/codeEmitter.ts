@@ -364,6 +364,10 @@ template<class R> bool inRan(const R& r, PktId y) {
 //       the context is inlined, so the output is genuinely three self-contained
 //       files;
 //   3 = 2's shell carrying the packet pattern class PPkt from another project.
+//   4 = 3 plus the next-hop design (route entries, unicast, the data path;
+//       design/NextHop_Extension_Draft.md). Added 2026-10-09 (user: "name it
+//       v4"); 1-3 stay frozen, and everything the draft scopes to "structure 3
+//       only" applies to 4 only.
 //
 // ⚠ The shell of 3 is IDENTICAL to 2's, so everything below treats 3 exactly as
 // 2; what makes it 3 is spliced in afterwards by the pipeline (see
@@ -374,7 +378,10 @@ template<class R> bool inRan(const R& r, PktId y) {
 // original RoutingProtocolBase shell, and that shell with only the CommPattern
 // pair merged) were DROPPED: neither is cited anywhere in paper2, and carrying
 // them forced two dead branches through this emitter. Old 3/4/5 are now 1/2/3.
-export type EmitVersion = 1 | 2 | 3;
+export type EmitVersion = 1 | 2 | 3 | 4;
+
+// Structures 3 and 4 carry the bundled pattern extension; 1 and 2 do not.
+export const carriesPattern = (v: EmitVersion): boolean => v >= 3;
 
 export function emit(
   model: EncodedMachine,

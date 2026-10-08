@@ -2,7 +2,7 @@ import type { GeneratedTree, RawModel } from "./types";
 import { parseModel } from "./parser";
 import { flatten, parentOf } from "./flattener";
 import { resolveEncodings } from "./encodingResolver";
-import { emit, type EmitVersion } from "./codeEmitter";
+import { emit, carriesPattern, type EmitVersion } from "./codeEmitter";
 import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
 import { installNetProtocolShell, renameCommPatternPair } from "./netProtocolShell";
 import { installScheduler } from "./scheduler";
@@ -134,13 +134,13 @@ function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
   // ⚠ Refused rather than ignored: a routing is a choice between the bundled
   // pattern's splits, which only structure 3 carries, and an override brings its
   // own packet source instead of the bundle.
-  if (routing !== undefined && version !== 3)
-    throw new Error(`A routing (${routing}) applies to structure 3, which carries the pattern `
+  if (routing !== undefined && !carriesPattern(version))
+    throw new Error(`A routing (${routing}) applies to structure 3 or 4, which carry the pattern `
       + "extension; this is structure " + version + ".");
   if (routing !== undefined && override)
     throw new Error("A routing chooses the bundled pattern's control split; an explicit packet "
       + "source replaces the bundle, so the two cannot be combined.");
-  if (version !== 3) return override;
+  if (!carriesPattern(version)) return override;
   return override ?? patternExtensionFor(files, base, routing);
 }
 
@@ -158,14 +158,16 @@ function emitOne(raw: RawModel, target: string, outputName: string, version: Emi
 
 function emitBody(raw: RawModel, target: string, outputName: string, version: EmitVersion,
   packetSource?: PacketSource, drain = true): GeneratedTree {
-  // v5: the app layer's SensorApp shell, carrying PPkt. The shell is v4's --
-  // codeEmitter treats 5 as 4 -- and the packet classes are spliced on top from
-  // `packetSource`, which is why v4 itself does not move: it stays the frozen
-  // compare-table artifact it was measured as.
+  // Structures 3 and 4: structure 2's shell, carrying PPkt. codeEmitter treats
+  // them as 2, and the packet classes are spliced on top from `packetSource`,
+  // which is why structure 2 itself does not move: it stays the frozen
+  // compare-table artifact it was measured as. (These comments called them v5
+  // and v4 before the 2026-09-13 renumber.) Structure 4 is 3 plus the next-hop
+  // design; until each part of that lands, the two take exactly the same path.
   //
   // The packet source is a SEPARATE project on purpose: PPkt is a pattern, and a
   // pattern is not owned by the protocol it was read off.
-  if (version === 3) {
+  if (carriesPattern(version)) {
     if (!packetSource)
       throw new Error("Structure 3 needs a packet source: which project's packet-type partition PPkt comes from.");
     const pRaw = parseModel(packetSource.files);
@@ -517,9 +519,9 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     const { model, tree } = tryNetworkLayer(raw, target, outputName);
     return tree ?? emit(model, outputName, version, raw.contexts);
   }
-  // Contexts reach the emitter so v4 can inline the Event-B context block
-  // (constants derived from the project's own axioms) instead of #including a
-  // shipped fixture; v1-v3 ignore them.
+  // Contexts reach the emitter so structure 2 and up can inline the Event-B
+  // context block (constants derived from the project's own axioms) instead of
+  // #including a shipped fixture; structure 1 ignores them.
   return emit(resolveEncodings(flatten(raw, target)), outputName, version, raw.contexts);
 }
 

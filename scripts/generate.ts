@@ -13,28 +13,30 @@
 //   npm run generate -- MintRoute out-m4 --machine M4
 //   npm run generate -- AppLayer out-v3 --v3          # + the bundled pattern extension
 //   npm run generate -- AppLayer out-v3 --v3 --routing aodv   # choose the bundled split
+//   npm run generate -- AppLayer out-v4 --v4          # structure 3 + the next-hop design
 //   npm run generate -- <dir|project> <outDir> --v1     # emitted-structure version
 //
 // <dir|project> is a path, or one of the labels in scripts/projects.ts
 // (MintRoute, RTMCS, AppLayer). Machine names are not fixed — any chain
 // (pM1/uM2/pM3/uM4/M0…M6/…) works.
 //
-// --v1/--v2/--v3 selects the emitted structure for the report's compare table
-// (1 = SensorApp shell with the transmit behind an extension point, 2 = the
+// --v1/--v2/--v3/--v4 selects the emitted structure for the report's compare
+// table (1 = SensorApp shell with the transmit behind an extension point, 2 = the
 // default, SensorApp behavioural parity). Structure 3 is 2's shell carrying the
 // pattern extension -- PPkt and PRouteTable -- which ships INSIDE the tool, so
-// it needs no second project: one project in, one module out.
+// it needs no second project: one project in, one module out. Structure 4 is 3
+// plus the next-hop design (design/NextHop_Extension_Draft.md).
 //
 // Run via vite-node so TS + engine imports resolve without a build step.
 import { writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { generate, generateMerged, machineNames, leafMachine, MODULE_NAME } from "../src/engine/pipeline";
 import { loadProject, resolveInput } from "./projects";
-import type { EmitVersion } from "../src/engine/codeEmitter";
+import { carriesPattern, type EmitVersion } from "../src/engine/codeEmitter";
 import type { RoutingStyle } from "../src/engine/patternExtension";
 
 const argv = process.argv.slice(2);
-const flag = argv.find((a) => /^--v[123]$/.test(a));
+const flag = argv.find((a) => /^--v[1234]$/.test(a));
 const version = (flag ? Number(flag.slice(3)) : 2) as EmitVersion;
 // Drain the non-creating events to a bounded fixpoint each pass (structure 3).
 //
@@ -69,14 +71,14 @@ const valueAt = new Set([mIdx, rIdx].filter((i) => i >= 0).map((i) => i + 1));
 // failure this project has paid for before.
 const drainFlag = argv.find((a) => a === "--drain" || a === "--no-drain");
 // Same reason: only structure 3 carries the pattern whose split it chooses.
-if (routing && version !== 3) {
-  console.error("\n--routing applies to structure 3 (--v3), which carries the pattern "
-    + "extension. Re-run with --v3, or drop --routing.\n");
+if (routing && !carriesPattern(version)) {
+  console.error("\n--routing applies to structures 3 and 4 (--v3, --v4), which carry the "
+    + "pattern extension. Re-run with --v3 or --v4, or drop --routing.\n");
   process.exit(2);
 }
-if (drainFlag && version !== 3) {
-  console.error(`\n${drainFlag} applies to structure 3 (--v3); it is not wired into the `
-    + `other structures. Re-run with --v3, or drop ${drainFlag}.\n`);
+if (drainFlag && !carriesPattern(version)) {
+  console.error(`\n${drainFlag} applies to structures 3 and 4 (--v3, --v4); it is not wired `
+    + `into the other structures. Re-run with --v3 or --v4, or drop ${drainFlag}.\n`);
   process.exit(2);
 }
 // ⚠ Both drain flags have to be excluded here too, or one is taken as the
