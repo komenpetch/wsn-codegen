@@ -16,6 +16,9 @@
    <org.eventb.core.variable name="var11" org.eventb.core.identifier="senseBuff"/>
    <org.eventb.core.variable name="var12" org.eventb.core.identifier="emergencyAlert"/>
    <org.eventb.core.variable name="var13" org.eventb.core.identifier="pktSeqNo"/>
+   <org.eventb.core.variable name="var19" org.eventb.core.identifier="floodTbl" org.eventb.core.comment="Kept from uM4, as are netSeqNo and linkSeqNo below and the per-leaf counters spliced above. A refinement must redeclare every abstract variable it still uses, or the variable disappears -- and this machine's extended events write these, and update_nbr reads netSeqNo."/>
+   <org.eventb.core.variable name="var20" org.eventb.core.identifier="netSeqNo"/>
+   <org.eventb.core.variable name="var21" org.eventb.core.identifier="linkSeqNo"/>
    <org.eventb.core.variable name="var14" org.eventb.core.identifier="neighbourTbl"/>
    <org.eventb.core.variable name="var15" org.eventb.core.identifier="updateNbrs"/>
    <org.eventb.core.variable name="var16" org.eventb.core.identifier="lastSeqno"/>

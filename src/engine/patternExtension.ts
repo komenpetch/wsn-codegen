@@ -483,27 +483,33 @@ function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
   return { uM4, pM5: `${hook("evt_rcv5", fresh)}\n${hook("evt_rcvdup5", dup)}` };
 }
 
+// Splice `add` in after `anchor`. A missing anchor is an error rather than a
+// silent no-op -- these files are ours, so one drifting is a bug.
+function spliceAfter(xml: string, anchor: string, add: string, file: string, what: string): string {
+  if (!add) return xml;
+  if (!xml.includes(anchor))
+    throw new Error(`patternExtension: ${file} no longer contains the ${what} anchor `
+      + `(${anchor.trim().slice(0, 48)}…), so the derived control events cannot be spliced in.`);
+  return xml.replace(anchor, `${anchor}\n${add}`);
+}
+
+// Both bundled machines declare `pktSeqNo` on this line, and the derived per-leaf
+// counters go right after it in each, so the two list their variables in one order.
+const PKT_SEQ_NO_VARIABLE = `   <org.eventb.core.variable name="var13" org.eventb.core.identifier="pktSeqNo"/>`;
+
 // Splice the derived parts into the bundled uM4. Each anchor is the last line of
-// its kind, so the additions land in a well-formed place; a missing anchor is an
-// error rather than a silent no-op -- this file is ours, so it drifting is a bug.
+// its kind, so the additions land in a well-formed place.
 function instantiate(xml: string, raw: RawModel): string {
   const { vars, invs, inits, events } = deriveControlEvents(raw);
   const flood = deriveFloodEvents(raw).uM4;
   const tx = deriveTransmitEvents(raw).uM4;
   if (!vars && !events && !flood && !tx) return xml;   // nothing declared: nothing to add
-  const at = (anchor: string, add: string, what: string) => {
-    if (!add) return;
-    if (!xml.includes(anchor))
-      throw new Error(`patternExtension: uM4.bum no longer contains the ${what} anchor `
-        + `(${anchor.trim().slice(0, 48)}…), so the derived control events cannot be spliced in.`);
-    xml = xml.replace(anchor, `${anchor}\n${add}`);
-  };
-  at(`   <org.eventb.core.variable name="var13" org.eventb.core.identifier="pktSeqNo"/>`, vars, "variable");
-  at(`org.eventb.core.predicate="pktSeqNo ∈ PKT ⇸ ℕ" `
+  xml = spliceAfter(xml, PKT_SEQ_NO_VARIABLE, vars, "uM4.bum", "variable");
+  xml = spliceAfter(xml, `org.eventb.core.predicate="pktSeqNo ∈ PKT ⇸ ℕ" `
     + `org.eventb.core.comment="per-packet sequence number: serves duplicate detection and the missed count, both communication concerns" `
-    + `org.eventb.core.theorem="false"/>`, invs, "invariant");
-  at(`      <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" `
-    + `org.eventb.core.assignment="pktSeqNo ≔ ∅"/>`, inits, "INITIALISATION");
+    + `org.eventb.core.theorem="false"/>`, invs, "uM4.bum", "invariant");
+  xml = spliceAfter(xml, `      <org.eventb.core.action name="act01" org.eventb.core.label="MPacket_pktSeqNo_int_1" `
+    + `org.eventb.core.assignment="pktSeqNo ≔ ∅"/>`, inits, "uM4.bum", "INITIALISATION");
   return spliceBeforeEnd(xml, [events, flood, tx].filter(Boolean).join("\n"), "uM4.bum");
 }
 
@@ -528,6 +534,14 @@ function instantiateB(xml: string, raw: RawModel): string {
     `   <org.eventb.core.event name="evt_tx${i}" org.eventb.core.convergence="0" `
     + `org.eventb.core.extended="true" org.eventb.core.label="${l}">\n   </org.eventb.core.event>`)
     .join("\n");
+  // ⚠ AND THE VARIABLES uM4 DERIVED. pM5 refines uM4, and a refinement that
+  // leaves out an abstract variable makes it DISAPPEAR -- yet pM5's extended
+  // creating and transmit events inherit writes to the per-leaf counters. Until
+  // 2026-10-06 only events were spliced here, so pM5 was not a valid Rodin
+  // refinement; the C++ never showed it, because the flattener unions every
+  // machine's variables. No invariant is spliced: a kept variable keeps the
+  // typing uM4 gave it.
+  xml = spliceAfter(xml, PKT_SEQ_NO_VARIABLE, deriveControlEvents(raw).vars, "pM5.bum", "variable");
   const add = [creating, deriveFloodEvents(raw).pM5, txStubs].filter(Boolean).join("\n");
   if (!add) return xml;
   return spliceBeforeEnd(xml, add, "pM5.bum");

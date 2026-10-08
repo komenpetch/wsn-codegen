@@ -259,3 +259,32 @@ describe("the bundled machines see the same context", () => {
     expect(sees(xml("pM5.bum"))).toEqual(["C1"]);
   });
 });
+
+// ⚠ pM5 REFINES uM4, so it must also REDECLARE every uM4 variable. In Event-B a
+// variable a refinement leaves out DISAPPEARS, and pM5 still uses five of them:
+// its extended events inherit writes to floodTbl, netSeqNo, linkSeqNo and the
+// per-leaf counters, and its own update_nbr guards `sNo = netSeqNo(pkt)`. Found
+// by the 2026-10-06 audit of the Tier C draft. Nothing caught it before because
+// the flattener unions every machine's variables, so the C++ never noticed;
+// only the claim that these files are valid Rodin refinements did.
+describe("pM5 redeclares every uM4 variable", () => {
+  const vars = (xml: string) =>
+    [...xml.matchAll(/<org\.eventb\.core\.variable [^>]*identifier="([^"]+)"/g)].map((m) => m[1]);
+  // The counter named per case is one uM4 DERIVES for that case's control
+  // leaves, so the check below covers the spliced variables, not only the static.
+  const cases = [
+    ["the flooding split", "routeSeqNo", [withCtlSet("CONTROL"), C0_DESTS, C1_PATTERN]],
+    ["the AODV split", "rreqSeqNo", [withCtlSet("CONTROL"), C0_SINK_IN_DESTS, C1_PATTERN]],
+    ["no bundled split", "floodSeqNo",
+      [withCtlSet("FLOOD"), ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"])]],
+  ] as const;
+  it.each(cases)("with %s", (_name, derived, files) => {
+    const src = patternExtensionFor([...files], "pM3");
+    const xml = (n: string) => src.files.find((f) => f.name === n)!.xml;
+    const inUM4 = vars(xml("uM4.bum")), inPM5 = vars(xml("pM5.bum"));
+    expect(inUM4).toContain(derived);
+    expect(inUM4.filter((v) => !inPM5.includes(v))).toEqual([]);
+    // And once each: a variable declared twice in one machine is its own error.
+    expect(new Set(inPM5).size).toBe(inPM5.length);
+  });
+});
