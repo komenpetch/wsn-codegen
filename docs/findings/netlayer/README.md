@@ -77,5 +77,17 @@ DSR has no network-layer Event-B source and it is not recoverable
   counterfactuals, and a repeatable drain that unjams the backward half and does
   nothing for the forward one. ⚠ Includes the measured tension between the two
   halves. Everything was built on copies and reverted.
+- [AODV source study](2026-09-27-aodv-source-study.md) and
+  [RREQ/RREP/RRER pattern study](2026-09-27-rreq-rrep-rrer-pattern-study.md) —
+  INET's `Aodv` against RTMCS, and what v3 can take of it without unicast.
+- [The Specific layer](2026-10-06-specific-layer-study.md) — the blue row of the
+  4×4 matrix for MintRoute, RTMCS and DSR. MintRoute's M5 parent selection is a
+  whole-network computation with a different cost formula from the reference.
+  All three need unicast. v3 offers a Specific class almost no hooks. Ends in six
+  decisions for the user.
+- [The Specific layer across the case studies](2026-10-06-specific-layer-case-studies.md)
+  — the same three side by side, the v2/v3 way. The next-hop mechanism is identical
+  in MintRoute and RTMCS (so it is pattern). RTMCS's route events run per node and
+  MintRoute's do not. Answers the six decisions.
 - [task-reports/](task-reports/) — including `00-decision-ledger.md`, every
   judgment call made during PPkt's implementation and the two that were wrong.
