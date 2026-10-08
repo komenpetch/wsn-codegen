@@ -46,11 +46,11 @@ const gen = (target: string, files: string[], name: string) =>
   emit(resolveEncodings(flatten(parseModel(files.map(load)), target)), name);
 
 describe("codeEmitter", () => {
-  const tree = gen("pM1", ["pM1"], "Pm1App");
-  const file = (ext: string) => tree.find((f) => f.path === `Pm1App.${ext}`)!.content;
+  const tree = gen("pM1", ["pM1"], "EbWsn");
+  const file = (ext: string) => tree.find((f) => f.path === `EbWsn.${ext}`)!.content;
 
   it("emits exactly three files named after the output name", () => {
-    expect(tree.map((f) => f.path).sort()).toEqual(["Pm1App.cc", "Pm1App.h", "Pm1App.ned"]);
+    expect(tree.map((f) => f.path).sort()).toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
   });
   it("stamps every file with a provenance banner (source model, no roadmap text)", () => {
     for (const ext of ["h", "cc", "ned"]) {
@@ -75,7 +75,7 @@ describe("codeEmitter", () => {
   });
   it("wraps the class in the INET SensorApp shell: ApplicationBase + socket callback", () => {
     const h = file("h");
-    expect(h).toContain("class Pm1App : public ApplicationBase, public INetworkSocket::ICallback");
+    expect(h).toContain("class EbWsn : public ApplicationBase, public INetworkSocket::ICallback");
     expect(h).toContain('#include "inet/applications/base/ApplicationBase.h"');
     // INetworkSocket.h uses Protocol without including it; Protocol.h must
     // come first (same include order as SensorApp.h) or the header won't parse.
@@ -85,44 +85,44 @@ describe("codeEmitter", () => {
   });
   it("emits the pattern's send_down as sendSensorPacket, merged with the transmit structure (thesis S4)", () => {
     const cc = file("cc");
-    const body = fn(cc, "bool Pm1App::sendSensorPacket");
+    const body = fn(cc, "bool EbWsn::sendSensorPacket");
     expect(body).toContain("if (!(sentDown.count({x, pkt}) > 0))\n        return false;"); // model guard first
     expect(body).toContain("packet->addTag<L3AddressReq>()->setDestAddress(sinkAddress);");
     expect(body).toContain("emit(packetSentSignal, packet);");
     expect(body).toContain("socket->send(packet);");
     // renamed, not duplicated: the Event-B label survives only as provenance
     expect(cc).toContain("Event-B: send_down");
-    expect(cc).not.toMatch(/bool Pm1App::send_down/);
+    expect(cc).not.toMatch(/bool EbWsn::send_down/);
     // ⚠ The "no separate void shell fn" claim holds at structure 1 only. The
     // default moved to structure 2 in the 2026-09-13 renumber, and structure 2's
     // parity behaviour is precisely that the sensing timer calls a void
     // `sendSensorPacket()` -- the baseline's own wiring -- alongside this bool
     // overload. Asserted against structure 1 so the claim keeps its meaning.
-    const v1cc = emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "Pm1App", 1)
-      .find((f) => f.path === "Pm1App.cc")!.content;
-    expect(v1cc).not.toMatch(/void Pm1App::sendSensorPacket/);
-    expect(cc).not.toMatch(/void Pm1App::sendDown\(/);
-    expect(cc).not.toMatch(/void Pm1App::sendUp\(/);
+    const v1cc = emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "EbWsn", 1)
+      .find((f) => f.path === "EbWsn.cc")!.content;
+    expect(v1cc).not.toMatch(/void EbWsn::sendSensorPacket/);
+    expect(cc).not.toMatch(/void EbWsn::sendDown\(/);
+    expect(cc).not.toMatch(/void EbWsn::sendUp\(/);
   });
   it("emits the pattern's send_up as a socketDataArrived model overload (thesis S5)", () => {
     const cc = file("cc");
-    const body = fn(cc, "bool Pm1App::socketDataArrived");
+    const body = fn(cc, "bool EbWsn::socketDataArrived");
     expect(body).toContain("if (!(sentUp.count({x, pkt}) == 0))\n        return false;"); // model guards kept
     expect(body).toContain("receivedCount++;");
     expect(body).toContain("sentUp.insert({x, pkt});"); // model actions kept
     expect(cc).toContain("Event-B: send_up");
-    expect(cc).not.toMatch(/bool Pm1App::send_up/);
+    expect(cc).not.toMatch(/bool EbWsn::send_up/);
   });
   it("the socket-callback socketDataArrived keeps the packet-object mechanics and points at the model overload", () => {
     const cc = file("cc");
-    const body = fn(cc, "void Pm1App::socketDataArrived");
+    const body = fn(cc, "void EbWsn::socketDataArrived");
     expect(body).toContain("emit(packetReceivedSignal, packet);");
     expect(body).toContain("delete packet;");
     expect(body).toMatch(/socketDataArrived\(x/); // example call in the extension point
   });
   it("timer branch of handleMessageWhenUp points at sendSensorPacket(x, pkt) and reschedules", () => {
     const cc = file("cc");
-    const body = fn(cc, "void Pm1App::handleMessageWhenUp");
+    const body = fn(cc, "void EbWsn::handleMessageWhenUp");
     expect(body).toMatch(/sendSensorPacket\(x/); // example call in the extension point
     expect(body).toContain("scheduleNextSensing(simTime());");
     expect(body).toContain("socket->processMessage(msg);");
@@ -136,13 +136,13 @@ describe("codeEmitter", () => {
   });
   it("implements the lifecycle handlers with SensorApp bodies, not empty stubs", () => {
     const cc = file("cc");
-    expect(cc).toMatch(/void Pm1App::handleStartOperation\([^)]*\)\s*\{[^}]*openSocket\(\);/);
-    expect(cc).toMatch(/void Pm1App::handleStopOperation\([^)]*\)\s*\{[^}]*cancelNextSensing\(\);/);
-    expect(cc).toMatch(/void Pm1App::handleCrashOperation\([^)]*\)\s*\{[^}]*destroy\(\);/);
+    expect(cc).toMatch(/void EbWsn::handleStartOperation\([^)]*\)\s*\{[^}]*openSocket\(\);/);
+    expect(cc).toMatch(/void EbWsn::handleStopOperation\([^)]*\)\s*\{[^}]*cancelNextSensing\(\);/);
+    expect(cc).toMatch(/void EbWsn::handleCrashOperation\([^)]*\)\s*\{[^}]*destroy\(\);/);
   });
   it("reads SensorApp parameters in initialize(INITSTAGE_LOCAL)", () => {
     const cc = file("cc");
-    expect(cc).toContain("void Pm1App::initialize(int stage)");
+    expect(cc).toContain("void EbWsn::initialize(int stage)");
     expect(cc).toContain("ApplicationBase::initialize(stage);");
     expect(cc).toContain('timer = new cMessage("sensingTimer");');
   });
@@ -153,7 +153,7 @@ describe("codeEmitter", () => {
   });
   it("emits a guarded method per event with early-return guards", () => {
     const cc = file("cc");
-    expect(cc).toMatch(/bool Pm1App::start_tx\([^)]*\)\s*\{/);
+    expect(cc).toMatch(/bool EbWsn::start_tx\([^)]*\)\s*\{/);
     // guard early-returns break onto their own indented line
     expect(cc).toContain("if (!(sentDown.count({x, pkt}) == 0))\n        return false;");
     expect(cc).toContain("return true;");
@@ -165,8 +165,8 @@ describe("codeEmitter", () => {
   it("emits a NED-resolvable module: standalone simple like IApp, class bound via @class", () => {
     const ned = file("ned");
     expect(ned).not.toContain("RoutingProtocolBase");
-    expect(ned).toContain("simple Pm1App like IApp");
-    expect(ned).toContain("@class(Pm1App)");
+    expect(ned).toContain("simple EbWsn like IApp");
+    expect(ned).toContain("@class(EbWsn)");
     expect(ned).toContain("input socketIn @labels(ITransportPacket/up)");
     expect(ned).toContain("output socketOut @labels(ITransportPacket/down)");
   });
@@ -191,9 +191,9 @@ describe("codeEmitter", () => {
 // emit() treats 3 as 2. What makes 3 different is covered in generateNet.test.ts.
 describe("emit versions (compare-table outputs)", () => {
   const vTree = (v: 1 | 2 | 3) =>
-    emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "Pm1App", v);
+    emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "EbWsn", v);
   const vFile = (v: 1 | 2 | 3, ext: string) =>
-    vTree(v).find((f) => f.path === `Pm1App.${ext}`)!.content;
+    vTree(v).find((f) => f.path === `EbWsn.${ext}`)!.content;
 
   it("1: SensorApp shell, transmit behind the extension point, context in fixtures", () => {
     const h = vFile(1, "h");
@@ -204,8 +204,8 @@ describe("emit versions (compare-table outputs)", () => {
     expect(h).toContain('#include "eb_context.h"');
     expect(cc).toContain("EXTENSION POINT");
     // The CommPattern pair is already merged and renamed at this structure.
-    expect(cc).toContain("bool Pm1App::sendSensorPacket(Node x, PktId pkt)");
-    expect(cc).toContain("bool Pm1App::socketDataArrived(");
+    expect(cc).toContain("bool EbWsn::sendSensorPacket(Node x, PktId pkt)");
+    expect(cc).toContain("bool EbWsn::socketDataArrived(");
   });
 
   it("2: same shell, transmit bound and the context inlined — three self-contained files", () => {
@@ -217,18 +217,18 @@ describe("emit versions (compare-table outputs)", () => {
     expect(h).not.toContain('#include "eb_helpers.h"');
     expect(h).toContain("inline const int");            // context inlined instead
     expect(vTree(2).map((f) => f.path).sort())
-      .toEqual(["Pm1App.cc", "Pm1App.h", "Pm1App.ned"]);
+      .toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
     // ⚠ Structure 2 KEEPS both EXTENSION POINT markers -- they are the
     // documented remaining hand step (the identity binding), and structure 3 is
     // what finally replaces them. What 2 adds over 1 is the bound transmit and
     // the inlined context, not the removal of those markers.
     expect(cc).toContain("EXTENSION POINT");
-    expect(cc).toContain("void Pm1App::sendSensorPacket()");   // parity: timer-driven
+    expect(cc).toContain("void EbWsn::sendSensorPacket()");   // parity: timer-driven
   });
 
   it("2 is the default, and 3 shares its shell exactly", () => {
-    const dflt = emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "Pm1App");
-    expect(dflt.find((f) => f.path === "Pm1App.h")!.content).toBe(vFile(2, "h"));
+    const dflt = emit(resolveEncodings(flatten(parseModel([load("pM1")]), "pM1")), "EbWsn");
+    expect(dflt.find((f) => f.path === "EbWsn.h")!.content).toBe(vFile(2, "h"));
     // 3 = 2 at this level; the packet classes are spliced on by the pipeline.
     expect(vFile(3, "h")).toBe(vFile(2, "h"));
   });

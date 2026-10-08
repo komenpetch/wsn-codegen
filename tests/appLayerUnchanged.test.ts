@@ -60,6 +60,16 @@ const BASELINE = resolve(HERE, "__baseline__/applayer-v4.json");
 // 94.5 %, both unchanged -- the restored guard lives in an Event-B event method
 // that has no SensorApp counterpart, so it cannot enter the LCS.
 //
+// DELIBERATE BASELINE CHANGE, 2026-10-09 -- the fifth, and a rename only, like
+// the second. Every generated module is now `EbWsn` (pipeline.ts MODULE_NAME),
+// not a name derived from the target machine (`Pm3Wsn` here, `M4Wsn`/`M6Wsn` on
+// the network layer): user, "start use only one name, so it not get confuse".
+// Before re-recording, the stored baseline was compared with today's output
+// with `Pm3Wsn` -> `EbWsn` and `eb_pm3wsn` -> `eb_ebwsn` normalised away: the
+// same three file names and all three files (151 / 435 / 32 lines) byte-
+// identical. The paper's coverage script reads the class name off each
+// snapshot's .ned, so its figures do not depend on the name.
+//
 // This guard is also now the only thing standing between an engine change and
 // the paper's similarity figures, so a failure here is a question ("what did I
 // change, and did I mean to?"), never a prompt to delete the file and re-record.

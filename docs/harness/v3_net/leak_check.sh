@@ -30,7 +30,7 @@ restore() {
   node leak_probe.mjs restore > /dev/null
   # ⚠ touch, or make sees an object newer than the restored source and keeps
   # the INSTRUMENTED binary -- the stale-binary trap this project keeps hitting.
-  touch Pm3Wsn.cc
+  touch EbWsn.cc
   ./build.sh > "$OUT/rebuild.log" 2>&1 || echo "WARNING: rebuild after restore failed -- see $OUT/rebuild.log"
 }
 

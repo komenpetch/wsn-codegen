@@ -1,5 +1,5 @@
 //
-// SensorScopeNetwork -- a multi-hop deployment for the generated Pm3Wsn.
+// SensorScopeNetwork -- a multi-hop deployment for the generated EbWsn.
 //
 // WHY A SECOND NETWORK. CodegenNetwork puts one sink and three sensors inside
 // ~130 m of each other, and at the configured sensitivity the radio reaches

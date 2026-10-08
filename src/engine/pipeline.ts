@@ -17,24 +17,21 @@ import type { RoutingStyle } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
 import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
-import { capTag, carrierSetsOf } from "./text";
+import { carrierSetsOf } from "./text";
 import { wrapInNamespace } from "./moduleNamespace";
 
 export type EbFiles = { name: string; xml: string }[];
 
-// A default C++ class/file name for a machine label: "pM3" → "Pm3Wsn",
-// "M4" → "M4Wsn".
+// The one name every generated module carries, whatever the project, machine or
+// structure (user, 2026-10-09: "start use only one name, so it not get confuse").
 //
-// The suffix names the DOMAIN, not a layer. It used to be "App" (Pm3App), from
-// when the only output was an ApplicationBase module, and the network-layer work
-// briefly added a second name ("M4Net") alongside it. Two names for one
-// generator's one output invited exactly the confusion they caused: which of
-// them a given file was, and whether the two were separate artifacts. One
-// generator, one output, one name — what varies is how much network layer the
-// model puts inside it.
-export function defaultName(machine: string): string {
-  return machine ? capTag(machine) + "Wsn" : "Wsn";
-}
+// It used to be derived from the target machine: "pM3" → Pm3Wsn, "M4" → M4Wsn,
+// "M6" → M6Wsn, and before 2026-09-12 Pm3App. One generator's one output then
+// had a different name per input, and every record had to say which of them it
+// meant. The name no longer varies; what varies is how much of the pattern the
+// model puts inside the module. An explicit name can still be passed to
+// generate()/generateMerged(), and the web page's name field still sets one.
+export const MODULE_NAME = "EbWsn";
 
 function parsedMachines(files: EbFiles): RawModel {
   if (files.length === 0)
@@ -528,13 +525,13 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
 
 // Merge the whole project into ONE module: generate from the most-refined
 // machine, whose flattened form subsumes the entire refinement chain. Emits
-// exactly three files (<name>.h/.cc/.ned). `outputName` defaults to the leaf's
-// derived name. `version` selects the emitted structure (see EmitVersion).
+// exactly three files (<name>.h/.cc/.ned). `outputName` defaults to
+// MODULE_NAME. `version` selects the emitted structure (see EmitVersion).
 export function generateMerged(files: EbFiles, outputName?: string,
   version: EmitVersion = 2, packetSource?: PacketSource, drain = true,
   routing?: RoutingStyle): GeneratedTree {
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
-  return emitOne(raw, leaf, outputName ?? defaultName(leaf), version,
+  return emitOne(raw, leaf, outputName ?? MODULE_NAME, version,
     packetSourceFor(files, leaf, version, packetSource, routing), drain);
 }

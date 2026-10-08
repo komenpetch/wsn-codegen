@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generate, defaultName } from "../src/engine/pipeline";
+import { generate, MODULE_NAME } from "../src/engine/pipeline";
 import { loadProject } from "../scripts/projects";
 import { parseModel } from "../src/engine/parser";
 import { flatten } from "../src/engine/flattener";
@@ -15,7 +15,7 @@ import type { GeneratedTree } from "../src/engine/types";
 // that detection works — a regression that stopped detecting it would show up
 // here as a missing PPkt, not as a silently app-layer module.
 const gen = (project: string, machine: string): GeneratedTree =>
-  generate(loadProject(project), machine, defaultName(machine), 2);
+  generate(loadProject(project), machine, MODULE_NAME, 2);
 
 // ⚠ TWO EMITTED ARTIFACTS THAT HAVE TO AGREE, AND DID NOT.
 //
@@ -511,7 +511,7 @@ describe("reserved-identifier handling", () => {
 // NetworkProtocolBase now, so the diagram's green Interface + Base pair is
 // covered. What the packet source supplies is unchanged.
 describe("structure 3 = network-protocol shell + PPkt from another project", () => {
-  const tree = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+  const tree = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
     { files: loadProject("MintRoute"), machine: "M4" });
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
@@ -526,7 +526,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     // routing daemon over UDP and never carries a packet, and the machines
     // forward packets. Both network-layer outputs have emitted this pair ever
     // since; structure 3 now matches them.
-    expect(h).toContain("class Pm3Wsn : public NetworkProtocolBase, public INetworkProtocol {");
+    expect(h).toContain("class EbWsn : public NetworkProtocolBase, public INetworkProtocol {");
     expect(h).not.toContain("public ApplicationBase");
   });
 
@@ -553,7 +553,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     // ⚠ And the submodule declaration must be in the WRAPPER, not the simple
     // module: a `simple` module cannot contain submodules at all, so landing it
     // in the wrong one is a NED parse error rather than a subtle defect.
-    const wrapperAt = ned.indexOf("module Pm3WsnNetworkLayer ");
+    const wrapperAt = ned.indexOf("module EbWsnNetworkLayer ");
     expect(wrapperAt).toBeGreaterThan(-1);
     expect(ned.indexOf("routingTable: NextHopRoutingTable {")).toBeGreaterThan(wrapperAt);
   });
@@ -588,8 +588,11 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     expect(h).toContain("inline const int BEACON = 2;");
   });
 
-  it("is namespaced, so it can link beside another generated module", () => {
-    expect(h).toContain("namespace eb_pm3wsn {");
+  // ⚠ Since every module is EbWsn by default (2026-10-09), linking two generated
+  // modules into one executable needs one of them given an explicit name; the
+  // namespace is still what keeps each one's inlined context out of global scope.
+  it("is namespaced, so a second module under another name can link beside it", () => {
+    expect(h).toContain("namespace eb_ebwsn {");
   });
 
   // ⚠ This used to refuse: "structure 3 needs a packet source". The pattern was
@@ -608,7 +611,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
   // pipeline — and the byte freeze, which also covers it, fails as an opaque
   // blob rather than naming what went missing.
   it("keeps dest_recv_pkt's `nb ∈ Dests`, the destination test", () => {
-    const cc = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
+    const cc = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3)
       .find((f) => f.path.endsWith(".cc"))!.content;
     const body = /bool \w+::dest_recv_pkt\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(cc);
     expect(body, "dest_recv_pkt must be emitted").not.toBeNull();
@@ -621,7 +624,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
   // `fwdr_receive_pkt` 94–95 on all nine while `final_tx_pkt` totalled 3 for
   // the whole run. The harness names the members because the model does not.
   it("lets the harness populate a node subset the axioms leave open", () => {
-    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
+    const t = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3);
     const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
     const ned = t.find((f) => f.path.endsWith(".ned"))!.content;
     // Populated exactly the way ND is, and in the same init stage.
@@ -634,14 +637,14 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
   // And with it fillable, the destination reception is schedulable again —
   // whether it FIRES is then the harness's decision, which is the point.
   it("and dest_recv_pkt becomes schedulable once something can fill Dests", () => {
-    const h = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
+    const h = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3)
       .find((f) => f.path.endsWith(".h"))!.content;
     expect(h).toContain("bool try_dest_recv_pkt();");
     expect(h).not.toContain("not scheduled: dest_recv_pkt");
   });
 
   it("needs no second project: the bundled extension is the default", () => {
-    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
+    const t = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3);
     const h = t.find((f) => f.path.endsWith(".h"))!.content;
     // PPkt is carried: the chunk, and the sequence number the extension adds.
     expect(h).toContain("class PPkt : public inet::FieldsChunk");
@@ -687,7 +690,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
    <org.eventb.core.axiom name="a2" org.eventb.core.label="axm2" org.eventb.core.predicate="Sink = 0" org.eventb.core.theorem="false"/>
 </org.eventb.core.contextFile>`,
     };
-    const h = generate([...loadProject("AppLayer"), sink], "pM3", "Pm3Wsn", 3)
+    const h = generate([...loadProject("AppLayer"), sink], "pM3", "EbWsn", 3)
       .find((f) => f.path.endsWith(".h"))!.content;
     expect(h).toContain("class RreqPkt : public PPkt");
     expect(h).toContain("class RrepPkt : public PPkt");
@@ -700,7 +703,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
   // chosen on the tool side (user, 2026-09-27: "we not try to edit the input,
   // everything that we build came from pattern").
   it("gives the unedited project the AODV split when the routing is chosen", () => {
-    const h = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3, undefined, true, "aodv")
+    const h = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3, undefined, true, "aodv")
       .find((f) => f.path.endsWith(".h"))!.content;
     expect(h).toContain("class RreqPkt : public PPkt");
     expect(h).toContain("class RrerPkt : public PPkt");
@@ -709,7 +712,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
   });
 
   it("refuses a routing outside structure 3 rather than ignoring it", () => {
-    expect(() => generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 2, undefined, true, "aodv"))
+    expect(() => generate(loadProject("AppLayer"), "pM3", "EbWsn", 2, undefined, true, "aodv"))
       .toThrow(/applies to structure 3/);
   });
 });
@@ -732,7 +735,7 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // anyway: its split is `{RREQ}, {RREP}, {RRER}`, genuinely disjoint from
     // MintRoute's, so the pairing is incoherent for a reason no later edit to
     // one project can quietly remove.
-    const run = () => generate(loadProject("MintRoute"), "M4", "M4Wsn", 3,
+    const run = () => generate(loadProject("MintRoute"), "M4", "EbWsn", 3,
       { files: loadProject("RTMCS"), machine: "M6" });
     expect(run).toThrow(/BEACON/);
     expect(run).toThrow(/ROUTE/);
@@ -749,7 +752,7 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // because it IS the deserialiser, so the emitted call passed 3 arguments to
     // a method declaring 8. A model with its own medium belongs in structure 2,
     // which gives it the network-protocol shell rather than the app shell.
-    expect(() => generate(loadProject("MintRoute"), "M4", "M4Wsn", 3,
+    expect(() => generate(loadProject("MintRoute"), "M4", "EbWsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" }))
       .toThrow(/send_up/);
   });
@@ -770,7 +773,7 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // The analysis reads the EMITTED module, not the model: WiMedium is filled
     // by the ARRIVAL rather than by any scheduled event, so a model-only
     // producer scan would call receive_controlPkt unreachable and kill the flood.
-    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+    const t = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" });
     const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
     const h = t.find((f) => f.path.endsWith(".h"))!.content;
@@ -778,13 +781,13 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     for (const dead of ["create_routePkt", "start_tx_routePkt", "dest_recv_pkt",
                         "fwdr_receive_pkt", "clear_recvdBuff", "receive_dataPkt",
                         "receive_dup_dataPkt", "sink_recv_dataPkt", "start_tx_dataPkt"])
-      expect(cc).not.toContain(`bool Pm3Wsn::try_${dead}(`);
+      expect(cc).not.toContain(`bool EbWsn::try_${dead}(`);
 
     // ⚠ And the flood must survive. These are the seven that actually fired.
     for (const live of ["start_flooding", "create_bconPkt", "start_tx_bconPkt",
                         "send_down", "receive_controlPkt", "receive_dup_controlPkt",
                         "finish_tx_pkt"])
-      expect(cc).toContain(`bool Pm3Wsn::try_${live}(`);
+      expect(cc).toContain(`bool EbWsn::try_${live}(`);
 
     // A dropped event states its reason, like every other exclusion.
     expect(h).toMatch(/not scheduled: create_routePkt -- .*bcastRouTimer/);
@@ -798,14 +801,14 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // that drain what the receive events fill, so they are emitted at the
     // arrival. Giving them try_ methods would put a second, timer-driven
     // account of one reception into the module.
-    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+    const t = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" });
     const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
     const body = (fn: string) =>
-      cc.slice(cc.indexOf(`bool Pm3Wsn::${fn}()`)).split("\n}")[0];
+      cc.slice(cc.indexOf(`bool EbWsn::${fn}()`)).split("\n}")[0];
 
     for (const drain of ["add_newEntry", "update_nbr"]) {
-      expect(cc).not.toContain(`bool Pm3Wsn::try_${drain}(`);
+      expect(cc).not.toContain(`bool EbWsn::try_${drain}(`);
       expect(body("runDeliveryEvents")).toContain(`${drain}(`);
       expect(body("runEnabledEvents")).not.toContain(drain);
     }
@@ -822,7 +825,7 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // event whose job is to retire one that exists -- which then fooled the
     // reachability pass into scheduling start_tx_routePkt, because a minted and
     // stamped packet looks exactly like a produced one.
-    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+    const t = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" });
     const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
     // ⚠ `/^creat/`, not `/^create_/`. The property is "only a CREATING event
@@ -832,18 +835,18 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // `creatingControlPacket` was being dropped by the reachability pass for a
     // reason that turned out to be false (`nothing fills Dests`, when the guard
     // `x ∈ ND ∖ Dests` wants x OUTSIDE it) -- so the test was resting on a bug.
-    for (const m of cc.matchAll(/bool Pm3Wsn::try_(\w+)\(\)\n\{([\s\S]*?)\n\}/g))
+    for (const m of cc.matchAll(/bool EbWsn::try_(\w+)\(\)\n\{([\s\S]*?)\n\}/g))
       if (m[2].includes("newPktId()")) expect(m[1]).toMatch(/^creat/);
     // ⚠ And the arrival mints nothing at all. The drain events are emitted
     // inline there rather than as try_ methods, so scanning only try_ methods
     // would have missed final_tx_controlPkt -- the event this narrowing is
     // about. A reception that creates a packet is the zero-time loop.
-    expect(cc.slice(cc.indexOf("bool Pm3Wsn::runDeliveryEvents()")).split("\n}")[0])
+    expect(cc.slice(cc.indexOf("bool EbWsn::runDeliveryEvents()")).split("\n}")[0])
       .not.toContain("newPktId()");
     // The creating events must still mint -- the narrowing above retired
     // create_bconPkt once, and took the whole flood with it.
-    expect(cc).toContain("bool Pm3Wsn::try_create_bconPkt()");
-    expect(cc.slice(cc.indexOf("bool Pm3Wsn::try_create_bconPkt()")))
+    expect(cc).toContain("bool EbWsn::try_create_bconPkt()");
+    expect(cc.slice(cc.indexOf("bool EbWsn::try_create_bconPkt()")))
       .toContain("newPktId()");
   });
 
@@ -852,10 +855,10 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
     // which is legal Event-B because a function IS its graph. Refusing it left
     // update_nbr schedulable and permanently declining, so `updateNbrs` was
     // never drained and each node accepted one packet per forwarder for ever.
-    const t = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+    const t = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" });
     const cc = t.find((f) => f.path.endsWith(".cc"))!.content;
-    const upd = cc.slice(cc.indexOf("bool Pm3Wsn::update_nbr(")).split("\n}")[0];
+    const upd = cc.slice(cc.indexOf("bool EbWsn::update_nbr(")).split("\n}")[0];
     expect(upd).toContain("getFwdrAddr() ==");
     expect(upd).not.toContain("UNTRANSLATED");
     // It reaches its actions, which is the whole point: the erase is the drain.
@@ -865,14 +868,14 @@ describe("v3 refuses an incoherent pairing instead of emitting a module that can
   it("still accepts the coherent pairing", () => {
     // The guard rails must not block the configuration that works: the AppLayer
     // chain as the base with MintRoute supplying the packet class.
-    expect(() => generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+    expect(() => generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
       { files: loadProject("MintRoute"), machine: "M4" })).not.toThrow();
   });
 });
 
 // v5 carrying the pattern's OPERATIONS, not just its types.
 describe("v5 carries the packet pattern's operations", () => {
-  const tree = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+  const tree = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
     { files: loadProject("MintRoute"), machine: "M4" });
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
@@ -881,7 +884,7 @@ describe("v5 carries the packet pattern's operations", () => {
     // Without these the leaf classes are declared and never constructed: the
     // event that creates a beacon is a MintRoute machine event.
     for (const e of ["create_dataPkt", "create_bconPkt", "create_routePkt"])
-      expect(cc).toContain(`bool Pm3Wsn::${e}(`);
+      expect(cc).toContain(`bool EbWsn::${e}(`);
   });
 
   it("carries the state those events need, from the packet source", () => {
@@ -904,12 +907,12 @@ describe("v5 carries the packet pattern's operations", () => {
     // events are the ones whose actions feed that variable; nothing matches on
     // the string "start_tx".
     for (const e of ["start_tx_dataPkt", "start_tx_bconPkt", "start_tx_routePkt"])
-      expect(cc).toContain(`bool Pm3Wsn::${e}(`);
+      expect(cc).toContain(`bool EbWsn::${e}(`);
   });
 
   it("emits one transmit method per packet type, named as MintRoute names its own", () => {
     for (const m of ["sendDataBroadcast", "sendRouteBroadcast", "sendBeaconBroadcast"]) {
-      expect(cc).toContain(`void Pm3Wsn::${m}(Node x, PktId pkt)`);
+      expect(cc).toContain(`void EbWsn::${m}(Node x, PktId pkt)`);
       expect(h).toContain(`virtual void ${m}(Node x, PktId pkt);`);
     }
   });
@@ -919,7 +922,7 @@ describe("v5 carries the packet pattern's operations", () => {
     // steps are unchanged; where the frame goes is not. The network form is
     // not invented here -- it is the medium binding's own transmit, which is
     // what every frame the network-layer modules send already goes through.
-    const fn = cc.slice(cc.indexOf("void Pm3Wsn::sendBeaconBroadcast"));
+    const fn = cc.slice(cc.indexOf("void EbWsn::sendBeaconBroadcast"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).toContain("sendDown(packet);");
     expect(body).not.toContain("socket->send");
@@ -936,7 +939,7 @@ describe("v5 carries the packet pattern's operations", () => {
     // The CommPattern merge put SensorApp's ByteCountChunk transmit inside
     // send_down, addressed to the sink. That was right while the model had no
     // packet of its own; now it has one.
-    const fn = cc.slice(cc.indexOf("bool Pm3Wsn::sendDown(Node x, PktId pkt)"));
+    const fn = cc.slice(cc.indexOf("bool EbWsn::sendDown(Node x, PktId pkt)"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     // ⚠ WITH THE SENDER. The transmit pins the wire copy from send_down's own
     // `x` rather than reading it back off the shared local chunk, which an
@@ -959,11 +962,11 @@ describe("v5 carries the packet pattern's operations", () => {
 // pktStore, so the phantom packets made `receive` fire on nodes that had
 // received nothing, which is how it was noticed.
 describe("the scheduler rolls back on every failure path", () => {
-  const tree = generate(loadProject("MintRoute"), "M4", "M4Wsn", 2);
+  const tree = generate(loadProject("MintRoute"), "M4", "EbWsn", 2);
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
 
   it("undoes a minted packet when a later precondition bails", () => {
-    const fn = cc.slice(cc.indexOf("bool M4Wsn::try_create_bconPkt()"));
+    const fn = cc.slice(cc.indexOf("bool EbWsn::try_create_bconPkt()"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     // The mint comes first, then a precondition on a LATER parameter.
     expect(body).toContain("PktId pkt = newPktId();");
@@ -971,7 +974,7 @@ describe("the scheduler rolls back on every failure path", () => {
   });
 
   it("leaves no bail-out after a mint without a rollback", () => {
-    for (const m of cc.matchAll(/^bool M4Wsn::try_(\w+)\(\)\n\{\n([\s\S]*?)\n\}/gm)) {
+    for (const m of cc.matchAll(/^bool EbWsn::try_(\w+)\(\)\n\{\n([\s\S]*?)\n\}/gm)) {
       const [, name, body] = m;
       const mintAt = body.indexOf("newPktId()");
       if (mintAt < 0) continue;                       // nothing synthesised
@@ -992,11 +995,11 @@ describe("the scheduler rolls back on every failure path", () => {
 // The four defects that stood between "v5 transmits" and "v5 floods", each
 // found by instrumenting a running simulation rather than by reading the code.
 describe("v5 arrival: the four fixes that made the flood propagate", () => {
-  const tree = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+  const tree = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
     { files: loadProject("MintRoute"), machine: "M4" });
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
-  const arrival = cc.slice(cc.indexOf("void Pm3Wsn::handleLowerPacket(Packet *packet)"));
+  const arrival = cc.slice(cc.indexOf("void EbWsn::handleLowerPacket(Packet *packet)"));
   const body = arrival.slice(0, arrival.indexOf("\n}"));
 
   it("undoes the staged medium state when the delivery declines", () => {
@@ -1050,7 +1053,7 @@ describe("v5 arrival: the four fixes that made the flood propagate", () => {
     // it every tick. Measured before the fix: 57 frames on the air for one
     // start_tx_bconPkt. Re-firing the EVENT is legal (no actions, idempotent);
     // realising it is not, because the realisation is a transmission.
-    const tx = cc.slice(cc.indexOf("bool Pm3Wsn::sendDown(Node"));
+    const tx = cc.slice(cc.indexOf("bool EbWsn::sendDown(Node"));
     const txBody = tx.slice(0, tx.indexOf("\n}"));
     expect(txBody).toContain("if (!txRealised.insert({x, pkt}).second)");
     expect(h).toContain("std::set<std::pair<Node, PktId>> txRealised;");
@@ -1095,7 +1098,7 @@ describe("a packet field writes to its chunk, not to a machine map", () => {
 // changed what the module DOES; both made it describe itself wrongly, which
 // this project treats as a defect in its own right.
 describe("structure 3 reports its own state accurately", () => {
-  const tree = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3,
+  const tree = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3,
     { files: loadProject("MintRoute"), machine: "M4" });
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
@@ -1149,7 +1152,7 @@ describe("structure 3 reports its own state accurately", () => {
 // simulation, where Simulation/v3_net/leak_check.sh asserts no delivery is left
 // waiting for more than 2 s.
 describe("structure 3 consumes every delivery it publishes", () => {
-  const cc = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3)
+  const cc = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3)
     .find((f) => f.path.endsWith(".cc"))!.content;
   const body = (sig: string) => cc.slice(cc.indexOf(sig)).split("\n}")[0];
 
@@ -1159,7 +1162,7 @@ describe("structure 3 consumes every delivery it publishes", () => {
   it("records the created packet in the originator's own floodTbl", () => {
     // MintRoute's leaves: this project names no sink, so it takes the default.
     for (const ev of ["create_routePkt", "create_beaconPkt"]) {
-      const b = body(`bool Pm3Wsn::${ev}(`);
+      const b = body(`bool EbWsn::${ev}(`);
       expect(b).toContain("floodTbl[x].insert(pkt);");
       expect(b).not.toContain("UNTRANSLATED");
     }
@@ -1171,13 +1174,13 @@ describe("structure 3 consumes every delivery it publishes", () => {
   // NOTHING — measured — because the echo was not that id.
   it("registers every packet it transmits under the key localIdFor looks up", () => {
     const keyOf = (sig: string) => body(sig).match(/std::vector<long> key\{([^}]*)\}/)?.[1];
-    const lookup = keyOf("PktId Pm3Wsn::localIdFor(");
+    const lookup = keyOf("PktId EbWsn::localIdFor(");
     expect(lookup).toBeTruthy();
-    expect(keyOf("void Pm3Wsn::rememberSentPacket(")).toBe(lookup);
+    expect(keyOf("void EbWsn::rememberSentPacket(")).toBe(lookup);
   });
 
   it("registers it before the frame leaves", () => {
-    const send = body("bool Pm3Wsn::sendDown(Node x, PktId pkt)");
+    const send = body("bool EbWsn::sendDown(Node x, PktId pkt)");
     const remember = send.indexOf("rememberSentPacket(pkt);");
     expect(remember).toBeGreaterThan(-1);
     expect(remember).toBeLessThan(send.indexOf("transmitPacket(x, pkt);"));
@@ -1189,7 +1192,7 @@ describe("structure 3 consumes every delivery it publishes", () => {
   // that might never take it. `--drain` could not help: it loops the TIMER pass,
   // which contains no update_nbr.
   it("runs the delivery events to a bounded fixpoint", () => {
-    const d = body("bool Pm3Wsn::runDeliveryEvents()");
+    const d = body("bool EbWsn::runDeliveryEvents()");
     const loop = d.slice(d.indexOf("for (int _round = 0;"));
     expect(d).toContain("for (int _round = 0;");
     expect(loop).toContain("if (!_any) break;");
@@ -1202,7 +1205,7 @@ describe("structure 3 consumes every delivery it publishes", () => {
   it("still creates nothing on an arrival, fixpoint or not", () => {
     // The zero-time storm (52,034 events at one instant) is what excluding the
     // creating events from the arrival prevents; a loop must not let one back in.
-    const d = body("bool Pm3Wsn::runDeliveryEvents()");
+    const d = body("bool EbWsn::runDeliveryEvents()");
     expect(d).not.toContain("try_create_");
     expect(d).not.toContain("newPktId()");
   });
@@ -1221,14 +1224,14 @@ describe("--drain: the non-creating events are drained, the creating ones are no
   // them originates unboundedly many per tick, which is worse than the backlog.
   const src = { files: loadProject("MintRoute"), machine: "M4" };
   const ccOf = (drain?: boolean) =>
-    generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3, src, drain)
+    generate(loadProject("AppLayer"), "pM3", "EbWsn", 3, src, drain)
       .find((f) => f.path.endsWith(".cc"))!.content;
 
   // ⚠ SCOPED TO runEnabledEvents. runDeliveryEvents has a bounded loop of its
   // own since 2026-09-27, spelled the same way, so an unscoped search for the
   // first `for (int _round` would find THAT one and pass whatever the timer did.
   const loopOf = (cc: string) => {
-    const run = cc.slice(cc.indexOf("bool Pm3Wsn::runEnabledEvents()")).split("\n}")[0];
+    const run = cc.slice(cc.indexOf("bool EbWsn::runEnabledEvents()")).split("\n}")[0];
     const at = run.indexOf("for (int _round = 0;");
     return at < 0 ? null : run.slice(at, run.indexOf("\n    }", at));
   };
@@ -1267,7 +1270,7 @@ describe("--drain: the non-creating events are drained, the creating ones are no
     // flood even with draining off.
     const plain = ccOf(false), drained = ccOf(true);
     const firstPass = (cc: string) =>
-      cc.slice(cc.indexOf("bool Pm3Wsn::runEnabledEvents()"))
+      cc.slice(cc.indexOf("bool EbWsn::runEnabledEvents()"))
         .split("\n").filter((l) => l.startsWith("    if (try_")).join("\n");
     expect(firstPass(drained)).toBe(firstPass(plain));
   });
@@ -1302,7 +1305,7 @@ describe("the untranslated recount agrees with the emitted output", () => {
 
 // ── 2026-09-27 bug hunt, the fixes that have no suite of their own ──────────
 describe("what the emitted modules claim is true", () => {
-  const v3 = generate(loadProject("AppLayer"), "pM3", "Pm3Wsn", 3);
+  const v3 = generate(loadProject("AppLayer"), "pM3", "EbWsn", 3);
   const text = (t: GeneratedTree, ext: string) => t.find((f) => f.path.endsWith(ext))!.content;
   const m4 = gen("MintRoute", "M4");
   const m6 = gen("RTMCS", "M6");

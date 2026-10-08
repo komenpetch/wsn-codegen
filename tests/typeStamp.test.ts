@@ -49,16 +49,16 @@ const MINTROUTE = "../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_compl
 // further down already covers. Treat this as reduced coverage, not as proof --
 // restoring it needs a flat-lattice project or a synthetic one.
 describe("a type guard on a derived per-leaf creating event stamps that leaf", () => {
-  const v3 = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
+  const v3 = generate(load("../Update_wsn/C0_project"), "pM3", "EbWsn", 3);
   const cc = v3.find((f) => f.path.endsWith(".cc"))!.content;
   const h = v3.find((f) => f.path.endsWith(".h"))!.content;
   const body = (() => {
-    const i = cc.indexOf("bool Pm3Wsn::try_create_beaconPkt()");
+    const i = cc.indexOf("bool EbWsn::try_create_beaconPkt()");
     return i < 0 ? "" : cc.slice(i, cc.indexOf("\n}", i));
   })();
 
   it("reaches the method at all — otherwise this suite proves nothing", () => {
-    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
+    expect(cc).toContain("bool EbWsn::try_create_beaconPkt()");
   });
 
   it("stamps the leaf its own type guard names", () => {
@@ -88,7 +88,7 @@ describe("a type guard on a derived per-leaf creating event stamps that leaf", (
 });
 
 describe("a membership guard over a partitioned set stamps nothing", () => {
-  const m4 = generate(load(MINTROUTE), "M4", "M4Wsn", 2);
+  const m4 = generate(load(MINTROUTE), "M4", "EbWsn", 2);
   const cc = m4.find((f) => f.path.endsWith(".cc"))!.content;
   const h = m4.find((f) => f.path.endsWith(".h"))!.content;
 
@@ -108,7 +108,7 @@ describe("packetTypeLeaves reads the enum, and only the enum", () => {
   it("returns nothing for a header with no packet-type lattice", () => {
     // Structures 1 and 2 carry no PPkt, so there is no enum and no stamp to
     // derive — it must return empty rather than guess.
-    const v2h = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 2)
+    const v2h = generate(load("../Update_wsn/C0_project"), "pM3", "EbWsn", 2)
       .find((f) => f.path.endsWith(".h"))!.content;
     expect(v2h).not.toContain("enum class PktType");
     expect(packetTypeLeaves(v2h).size).toBe(0);

@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent } from "react";
-import { generateMerged, machineNames, leafMachine, defaultName } from "./engine/pipeline";
+import { generateMerged, machineNames, MODULE_NAME } from "./engine/pipeline";
 import { readFolder, readZip, writeTree } from "./io/fileOutput";
 
 type EbFiles = { name: string; xml: string }[];
@@ -30,14 +30,15 @@ export default function App() {
 
   // Load Event-B files from any source (folder picker, zip button, drag-drop)
   // and detect every machine. The tool is name-agnostic — any refinement chain
-  // (pM1/uM2/pM3/uM4/pM5/…) is supported. The output name defaults to the
-  // most-refined (leaf) machine, which the whole project merges into.
+  // (pM1/uM2/pM3/uM4/pM5/…) is supported, and the whole project merges into its
+  // most-refined (leaf) machine. The output name defaults to MODULE_NAME, the
+  // one name every generated module carries.
   async function loadWith(read: () => Promise<EbFiles>) {
     setBusy(true);
     try {
       const f = await read();
       const names = f.length ? machineNames(f) : [];
-      const name = names.length ? defaultName(leafMachine(f)) : "";
+      const name = names.length ? MODULE_NAME : "";
       setFiles(f);
       setMachines(names);
       setDefaultOut(name);

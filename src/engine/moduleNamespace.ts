@@ -14,6 +14,9 @@
 //     ./M4Wsn.h:41:18: error: redefinition of 'DATA'
 //     ./Pm3Wsn.h:29:18: note: previous definition is here
 //
+// (M4Wsn and Pm3Wsn are the names the modules had before 2026-10-09, when every
+// module became EbWsn; the error above is quoted as it was printed.)
+//
 // That blocked the thing the generator is for: a node running the generated
 // SENSOR APPLICATION on top of the generated NETWORK PROTOCOL, both from Event-B,
 // in one simulation. Each module in its own namespace removes the collision
@@ -38,6 +41,12 @@ import { esc } from "./text";
 // One namespace per module, derived from the module's own name, so two modules
 // generated from different projects cannot collide however similar their
 // contexts are.
+//
+// ⚠ Since 2026-10-09 every module is called EbWsn by default (pipeline.ts
+// MODULE_NAME), so two DEFAULT-named modules share this namespace, their class
+// and their NED type, and cannot be linked into one executable. That was
+// accepted with the single name. Two modules in one simulation now need one of
+// them generated under an explicit name.
 const namespaceOf = (name: string): string => `eb_${name.toLowerCase()}`;
 
 // In the header the context block sits between `using namespace inet;` and the

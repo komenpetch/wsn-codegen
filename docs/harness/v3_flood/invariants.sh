@@ -42,8 +42,8 @@ FAILED=0
 # a battery that named route and beacon would read 0 for every origination on an
 # AODV module and report a confident RED about the harness. Empty is BROKEN,
 # not green: no leaves means the battery would check nothing.
-LEAVES=$(grep -oE 'bool try_create_[a-z]+Pkt\(\)' Pm3Wsn.h | sed -E 's/bool try_create_([a-z]+)Pkt\(\)/\1/' | sort -u)
-[ -n "$LEAVES" ] || { echo "BROKEN: no try_create_<leaf>Pkt in the staged Pm3Wsn.h"; exit 3; }
+LEAVES=$(grep -oE 'bool try_create_[a-z]+Pkt\(\)' EbWsn.h | sed -E 's/bool try_create_([a-z]+)Pkt\(\)/\1/' | sort -u)
+[ -n "$LEAVES" ] || { echo "BROKEN: no try_create_<leaf>Pkt in the staged EbWsn.h"; exit 3; }
 created() { local s=0 l; for l in $LEAVES; do s=$((s + $(v "$1" "fired:create_${l}Pkt"))); done; echo "$s"; }
 
 # scalar lookup; absent counter reads 0, which is what "the event never fired" means

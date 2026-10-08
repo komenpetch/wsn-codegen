@@ -25,7 +25,7 @@ import { flatten } from "../src/engine/flattener";
 import { resolveEncodings } from "../src/engine/encodingResolver";
 import { translationTally } from "../src/engine/codeEmitter";
 import { networkTranslationFor, withRules, initsRealisedAfterEmit } from "../src/engine/netPipeline";
-import { generate, defaultName } from "../src/engine/pipeline";
+import { generate, MODULE_NAME } from "../src/engine/pipeline";
 
 // Model paths resolve from THIS FILE, not the working directory: the runner
 // invokes vite-node from ../wsn-codegen (that is where the deps live), so a
@@ -69,7 +69,7 @@ for (const [proj, dir] of Object.entries(PROJECTS)) {
 
   for (const target of machines) {
     // --- authoritative: count the token in the emitted files ---
-    const tree = generate(files, target, defaultName(target), 2);
+    const tree = generate(files, target, MODULE_NAME, 2);
     const all = tree.map((f) => f.content).join("\n");
     const emitted = (all.match(/UNTRANSLATED/g) ?? []).length;
 

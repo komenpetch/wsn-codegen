@@ -806,7 +806,7 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // See planFor.
   senderField: PacketField | null = null,
   // Drain the non-creating events to a bounded fixpoint each pass. False HERE
-  // because the network branch (structure 2's M4Wsn/M6Wsn) calls this without
+  // because the network branch (structure 2's MintRoute M4 / RTMCS M6 modules) calls this without
   // it and never had it; structure 3's pipeline passes true by default since
   // 2026-09-27.
   drain = false): { decls: string; defs: string } {

@@ -30,7 +30,7 @@ const load = (d: string) =>
 // per-leaf events supersede it there. The behaviour asserted below moved with
 // it intact; only the method name changed.
 describe("a relational-image parameter is bound at its declared type, from the right storage", () => {
-  const tree = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
+  const tree = generate(load("../Update_wsn/C0_project"), "pM3", "EbWsn", 3);
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
 
@@ -38,7 +38,7 @@ describe("a relational-image parameter is bound at its declared type, from the r
     // If the creating event stops being schedulable the assertions below would
     // pass vacuously. Fail loudly instead. (This guard has already earned its
     // keep once: it is what caught the suite going stale.)
-    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
+    expect(cc).toContain("bool EbWsn::try_create_beaconPkt()");
   });
 
   it("binds a scalar-declared parameter as a scalar, not as a set", () => {
@@ -58,7 +58,7 @@ describe("a relational-image parameter is bound at its declared type, from the r
   it("still binds a set-declared parameter as a set", () => {
     // MintRoute's `nbs` is typed a set by its own model and must not change.
     const m4 = generate(load("../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck"),
-      "M4", "M4Wsn", 2);
+      "M4", "EbWsn", 2);
     const m4h = m4.find((f) => f.path.endsWith(".h"))!.content;
     expect(m4h).toContain("const std::set<Node>& nbs");
   });

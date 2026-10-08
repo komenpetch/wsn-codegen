@@ -56,14 +56,14 @@ npm run generate -- "$PROJECT" "$TMP/gen" --v3 --routing "$ROUTING" > "$TMP/gen.
   || { echo "BROKEN: generate failed"; tail -20 "$TMP/gen.log"; exit 3; }
 
 # The split the generator bundled is named in the header's provenance line.
-grep -q "(derived from [^)]*\b$SPLIT)" "$TMP/gen/Pm3Wsn.h" \
-  || { echo "BROKEN: this folder runs $ROUTING, but the generator produced: $(grep -o '(derived from [^)]*)' "$TMP/gen/Pm3Wsn.h")"; exit 3; }
+grep -q "(derived from [^)]*\b$SPLIT)" "$TMP/gen/EbWsn.h" \
+  || { echo "BROKEN: this folder runs $ROUTING, but the generator produced: $(grep -o '(derived from [^)]*)' "$TMP/gen/EbWsn.h")"; exit 3; }
 
-cp "$TMP/gen/Pm3Wsn.h" "$TMP/gen/Pm3Wsn.cc" "$TMP/gen/Pm3Wsn.ned" "$NET/"
+cp "$TMP/gen/EbWsn.h" "$TMP/gen/EbWsn.cc" "$TMP/gen/EbWsn.ned" "$NET/"
 # ⚠ touch, or make compares timestamps against the existing object and says
 # "Nothing to be done" -- after which the run uses the STALE binary and reports
 # the previous result. That has bitten this project more than once.
-touch "$NET/Pm3Wsn.cc" "$NET/Pm3Wsn.h"
+touch "$NET/EbWsn.cc" "$NET/EbWsn.h"
 
 cd "$NET"
 ./build.sh > "$TMP/build.log" 2>&1 \
@@ -83,7 +83,7 @@ CFG=$(grep -m1 "^attr configname" "$SCA" | awk '{print $3}')
 
 addnew=$(grep "fired:add_newEntry" "$SCA" | awk '{s+=$4} END {print s+0}')
 routes=$(grep -c "one-hop route to" "$TMP/run.log" || true)
-leaves=$(grep -oE 'bool try_create_[a-z]+Pkt\(\)' Pm3Wsn.h | sed -E 's/bool try_create_([a-z]+)Pkt\(\)/\1/' | sort -u | tr '\n' ' ')
+leaves=$(grep -oE 'bool try_create_[a-z]+Pkt\(\)' EbWsn.h | sed -E 's/bool try_create_([a-z]+)Pkt\(\)/\1/' | sort -u | tr '\n' ' ')
 
 echo "routing=$ROUTING  types=[ $leaves]  config=$CFG  limit=$LIMIT  add_newEntry=$addnew  routesPublished=$routes"
 

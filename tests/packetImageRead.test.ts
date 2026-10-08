@@ -40,7 +40,7 @@ const load = (d: string) =>
 // per-leaf events supersede it there. The behaviour asserted below moved with
 // it intact; only the method name changed.
 describe("a packet field read in image form reaches the chunk, not the context map", () => {
-  const cc = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3)
+  const cc = generate(load("../Update_wsn/C0_project"), "pM3", "EbWsn", 3)
     .find((f) => f.path.endsWith(".cc"))!.content;
 
   it("reads the chunk", () => {
@@ -63,7 +63,7 @@ describe("a packet field read in image form reaches the chunk, not the context m
   it("puts the creating event back within reach of the scheduler", () => {
     // The consequence that matters: with binding and guard agreeing, the
     // module's only creating event is schedulable AND reachable again.
-    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
+    expect(cc).toContain("bool EbWsn::try_create_beaconPkt()");
     expect(cc).toContain("int des = pktOf(pkt)->getFinalDestAddr();");
   });
 

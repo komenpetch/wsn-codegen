@@ -10,7 +10,7 @@
 import { readFileSync, writeFileSync, copyFileSync, existsSync, rmSync } from "node:fs";
 
 const D = "C:/Users/Komen/Desktop/Proj/Simulation/v3_net";
-const CC = `${D}/Pm3Wsn.cc`, H = `${D}/Pm3Wsn.h`;
+const CC = `${D}/EbWsn.cc`, H = `${D}/EbWsn.h`;
 
 // Containers worth watching, and what each one means when it is non-zero.
 //
@@ -46,7 +46,7 @@ copyFileSync(CC, `${CC}.probebak`);
 copyFileSync(H, `${H}.probebak`);
 
 let cc = readFileSync(CC, { encoding: "utf8" });
-const FIN = "void Pm3Wsn::finish() {";
+const FIN = "void EbWsn::finish() {";
 if (cc.split(FIN).length - 1 !== 1) throw new Error("finish anchor not unique");
 cc = cc.replace(FIN, FIN + "\n"
   + WATCH.map((v) => `    recordScalar("SZ_${v}", (long)${v}.size());`).join("\n"));

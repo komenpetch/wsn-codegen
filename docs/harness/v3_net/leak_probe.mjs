@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, copyFileSync, existsSync, rmSync } from "n
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CC = join(dirname(fileURLToPath(import.meta.url)), "Pm3Wsn.cc");
+const CC = join(dirname(fileURLToPath(import.meta.url)), "EbWsn.cc");
 const BAK = `${CC}.leakbak`;
 
 if (process.argv[2] === "restore") {
@@ -43,8 +43,8 @@ function once(anchor, replacement) {
 }
 const L = (...lines) => lines.map((l) => l + "\n").join("");
 
-once('#include "Pm3Wsn.h"\n', L(
-  '#include "Pm3Wsn.h"',
+once('#include "EbWsn.h"\n', L(
+  '#include "EbWsn.h"',
   "#include <tuple>",
   "static std::map<std::tuple<int,int,int>, double> LEAK_pub; // [LEAK-PROBE]"));
 
@@ -52,8 +52,8 @@ once("    for (auto _v : nbrs) ctlNeighbours[pkt].insert(_v);\n", L(
   "    for (auto _v : nbrs) ctlNeighbours[pkt].insert(_v);",
   "    for (auto _v : nbrs) LEAK_pub[std::make_tuple(getId(), (int)pkt, (int)_v)] = omnetpp::simTime().dbl(); // [LEAK-PROBE]"));
 
-once("void Pm3Wsn::finish() {\n", L(
-  "void Pm3Wsn::finish() {",
+once("void EbWsn::finish() {\n", L(
+  "void EbWsn::finish() {",
   "    { long stuck = 0, young = 0, selfOrig = 0, inFlood = 0, updPending = 0; // [LEAK-PROBE]",
   "      double now = omnetpp::simTime().dbl();",
   "      for (auto& e : ctlNeighbours) for (Node nb : e.second) {",
@@ -72,4 +72,4 @@ once("void Pm3Wsn::finish() {\n", L(
   '      recordScalar("LEAK_updPending", updPending); }'));
 
 writeFileSync(CC, cc, { encoding: "utf8" });
-console.log("instrumented [LEAK-PROBE] (backup at Pm3Wsn.cc.leakbak)");
+console.log("instrumented [LEAK-PROBE] (backup at EbWsn.cc.leakbak)");

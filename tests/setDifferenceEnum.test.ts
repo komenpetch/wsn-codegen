@@ -35,13 +35,13 @@ const load = (d: string) =>
 // per-leaf events supersede it there. The behaviour asserted below moved with
 // it intact; only the method name changed.
 describe("a parameter ranged over a set difference is enumerated, not read back", () => {
-  const cc = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3)
+  const cc = generate(load("../Update_wsn/C0_project"), "pM3", "EbWsn", 3)
     .find((f) => f.path.endsWith(".cc"))!.content;
-  const method = cc.slice(cc.indexOf("bool Pm3Wsn::try_create_beaconPkt()"));
+  const method = cc.slice(cc.indexOf("bool EbWsn::try_create_beaconPkt()"));
   const body = method.slice(0, method.indexOf("\n}"));
 
   it("reaches the method at all — otherwise this suite proves nothing", () => {
-    expect(cc).toContain("bool Pm3Wsn::try_create_beaconPkt()");
+    expect(cc).toContain("bool EbWsn::try_create_beaconPkt()");
   });
 
   it("enumerates the originator over the carrier", () => {
@@ -65,10 +65,10 @@ describe("a parameter ranged over a set difference is enumerated, not read back"
     // enumeration plus the mint. It became schedulable for the first time with
     // this fix; before it the generator reported "no binding for x".
     const m4 = generate(load("../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck"),
-      "M4", "M4Wsn", 2).find((f) => f.path.endsWith(".cc"))!.content;
-    const est = m4.slice(m4.indexOf("bool M4Wsn::try_est_due()"));
+      "M4", "EbWsn", 2).find((f) => f.path.endsWith(".cc"))!.content;
+    const est = m4.slice(m4.indexOf("bool EbWsn::try_est_due()"));
     const b = est.slice(0, est.indexOf("\n}"));
-    expect(m4).toContain("bool M4Wsn::try_est_due()");
+    expect(m4).toContain("bool EbWsn::try_est_due()");
     expect(b).toContain("for (Node x : ND) {");
     expect(b).toContain("if (estNDs.count(x) > 0) continue;");
   });
@@ -77,8 +77,8 @@ describe("a parameter ranged over a set difference is enumerated, not read back"
     // `create_bconPkt` resolves `s` from `s = Sink`, not an enumeration, and
     // that path already worked. It must not change.
     const m4 = generate(load("../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck"),
-      "M4", "M4Wsn", 2).find((f) => f.path.endsWith(".cc"))!.content;
-    const bcon = m4.slice(m4.indexOf("bool M4Wsn::try_create_bconPkt()"));
+      "M4", "EbWsn", 2).find((f) => f.path.endsWith(".cc"))!.content;
+    const bcon = m4.slice(m4.indexOf("bool EbWsn::try_create_bconPkt()"));
     const b = bcon.slice(0, bcon.indexOf("\n}"));
     expect(b).toContain("int s = Sink;");
     expect(b).toContain("ensurePkt(pkt)->setInitialSrcAddr(s);");

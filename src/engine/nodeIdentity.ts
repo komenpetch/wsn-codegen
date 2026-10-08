@@ -91,7 +91,7 @@ export function nodeSetsOf(contexts: readonly RawContext[]): Set<string> {
  *
  * ⚠ AND LEAVING THEM OUT WAS NOT NEUTRAL — it left them declared, empty, and
  * fillable by nothing, because the context emitter does not emit those values
- * either. `M6Wsn` guards `x ∈ ND ∖ Destination` in its creating event, so an
+ * either. RTMCS M6's module guards `x ∈ ND ∖ Destination` in its creating event, so an
  * empty `Destination` means every RTMCS node originates and nothing is a
  * destination: exactly the defect this pass was written to fix for `Dests`.
  *

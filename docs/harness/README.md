@@ -40,7 +40,7 @@ Kept — none of it can be regenerated:
 
 Deliberately **not** kept:
 
-- `Pm3Wsn.{h,cc,ned}` — generated. `npm run generate -- AppLayer <out> --v3`
+- `EbWsn.{h,cc,ned}` — generated (named `Pm3Wsn` before 2026-10-09). `npm run generate -- AppLayer <out> --v3`
   reproduces them byte-identically, and a stale copy here would invite someone
   to read it as the current output.
 - `Makefile` — written by `opp_makemake`, and it bakes in the source list at

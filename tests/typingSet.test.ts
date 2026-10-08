@@ -72,21 +72,21 @@ const load = (d: string) =>
     .map((f) => ({ name: f, xml: readFileSync(join(d, f), "utf8") }));
 
 describe.skipIf(!existsSync(dir))("RTMCS originates packets again", () => {
-  const tree = generate(load(dir), "M6", "M6Wsn", 2);
+  const tree = generate(load(dir), "M6", "EbWsn", 2);
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
 
   it("reaches the creating event at all -- otherwise this suite proves nothing", () => {
-    expect(cc).toContain("bool M6Wsn::try_create_rreq()");
+    expect(cc).toContain("bool EbWsn::try_create_rreq()");
   });
 
   it("MINTS the RREQ rather than searching for one that cannot exist", () => {
-    const m = cc.slice(cc.indexOf("bool M6Wsn::try_create_rreq()"));
+    const m = cc.slice(cc.indexOf("bool EbWsn::try_create_rreq()"));
     expect(m.slice(0, m.indexOf("\n}"))).toContain("newPktId()");
   });
 
   it("stamps the type, which only a minted packet can carry", () => {
-    const m = cc.slice(cc.indexOf("bool M6Wsn::try_create_rreq()"));
+    const m = cc.slice(cc.indexOf("bool EbWsn::try_create_rreq()"));
     expect(m.slice(0, m.indexOf("\n}"))).toContain("setType(PktType::RREQ)");
   });
 

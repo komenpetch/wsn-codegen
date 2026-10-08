@@ -36,16 +36,16 @@ const load = (d: string) =>
 // BEACON) is the default for that. Nothing about what this suite proves moved —
 // it needs SOME per-leaf transmit to look at.
 describe("the wire copy carries the sender the model named", () => {
-  const tree = generate(load("../Update_wsn/C0_project"), "pM3", "Pm3Wsn", 3);
+  const tree = generate(load("../Update_wsn/C0_project"), "pM3", "EbWsn", 3);
   const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
   const h = tree.find((f) => f.path.endsWith(".h"))!.content;
 
   it("reaches the transmit at all — otherwise this suite proves nothing", () => {
-    expect(cc).toContain("void Pm3Wsn::sendBeaconBroadcast(Node x, PktId pkt) {");
+    expect(cc).toContain("void EbWsn::sendBeaconBroadcast(Node x, PktId pkt) {");
   });
 
   it("pins the wire copy's sender field from send_down's own parameter", () => {
-    const fn = cc.slice(cc.indexOf("void Pm3Wsn::sendBeaconBroadcast"));
+    const fn = cc.slice(cc.indexOf("void EbWsn::sendBeaconBroadcast"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).toContain("chunk->setFwdrAddr(x);");
     // It pins the COPY, not the model's chunk: the model owns that state.
@@ -54,7 +54,7 @@ describe("the wire copy carries the sender the model named", () => {
   });
 
   it("pins it before the frame is built, not after", () => {
-    const fn = cc.slice(cc.indexOf("void Pm3Wsn::sendBeaconBroadcast"));
+    const fn = cc.slice(cc.indexOf("void EbWsn::sendBeaconBroadcast"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body.indexOf("chunk->setFwdrAddr(x);"))
       .toBeLessThan(body.indexOf("new Packet("));
@@ -62,9 +62,9 @@ describe("the wire copy carries the sender the model named", () => {
 
   it("carries the sender all the way from the event to the wire", () => {
     // send_down's realisation has `x`; it used to discard it at the dispatch.
-    expect(cc).toContain("bool Pm3Wsn::sendDown(Node x, PktId pkt)");
+    expect(cc).toContain("bool EbWsn::sendDown(Node x, PktId pkt)");
     expect(cc).toContain("transmitPacket(x, pkt);");
-    expect(cc).toContain("void Pm3Wsn::transmitPacket(Node x, PktId pkt)");
+    expect(cc).toContain("void EbWsn::transmitPacket(Node x, PktId pkt)");
     expect(cc).toContain("sendBeaconBroadcast(x, pkt); break;");
     expect(h).toContain("virtual void sendBeaconBroadcast(Node x, PktId pkt);");
   });
@@ -80,7 +80,7 @@ describe("the wire copy carries the sender the model named", () => {
     // third without anything about the sender changing. One stamp per per-leaf
     // transmit is the actual invariant, and it tracks the lattice.
     const stamps = cc.match(/chunk->setFwdrAddr\(x\);/g) ?? [];
-    const methods = cc.match(/^void Pm3Wsn::send\w+Broadcast\(Node x, PktId pkt\) \{$/gm) ?? [];
+    const methods = cc.match(/^void EbWsn::send\w+Broadcast\(Node x, PktId pkt\) \{$/gm) ?? [];
     expect(methods.length).toBeGreaterThan(1);
     expect(stamps.length).toBe(methods.length);
   });

@@ -372,8 +372,8 @@ export function stripDeadPacketFieldMaps(tree: GeneratedTree, fields: PacketFiel
   // of the SAME name with its accessor pair — `int netSeqNo = 0;`,
   // `getNetSeqNo() … return netSeqNo;` — so every field the chunk keeps under its
   // Event-B name read as "used elsewhere" and its dead machine map survived:
-  // five in M6Wsn (vPktData, netSeqNo, netDestAddr, envDestAddr, pktErrND), one
-  // in M4Wsn and in structure 3. The member lives in the module class, which is
+  // five in RTMCS M6's module (vPktData, netSeqNo, netDestAddr, envDestAddr,
+  // pktErrND), one in MintRoute M4's and in structure 3's. The member lives in the module class, which is
   // the one holding the machine-state anchor, so that class is what is searched.
   const stateAt = h.indexOf("// ── Event-B machine state ──");
   const moduleClassAt = stateAt < 0 ? 0 : Math.max(0, h.lastIndexOf("\nclass ", stateAt));

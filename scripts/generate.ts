@@ -28,7 +28,7 @@
 // Run via vite-node so TS + engine imports resolve without a build step.
 import { writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { generate, generateMerged, machineNames, leafMachine, defaultName } from "../src/engine/pipeline";
+import { generate, generateMerged, machineNames, leafMachine, MODULE_NAME } from "../src/engine/pipeline";
 import { loadProject, resolveInput } from "./projects";
 import type { EmitVersion } from "../src/engine/codeEmitter";
 import type { RoutingStyle } from "../src/engine/patternExtension";
@@ -114,7 +114,7 @@ try {
   // to supply: two projects in, and a generator that knew nothing about the
   // pattern it is meant to embody.
   tree = machine
-    ? generate(files, machine, defaultName(machine), version, undefined, drain, routing)
+    ? generate(files, machine, MODULE_NAME, version, undefined, drain, routing)
     : generateMerged(files, undefined, version, undefined, drain, routing);
 } catch (e) { refuse(e); }
 for (const f of tree) writeFileSync(resolve(outDir, f.path), f.content, "utf8");

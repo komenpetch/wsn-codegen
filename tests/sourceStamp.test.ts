@@ -88,9 +88,9 @@ const MINT = "../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_a
 const APP = "../Update_wsn/C0_project";
 
 describe.skipIf(!existsSync(RTMCS))("a minted packet's node-valued field is chosen, not read", () => {
-  const cc = generate(load(RTMCS), "M6", "M6Wsn", 2)
+  const cc = generate(load(RTMCS), "M6", "EbWsn", 2)
     .find((f) => f.path.endsWith(".cc"))!.content;
-  const body = bodyOf(cc, "bool M6Wsn::try_create_rreq()");
+  const body = bodyOf(cc, "bool EbWsn::try_create_rreq()");
 
   it("enumerates the originator instead of reading it off the fresh chunk", () => {
     expect(body).toContain("for (Node s : ND) {");
@@ -116,7 +116,7 @@ describe.skipIf(!existsSync(RTMCS))("a minted packet's node-valued field is chos
     // `create_rrep` reads `fDes = initialSrcAddr(rreq)` where `rreq` is a packet
     // this node received -- a real value on a real chunk. Converting that to an
     // enumeration would invent a destination the model did not choose.
-    const rrep = bodyOf(cc, "bool M6Wsn::try_create_rrep()");
+    const rrep = bodyOf(cc, "bool EbWsn::try_create_rrep()");
     expect(rrep).toContain("pktOf(rreq)->getInitialSrcAddr()");
     expect(rrep).not.toContain("for (Node fDes : ND) {");
   });
@@ -124,9 +124,9 @@ describe.skipIf(!existsSync(RTMCS))("a minted packet's node-valued field is chos
 
 describe.skipIf(!existsSync(MINT))("an originator bound another way is left alone", () => {
   it("MintRoute keeps `s = Sink` and is not enumerated", () => {
-    const cc = generate(load(MINT), "M4", "M4Wsn", 2)
+    const cc = generate(load(MINT), "M4", "EbWsn", 2)
       .find((f) => f.path.endsWith(".cc"))!.content;
-    const body = bodyOf(cc, "bool M4Wsn::try_create_bconPkt()");
+    const body = bodyOf(cc, "bool EbWsn::try_create_bconPkt()");
     expect(body).toContain("int s = Sink;");
     expect(body).toContain("ensurePkt(pkt)->setInitialSrcAddr(s);");
     expect(body).not.toContain("for (Node s : ND) {");
@@ -135,9 +135,9 @@ describe.skipIf(!existsSync(MINT))("an originator bound another way is left alon
 
 describe.skipIf(!existsSync(APP))("and so is one bound by its own typing guard", () => {
   it("the pattern keeps enumerating over ND ∖ Dests, not over bare ND", () => {
-    const cc = generate(load(APP), "pM3", "Pm3Wsn", 3)
+    const cc = generate(load(APP), "pM3", "EbWsn", 3)
       .find((f) => f.path.endsWith(".cc"))!.content;
-    const body = bodyOf(cc, "bool Pm3Wsn::try_create_beaconPkt()");
+    const body = bodyOf(cc, "bool EbWsn::try_create_beaconPkt()");
     expect(body).toContain("for (Node x : ND) {");
     expect(body).toContain("if (Dests.count(x) > 0) continue;");
     expect(body).toContain("ensurePkt(pkt)->setInitialSrcAddr(x);");

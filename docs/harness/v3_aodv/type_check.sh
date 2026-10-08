@@ -13,7 +13,7 @@
 #   type_check.sh [module-dir|-] [sim-time] [config]     defaults: - 60s Sink
 #   TICK=20s TAG=_slow type_check.sh - 120s Sink          lower the load
 #
-# module-dir: a directory holding Pm3Wsn.{h,cc,ned} to stage instead of the one
+# module-dir: a directory holding EbWsn.{h,cc,ned} to stage instead of the one
 # loop.sh generated (e.g. a flooding-shaped input's). The harness is ALWAYS left
 # exactly as loop.sh left it, on every exit path.
 # EXIT: 0 every per-type law holds, 1 a violation, 3 instrument/build/run failed.
@@ -29,16 +29,16 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 
 restore() {
   node "$NET/type_probe.mjs" "$NET" restore > /dev/null
-  cp .loop/gen/Pm3Wsn.h .loop/gen/Pm3Wsn.cc .loop/gen/Pm3Wsn.ned "$NET/"
-  touch Pm3Wsn.cc Pm3Wsn.h
+  cp .loop/gen/EbWsn.h .loop/gen/EbWsn.cc .loop/gen/EbWsn.ned "$NET/"
+  touch EbWsn.cc EbWsn.h
   ./build.sh > "$OUT/rebuild.log" 2>&1 || echo "WARNING: rebuild after restore failed"
-  [ "$(md5sum < Pm3Wsn.cc)" = "$(md5sum < .loop/gen/Pm3Wsn.cc)" ] && echo "RESTORED (staged == loop.sh's generation)" || echo "!! NOT RESTORED"
+  [ "$(md5sum < EbWsn.cc)" = "$(md5sum < .loop/gen/EbWsn.cc)" ] && echo "RESTORED (staged == loop.sh's generation)" || echo "!! NOT RESTORED"
 }
 trap restore EXIT
 
-if [ -n "$MOD" ]; then cp "$MOD"/Pm3Wsn.h "$MOD"/Pm3Wsn.cc "$MOD"/Pm3Wsn.ned "$NET/"; fi
+if [ -n "$MOD" ]; then cp "$MOD"/EbWsn.h "$MOD"/EbWsn.cc "$MOD"/EbWsn.ned "$NET/"; fi
 node "$NET/type_probe.mjs" "$NET" || { echo "BROKEN: instrument failed"; exit 3; }
-touch Pm3Wsn.cc Pm3Wsn.h
+touch EbWsn.cc EbWsn.h
 ./build.sh > "$OUT/build.log" 2>&1 || { echo "BROKEN: build failed"; tail -20 "$OUT/build.log"; exit 3; }
 ./out/clang-release/$(basename "$PWD").exe -u Cmdenv -c "$CFG" -n ".;../inet4.5/src" \
   --sim-time-limit="$T" --result-dir="$OUT/res" ${TICK:+"--**.generic.np.tickInterval=$TICK"} > "$OUT/run.log" 2>&1 \

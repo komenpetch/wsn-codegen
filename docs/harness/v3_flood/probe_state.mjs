@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 // This harness folder, wherever it is (v3_aodv or v3_flood).
 const D = fileURLToPath(new URL(".", import.meta.url)).replace(/[\\/]$/, "");
-const CC = `${D}/Pm3Wsn.cc`, H = `${D}/Pm3Wsn.h`;
+const CC = `${D}/EbWsn.cc`, H = `${D}/EbWsn.h`;
 
 // Containers worth watching, and what each one means when it is non-zero.
 //
@@ -48,7 +48,7 @@ copyFileSync(CC, `${CC}.probebak`);
 copyFileSync(H, `${H}.probebak`);
 
 let cc = readFileSync(CC, { encoding: "utf8" });
-const FIN = "void Pm3Wsn::finish() {";
+const FIN = "void EbWsn::finish() {";
 if (cc.split(FIN).length - 1 !== 1) throw new Error("finish anchor not unique");
 cc = cc.replace(FIN, FIN + "\n"
   + WATCH.map((v) => `    recordScalar("SZ_${v}", (long)${v}.size());`).join("\n"));

@@ -5,7 +5,7 @@
 // asserted the emitted text alone would pass just as well for a hardcoded
 // answer. Each case below names the model fact it depends on.
 import { describe, it, expect } from "vitest";
-import { generate, defaultName } from "../src/engine/pipeline";
+import { generate, MODULE_NAME } from "../src/engine/pipeline";
 import { loadProject } from "../scripts/projects";
 import type { GeneratedTree } from "../src/engine/types";
 
@@ -13,13 +13,13 @@ import type { GeneratedTree } from "../src/engine/types";
 // medium binding this way is itself part of what is under test, because
 // pipeline.ts only takes the network branch when the model has a medium.
 const gen = (project: string, machine: string): GeneratedTree =>
-  generate(loadProject(project), machine, defaultName(machine), 2);
+  generate(loadProject(project), machine, MODULE_NAME, 2);
 
 const tree: GeneratedTree = gen("MintRoute", "M4");
 // Derived, never spelled out. A hardcoded class name here is what once let a
 // sibling test pass while matching zero methods after a rename (see
 // generateNet.test.ts) -- the assertions below would go quiet the same way.
-const CLS = defaultName("M4");
+const CLS = MODULE_NAME;
 const cc = tree.find((f) => f.path.endsWith(".cc"))!.content;
 const h = tree.find((f) => f.path.endsWith(".h"))!.content;
 

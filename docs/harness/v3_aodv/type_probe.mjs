@@ -1,5 +1,5 @@
 // Per-TYPE instrumentation of the staged structure-3 module. A probe, not a
-// generator change. Backs up Pm3Wsn.cc and refuses to run over a stale backup.
+// generator change. Backs up EbWsn.cc and refuses to run over a stale backup.
 //
 //   node leaf_probe.mjs <harness-dir>           instrument
 //   node leaf_probe.mjs <harness-dir> restore   put it back, delete the backup
@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, copyFileSync, existsSync, rmSync } from "n
 import { join } from "node:path";
 
 const dir = process.argv[2];
-const CC = join(dir, "Pm3Wsn.cc");
+const CC = join(dir, "EbWsn.cc");
 const BAK = `${CC}.typebak`;
 
 if (process.argv[3] === "restore") {
@@ -38,8 +38,8 @@ function every(anchor, replacement, expectAtLeast) {
   return n;
 }
 
-once('#include "Pm3Wsn.h"\n', [
-  '#include "Pm3Wsn.h"',
+once('#include "EbWsn.h"\n', [
+  '#include "EbWsn.h"',
   "#include <tuple>",
   "static std::map<std::tuple<int,std::string,int>, long> LEAF_cnt; // [TYPE-PROBE]",
   "static std::set<std::tuple<int,int,int>> LEAF_reach;            // [TYPE-PROBE] (node, type, originator)",
@@ -72,8 +72,8 @@ const nTx = every("    if (held == nullptr) return;\n    auto chunk = makeShared
 once("    PktId _pkt = localIdFor(_wire.get());\n",
   "    LEAF_cnt[std::make_tuple(getId(), std::string(\"wireRx\"), (int)_wire->getType())]++; // [TYPE-PROBE]\n    PktId _pkt = localIdFor(_wire.get());\n");
 
-once("void Pm3Wsn::finish() {\n", [
-  "void Pm3Wsn::finish() {",
+once("void EbWsn::finish() {\n", [
+  "void EbWsn::finish() {",
   "    { for (auto& e : LEAF_cnt) if (std::get<0>(e.first) == getId()) // [TYPE-PROBE]",
   '        recordScalar(("LEAF_" + std::get<1>(e.first) + "_t" + std::to_string(std::get<2>(e.first))).c_str(), e.second);',
   "      std::map<int, long> reach; for (auto& r : LEAF_reach) if (std::get<0>(r) == getId()) reach[std::get<1>(r)]++;",

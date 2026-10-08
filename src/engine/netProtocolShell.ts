@@ -46,14 +46,14 @@ import { esc } from "./text";
 
 // The name of the compound module that holds the protocol, derived from the
 // protocol's own name so the pair reads the way INET's do (MintRoute /
-// MintRouteNetworkLayer): `M4Wsn` and `M4WsnNetworkLayer`.
+// MintRouteNetworkLayer): `EbWsn` and `EbWsnNetworkLayer`.
 //
 // There is no second name function here any more. This pass briefly had one
-// (`netName`, producing "M4Net") next to the pipeline's `defaultName`, which
-// meant one generator emitting one module under two names depending on which
-// half of it ran. `defaultName` is now the only source of the name and it is
-// layer-neutral ("M4Wsn"), so nothing has to be renamed when a model turns out
-// to have a network layer.
+// (`netName`, producing "M4Net") next to the pipeline's machine-derived default,
+// which meant one generator emitting one module under two names depending on
+// which half of it ran. The pipeline's MODULE_NAME is now the only source of the
+// name, and it is the same for every project and machine, so nothing has to be
+// renamed when a model turns out to have a network layer.
 // Exported because the routing-table binding has to find this same wrapper in
 // the emitted .ned to put the route table inside it. One spelling, one place:
 // two copies of a name derivation is how the two drift.
@@ -422,7 +422,7 @@ export function installNetProtocolShell(tree: GeneratedTree, cls: string, machin
       // with unbound extension points in handleMessageWhenUp(), and it survived
       // into the network-layer header where the class has no such method, no
       // socket and no extension points -- every sentence of it false, sitting
-      // directly above `class M4Wsn : public NetworkProtocolBase`. A stale
+      // directly above the module's `class … : public NetworkProtocolBase`. A stale
       // comment on generated code is worse than none: the reader cannot tell
       // which of the two the generator actually meant.
       if (!h.includes(APP_CLASS_DOC))

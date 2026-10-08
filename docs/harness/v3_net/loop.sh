@@ -41,11 +41,11 @@ cd "$GEN"
 npm run generate -- AppLayer "$TMP/gen" --v3 > "$TMP/gen.log" 2>&1 \
   || { echo "BROKEN: generate failed"; tail -20 "$TMP/gen.log"; exit 3; }
 
-cp "$TMP/gen/Pm3Wsn.h" "$TMP/gen/Pm3Wsn.cc" "$TMP/gen/Pm3Wsn.ned" "$NET/"
+cp "$TMP/gen/EbWsn.h" "$TMP/gen/EbWsn.cc" "$TMP/gen/EbWsn.ned" "$NET/"
 # ⚠ touch, or make compares timestamps against the existing object and says
 # "Nothing to be done" -- after which the run uses the STALE binary and reports
 # the previous result. That has bitten this project more than once.
-touch "$NET/Pm3Wsn.cc" "$NET/Pm3Wsn.h"
+touch "$NET/EbWsn.cc" "$NET/EbWsn.h"
 
 cd "$NET"
 ./build.sh > "$TMP/build.log" 2>&1 \

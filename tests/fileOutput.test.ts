@@ -11,9 +11,9 @@ import { writeTree, readZip, dedupeProjectFiles } from "../src/io/fileOutput";
 import type { GeneratedTree } from "../src/engine/types";
 
 const tree: GeneratedTree = [
-  { path: "Pm3Wsn.h", content: "// header" },
-  { path: "Pm3Wsn.cc", content: "// impl" },
-  { path: "Pm3Wsn.ned", content: "// ned" },
+  { path: "EbWsn.h", content: "// header" },
+  { path: "EbWsn.cc", content: "// impl" },
+  { path: "EbWsn.ned", content: "// ned" },
 ];
 
 // Anchor clicks are what a zip download is; capture them instead of navigating.
@@ -84,8 +84,8 @@ describe("writeTree: the user gets the files, or a reason", () => {
       }),
     }));
     await expect(writeTree(tree)).resolves.toBe("folder");
-    expect([...written.keys()].sort()).toEqual(["Pm3Wsn.cc", "Pm3Wsn.h", "Pm3Wsn.ned"]);
-    expect(written.get("Pm3Wsn.h")).toBe("// header");
+    expect([...written.keys()].sort()).toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
+    expect(written.get("EbWsn.h")).toBe("// header");
     expect(clicked).toEqual([]);   // no stray download beside the folder write
   });
 

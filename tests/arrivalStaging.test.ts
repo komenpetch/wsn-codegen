@@ -41,7 +41,7 @@ const APP = "../Update_wsn/C0_project";
 const MINTROUTE = "../EventB_model/WSN_MintRoute_3_2_5_9/MintRoute_3_2_5_9_complete_amiCheck";
 
 describe("the arrival stages the medium, never a per-node queue", () => {
-  const cc = generate(load(APP), "pM3", "Pm3Wsn", 3)
+  const cc = generate(load(APP), "pM3", "EbWsn", 3)
     .find((f) => f.path.endsWith(".cc"))!.content;
 
   it("reaches the arrival at all — otherwise this suite proves nothing", () => {

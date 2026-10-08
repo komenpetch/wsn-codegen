@@ -26,18 +26,19 @@ npm run generate -- AppLayer out-v3 --v3 \
   >/dev/null 2>&1 || { echo "FAIL: structure 3 did not generate"; exit 1; }
 
 rc=0
-for f in Pm3Wsn.h Pm3Wsn.cc Pm3Wsn.ned; do
+for f in EbWsn.h EbWsn.cc EbWsn.ned; do
   diff -q "$REF/$f" "out/$f" >/dev/null 2>&1 || { echo "CHANGED  $f"; rc=1; }
 done
-for f in M4Wsn.h M4Wsn.cc M4Wsn.ned; do
-  diff -q "$REF/$f" "out-m4/$f" >/dev/null 2>&1 || { echo "CHANGED  $f"; rc=1; }
+for f in EbWsn.h EbWsn.cc EbWsn.ned; do
+  diff -q "$REF/m4/$f" "out-m4/$f" >/dev/null 2>&1 || { echo "CHANGED  m4/$f"; rc=1; }
 done
-for f in M6Wsn.h M6Wsn.cc M6Wsn.ned; do
-  diff -q "$REF/$f" "out-m6/$f" >/dev/null 2>&1 || { echo "CHANGED  $f"; rc=1; }
+for f in EbWsn.h EbWsn.cc EbWsn.ned; do
+  diff -q "$REF/m6/$f" "out-m6/$f" >/dev/null 2>&1 || { echo "CHANGED  m6/$f"; rc=1; }
 done
-# Structure 3 emits the same class name as the app layer, so its three files
-# live under their own reference subdirectory rather than beside them.
-for f in Pm3Wsn.h Pm3Wsn.cc Pm3Wsn.ned; do
+# Every module is EbWsn (pipeline.ts MODULE_NAME), so each output's three files
+# live under their own reference subdirectory: app layer at the top, then m4/,
+# m6/ and v3/.
+for f in EbWsn.h EbWsn.cc EbWsn.ned; do
   diff -q "$REF/v3/$f" "out-v3/$f" >/dev/null 2>&1 || { echo "CHANGED  v3/$f"; rc=1; }
 done
 [ $rc -eq 0 ] && echo "all 12 generated files byte-identical to the reference"
