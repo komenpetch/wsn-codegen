@@ -141,7 +141,9 @@ function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
     throw new Error("A routing chooses the bundled pattern's control split; an explicit packet "
       + "source replaces the bundle, so the two cannot be combined.");
   if (!carriesPattern(version)) return override;
-  return override ?? patternExtensionFor(files, base, routing);
+  // Structure 4 takes the bundle with the next-hop design (uM6 and D9); 3 keeps
+  // the bundle it was measured with.
+  return override ?? patternExtensionFor(files, base, routing, version === 4);
 }
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,

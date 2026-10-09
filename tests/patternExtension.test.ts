@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { patternExtensionFor, PATTERN_EXTENSION_LEAF, routingStyleOf } from "../src/engine/patternExtension";
+import {
+  patternExtensionFor, PATTERN_EXTENSION_LEAF, NEXT_HOP_LEAF, routingStyleOf,
+} from "../src/engine/patternExtension";
 import { parseModel } from "../src/engine/parser";
 import type { EbFiles } from "../src/engine/pipeline";
 
@@ -286,5 +288,90 @@ describe("pM5 redeclares every uM4 variable", () => {
     expect(inUM4.filter((v) => !inPM5.includes(v))).toEqual([]);
     // And once each: a variable declared twice in one machine is its own error.
     expect(new Set(inPM5).size).toBe(inPM5.length);
+  });
+});
+
+// ⚠ STRUCTURE 4's BUNDLE (design/NextHop_Extension_Draft.md, step 3a). Built from
+// structure 3's instantiated machines and never by changing them: D9 drops the
+// generic start_tx/receive where they are split and adds the data receptions,
+// and the new uM6 carries every pM5 variable and event down (§6 item 9).
+describe("structure 4's bundle", () => {
+  const cases = [
+    ["the flooding split", [withCtlSet("CONTROL"), C0_DESTS, C1_PATTERN]],
+    ["the AODV split", [withCtlSet("CONTROL"), C0_SINK_IN_DESTS, C1_PATTERN]],
+    ["no bundled split", [withCtlSet("FLOOD"),
+      ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"])]],
+  ] as const;
+  const machineOf = (files: EbFiles, name: string) =>
+    parseModel(files.filter((f) => f.name === `${name}.bum`)).machines[0];
+  const labels = (files: EbFiles, name: string) => machineOf(files, name).events.map((e) => e.label);
+
+  it.each(cases)("with %s, generates from uM6, which refines pM5", (_n, files) => {
+    const src = patternExtensionFor([...files], "pM3", undefined, true);
+    expect(src.machine).toBe(NEXT_HOP_LEAF);
+    expect(NEXT_HOP_LEAF).toBe("uM6");
+    expect(machineOf(src.files, "uM6").refines).toBe("pM5");
+  });
+
+  it.each(cases)("with %s, D9: uM4 and pM5 no longer carry the generic start_tx and receive", (_n, files) => {
+    const v4 = patternExtensionFor([...files], "pM3", undefined, true).files;
+    const v3 = patternExtensionFor([...files], "pM3").files;
+    for (const m of ["uM4", "pM5"]) {
+      expect(labels(v4, m)).not.toContain("start_tx");
+      expect(labels(v4, m)).not.toContain("receive");
+      // Positive control: structure 3's bundle still has both, so the two
+      // assertions above are about structure 4 and not about a bundle that
+      // never had them.
+      expect(labels(v3, m)).toContain("start_tx");
+      expect(labels(v3, m)).toContain("receive");
+    }
+  });
+
+  it.each(cases)("with %s, D9: uM4 derives the data receptions, and pM5 extends them", (_n, files) => {
+    const v4 = patternExtensionFor([...files], "pM3", undefined, true).files;
+    const fresh = machineOf(v4, "uM4").events.find((e) => e.label === "receive_dataPkt")!;
+    const dup = machineOf(v4, "uM4").events.find((e) => e.label === "receive_dup_dataPkt")!;
+    expect(fresh.refines).toBe("receive");
+    expect(fresh.guards.map((g) => g.text)).toContain("type(pkt) = DATA");
+    expect(fresh.guards.map((g) => g.text)).toContain("nb ∈ dom(floodTbl) ∧ pkt ∉ floodTbl(nb)");
+    expect(dup.refines).toBeUndefined();
+    expect(dup.guards.map((g) => g.text)).toContain("type(pkt) = DATA");
+    expect(dup.guards.map((g) => g.text)).toContain("nb ∈ dom(floodTbl) ∧ pkt ∈ floodTbl(nb)");
+    // No Tier B hook on data (update_nbr counts control packets only): pM5
+    // extends them with nothing of its own.
+    for (const l of ["receive_dataPkt", "receive_dup_dataPkt"]) {
+      const inPM5 = machineOf(v4, "pM5").events.find((e) => e.label === l)!;
+      expect(inPM5.extended).toBe(true);
+      expect(inPM5.guards).toEqual([]);
+    }
+    // Structure 3 derives no data reception.
+    const v3 = patternExtensionFor([...files], "pM3").files;
+    expect(labels(v3, "uM4")).not.toContain("receive_dataPkt");
+  });
+
+  // Item 9: in Event-B a refinement must say what it keeps. Each machine of the
+  // structure-4 bundle covers every event of the one it refines (by label, or by
+  // refining it) and redeclares every variable, once.
+  it.each(cases)("with %s, each machine keeps every event and variable of the one it refines", (_n, files) => {
+    const v4 = patternExtensionFor([...files], "pM3", undefined, true).files;
+    for (const [child, parent] of [["pM5", "uM4"], ["uM6", "pM5"]]) {
+      const c = machineOf(v4, child), p = machineOf(v4, parent);
+      const covered = new Set(c.events.flatMap((e) => (e.refines ? [e.label, e.refines] : [e.label])));
+      expect(p.events.map((e) => e.label).filter((l) => !covered.has(l))).toEqual([]);
+      expect(p.variables.filter((v) => !c.variables.includes(v))).toEqual([]);
+      expect(new Set(c.variables).size).toBe(c.variables.length);
+      expect(new Set(c.events.map((e) => e.label)).size).toBe(c.events.length);
+    }
+    // Not vacuous: uM6 really does carry the parts pM5 added (Tier B).
+    expect(labels(v4, "uM6")).toContain("update_nbr");
+    expect(machineOf(v4, "uM6").variables).toContain("neighbourTbl");
+  });
+
+  it("refuses a project whose types are not the control set and one data type", () => {
+    const files = [withCtlSet("CONTROL"), C0_DESTS,
+      ctx("C1", ["partition(TYPE, CONTROL, {DATA}, {OTHER})"], ["DATA", "OTHER", "CONTROL", "type"])];
+    expect(() => patternExtensionFor(files, "pM3", undefined, true)).toThrow(/no single data type/);
+    // Structure 3 needs no data type, so it still accepts the project.
+    expect(() => patternExtensionFor(files, "pM3")).not.toThrow();
   });
 });

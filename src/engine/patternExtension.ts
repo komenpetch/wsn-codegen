@@ -7,6 +7,7 @@ import { parseModel } from "./parser";
 import { packetTypeLattice } from "./packetTypes";
 import uM4 from "../assets/pattern-extension/uM4.bum?raw";
 import pM5 from "../assets/pattern-extension/pM5.bum?raw";
+import uM6 from "../assets/pattern-extension/uM6.bum?raw";
 import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
 import C2aodv from "../assets/pattern-extension/C2_aodv.buc?raw";
 import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
@@ -32,6 +33,8 @@ import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
 //   uM4.bum      Tier A — the per-packet sequence number, plus the per-leaf
 //                creating events DERIVED into it (see deriveControlEvents)
 //   pM5.bum      Tier B — the neighbour table and its pair-keyed metrics
+//   uM6.bum      Structure 4 only — the next-hop design. Refines pM5; carries
+//                every pM5 variable and event down (carryDown).
 //
 // ⚠ They EXTEND the uploaded chain rather than standing beside it: `uM4 refines
 // <the project's leaf>` and `pM5 refines uM4`. That is why only these files are
@@ -72,6 +75,8 @@ import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
 // deliberate stand-in (user decision d2), recorded in
 // docs/findings/netlayer/2026-09-27-rreq-rrep-rrer-pattern-study.md.
 export const PATTERN_EXTENSION_LEAF = "pM5";
+// The leaf structure 4 generates from.
+export const NEXT_HOP_LEAF = "uM6";
 
 // The context uM4 sees when no bundled split is in play: the pattern's own,
 // which both bundled splits extend.
@@ -426,15 +431,19 @@ function deriveTransmitEvents(raw: RawModel): { uM4: string; labels: string[] } 
   return { uM4, labels: [ctl, other] };
 }
 
-function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
-  const set = controlSetOf(raw);
-  if (!set) return { uM4: "", pM5: "" };
-  // `receive_controlPkt` for CONTROL, `receive_floodPkt` for FLOOD — the
-  // derivation reproduces each case study's own spelling rather than imposing
-  // one. MintRoute names these events exactly this.
-  const fresh = `receive_${lowerTag(set)}Pkt`, dup = `receive_dup_${lowerTag(set)}Pkt`;
+// One flood pair: the reception that accepts a packet once, and the one that
+// consumes a repeat. The control pair and the data pair (D9) are the same shape
+// and differ only in their type guard and their comments, so both are written
+// by this one template rather than as two copies of thirty lines.
+interface FloodPair {
+  ids: [string, string];       // the two events' XML element names, unique per machine
+  fresh: string; dup: string;  // the two event labels
+  typeGuard: string;           // `type(pkt) ∈ CONTROL`, `type(pkt) = DATA`
+  typeLabel: string; freshComment: string; typeComment: string; dupComment: string;
+}
 
-  const uM4 = `   <org.eventb.core.event name="evt_rcv" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${fresh}" org.eventb.core.comment="Tier A, DERIVED from the control set the abstract creatingControlPacket names. Guards 1-4 and actions 1-2 are the abstract receive verbatim; 5-9 are MintRoute&apos;s own flooding guards, cited individually.">
+function floodPairXml(p: FloodPair): string {
+  return `   <org.eventb.core.event name="${p.ids[0]}" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${p.fresh}" org.eventb.core.comment="${p.freshComment}">
       <org.eventb.core.refinesEvent name="refrcv" org.eventb.core.target="receive"/>
       <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="nb"/>
       <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="pkt"/>
@@ -447,20 +456,37 @@ function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
       <org.eventb.core.guard name="grd06" org.eventb.core.label="MFlood_medium_g" org.eventb.core.predicate="pkt ∉ ran(sentDown) ∧ pkt ∈ ran(sentUp)" org.eventb.core.comment="MintRoute M2 receive_pkt g1. The medium condition written in the CommPattern pair&apos;s own variables -- M2 is where MintRoute itself substitutes sentDown/sentUp for its M1 WiMedium, so this substitution is the model&apos;s, not ours." org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd07" org.eventb.core.label="MFlood_notMine_g" org.eventb.core.predicate="s ∈ ND ∧ s = initialSrcAddr(pkt) ∧ s ≠ nb" org.eventb.core.comment="MintRoute M1 receive_pkt g5: a node does not receive its own originated packet." org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd08" org.eventb.core.label="MFlood_fresh_g" org.eventb.core.predicate="nb ∈ dom(floodTbl) ∧ pkt ∉ floodTbl(nb)" org.eventb.core.comment="MintRoute M1 receive_pkt g7: the duplicate test." org.eventb.core.theorem="false"/>
-      <org.eventb.core.guard name="grd09" org.eventb.core.label="MFlood_ctl_g" org.eventb.core.predicate="type(pkt) ∈ ${set}" org.eventb.core.comment="MintRoute M3 receive_controlPkt g1. LEAF-INDEPENDENT, the same reasoning update_nbr already carries: which control subtypes exist is per case study, so the flood says only that a control packet is what floods." org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd09" org.eventb.core.label="${p.typeLabel}" org.eventb.core.predicate="${p.typeGuard}" org.eventb.core.comment="${p.typeComment}" org.eventb.core.theorem="false"/>
       <org.eventb.core.action name="act01" org.eventb.core.label="MReceive_receive_a1" org.eventb.core.assignment="recvBuff ≔ recvBuff ∪ {nb ↦ pkt}"/>
       <org.eventb.core.action name="act02" org.eventb.core.label="MReceive_receive_a2" org.eventb.core.assignment="ctlNeighbours ≔ ctlNeighbours ∖ {pkt ↦ nb}"/>
       <org.eventb.core.action name="act03" org.eventb.core.label="MFlood_seen_a" org.eventb.core.assignment="floodTbl(nb) ≔ floodTbl(nb) ∪ {pkt}"/>
    </org.eventb.core.event>
-   <org.eventb.core.event name="evt_rcvdup" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${dup}" org.eventb.core.comment="Tier A, DERIVED. MintRoute M1 receive_dup_pkt, guard for guard: a repeat is consumed off ctlNeighbours and goes no further -- it never reaches recvBuff, so fwdr_receive_pkt never re-queues it and nothing rebroadcasts it. ⚠ ADVISOR REVIEW (B7). This is a NEW event and it modifies ctlNeighbours, which is ABSTRACT (pM1), so it has no refinement. BOTH case studies do the same thing and get away with it: MintRoute and the advisor&apos;s flooding study each declare ctlNeighbours in M1 and introduce receive_pkt AND receive_dup_pkt there as new events, so both refine skip freely. We cannot, because the publication is declared three machines up. ⚠ AND REFINING receive INSTEAD IS PROVABLY IMPOSSIBLE, not merely awkward -- it was tried and measured. Any refinement inherits receive&apos;s negative guards, among them nb |-&gt; pkt not-in sentDown; sentDown is emptied only by send_up, which in a per-node module runs on the RECEIVER, so the sender&apos;s own entry is never removed. After a node forwards a packet the guard is false for ever -- which is exactly when duplicates of it arrive. Measured: as a refinement of receive this event fired 0-1 times instead of 332-421, and update_nbr fell from 423/512 to 95/95 on the interior nodes, undercounting every neighbour a node hears a repeat from. ⚠ AND THE REMAINING OPTION IS RULED OUT BY PROJECT DECISION (2026-09-20), so this is SETTLED rather than pending. The only other place the event could refine cleanly is pM1, which declares ctlNeighbours and is where both case studies put theirs -- but pM1 is the advisor&apos;s shared CommPattern and the standing rule is that it is not edited, and no pattern-level event is invented outside it either. So the behaviour is kept and the obligation stays unmet BY CHOICE: this event is correct as C++ and unproved as Event-B, and that trade was made with the numbers above in hand. Do not re-derive it, and do not propose a pattern change for it.">
+   <org.eventb.core.event name="${p.ids[1]}" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="${p.dup}" org.eventb.core.comment="${p.dupComment}">
       <org.eventb.core.parameter name="prm01" org.eventb.core.identifier="nb"/>
       <org.eventb.core.parameter name="prm02" org.eventb.core.identifier="pkt"/>
       <org.eventb.core.guard name="grd01" org.eventb.core.label="MFlood_dup_g1" org.eventb.core.predicate="nb ∈ ND ∧ pkt ∈ PKT" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd02" org.eventb.core.label="MFlood_dup_g2" org.eventb.core.predicate="pkt ↦ nb ∈ ctlNeighbours" org.eventb.core.theorem="false"/>
       <org.eventb.core.guard name="grd03" org.eventb.core.label="MFlood_dup_g3" org.eventb.core.predicate="nb ∈ dom(floodTbl) ∧ pkt ∈ floodTbl(nb)" org.eventb.core.theorem="false"/>
-      <org.eventb.core.guard name="grd04" org.eventb.core.label="MFlood_dup_g4" org.eventb.core.predicate="type(pkt) ∈ ${set}" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd04" org.eventb.core.label="MFlood_dup_g4" org.eventb.core.predicate="${p.typeGuard}" org.eventb.core.theorem="false"/>
       <org.eventb.core.action name="act01" org.eventb.core.label="MFlood_dup_a1" org.eventb.core.assignment="ctlNeighbours ≔ ctlNeighbours ∖ {pkt ↦ nb}"/>
    </org.eventb.core.event>`;
+}
+
+function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
+  const set = controlSetOf(raw);
+  if (!set) return { uM4: "", pM5: "" };
+  // `receive_controlPkt` for CONTROL, `receive_floodPkt` for FLOOD — the
+  // derivation reproduces each case study's own spelling rather than imposing
+  // one. MintRoute names these events exactly this.
+  const fresh = `receive_${lowerTag(set)}Pkt`, dup = `receive_dup_${lowerTag(set)}Pkt`;
+
+  const uM4 = floodPairXml({
+    ids: ["evt_rcv", "evt_rcvdup"], fresh, dup, typeGuard: `type(pkt) ∈ ${set}`,
+    typeLabel: "MFlood_ctl_g",
+    freshComment: "Tier A, DERIVED from the control set the abstract creatingControlPacket names. Guards 1-4 and actions 1-2 are the abstract receive verbatim; 5-9 are MintRoute&apos;s own flooding guards, cited individually.",
+    typeComment: "MintRoute M3 receive_controlPkt g1. LEAF-INDEPENDENT, the same reasoning update_nbr already carries: which control subtypes exist is per case study, so the flood says only that a control packet is what floods.",
+    dupComment: `Tier A, DERIVED. MintRoute M1 receive_dup_pkt, guard for guard: a repeat is consumed off ctlNeighbours and goes no further -- it never reaches recvBuff, so fwdr_receive_pkt never re-queues it and nothing rebroadcasts it. ⚠ ADVISOR REVIEW (B7). This is a NEW event and it modifies ctlNeighbours, which is ABSTRACT (pM1), so it has no refinement. BOTH case studies do the same thing and get away with it: MintRoute and the advisor&apos;s flooding study each declare ctlNeighbours in M1 and introduce receive_pkt AND receive_dup_pkt there as new events, so both refine skip freely. We cannot, because the publication is declared three machines up. ⚠ AND REFINING receive INSTEAD IS PROVABLY IMPOSSIBLE, not merely awkward -- it was tried and measured. Any refinement inherits receive&apos;s negative guards, among them nb |-&gt; pkt not-in sentDown; sentDown is emptied only by send_up, which in a per-node module runs on the RECEIVER, so the sender&apos;s own entry is never removed. After a node forwards a packet the guard is false for ever -- which is exactly when duplicates of it arrive. Measured: as a refinement of receive this event fired 0-1 times instead of 332-421, and update_nbr fell from 423/512 to 95/95 on the interior nodes, undercounting every neighbour a node hears a repeat from. ⚠ AND THE REMAINING OPTION IS RULED OUT BY PROJECT DECISION (2026-09-20), so this is SETTLED rather than pending. The only other place the event could refine cleanly is pM1, which declares ctlNeighbours and is where both case studies put theirs -- but pM1 is the advisor&apos;s shared CommPattern and the standing rule is that it is not edited, and no pattern-level event is invented outside it either. So the behaviour is kept and the obligation stays unmet BY CHOICE: this event is correct as C++ and unproved as Event-B, and that trade was made with the numbers above in hand. Do not re-derive it, and do not propose a pattern change for it.`,
+  });
 
   // Tier B's hook, layered the way MintRoute layers it: M1 floods, M3 adds the
   // forwarder and queues the pair the route table drains. Extended events, so
@@ -481,6 +507,110 @@ function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
    </org.eventb.core.event>`;
 
   return { uM4, pM5: `${hook("evt_rcv5", fresh)}\n${hook("evt_rcvdup5", dup)}` };
+}
+
+// ── Structure 4: the next-hop design (design/NextHop_Extension_Draft.md) ──────
+//
+// Everything from here to `patternExtensionFor` is used ONLY when structure 4 is
+// generated (`nextHop`). Structure 3 keeps the bundle exactly as it was: the
+// structure-4 machines are built from structure 3's instantiated ones, never by
+// changing them.
+
+// The DATA type: what is left of the packet-type partition once the control set
+// is taken out. Read off the model, as the control set is (controlSetOf). In the
+// pattern that is `partition(TYPE, CONTROL, {DATA})`, so it is DATA. Null when
+// the rest is not exactly one leaf, which the caller refuses: the data receptions
+// below would then not cover every non-control packet.
+function dataTypeOf(raw: RawModel, controlSet: string): string | null {
+  const lattice = packetTypeLattice(raw.contexts);
+  const top = lattice?.children.get(lattice.root) ?? [];
+  if (!top.includes(controlSet)) return null;
+  const rest = top.filter((t) => t !== controlSet);
+  return rest.length === 1 && !lattice!.children.has(rest[0]) ? rest[0] : null;
+}
+
+/**
+ * D9's data receptions, beside the control ones in uM4.
+ *
+ * The draft's §4.5, checked against MintRoute's own: M3 `receive_dataPkt`
+ * extends `receive_pkt` with one guard, `type(pkt) = DATA`, and
+ * `receive_dup_dataPkt` is `receive_dup_controlPkt`'s shape with the same
+ * guard. Neither has the `updateNbrs` hook its control twin gets at M3, because
+ * `update_nbr` counts control packets only, so pM5 adds nothing to them.
+ */
+function deriveDataReceiveEvents(raw: RawModel): { uM4: string; labels: string[] } {
+  const set = controlSetOf(raw);
+  if (!set) return { uM4: "", labels: [] };
+  const data = dataTypeOf(raw, set);
+  if (!data)
+    throw new Error(`Structure 4 derives one data reception beside the control one, and this `
+      + `project's packet-type partition is not "${set} and one other type", so there is no single `
+      + `data type to receive. Use structure 3.`);
+  const fresh = `receive_${lowerTag(data)}Pkt`, dup = `receive_dup_${lowerTag(data)}Pkt`;
+  return {
+    labels: [fresh, dup],
+    uM4: floodPairXml({
+      ids: ["evt_rcvd", "evt_rcvdupd"], fresh, dup, typeGuard: `type(pkt) = ${data}`,
+      typeLabel: "MFlood_data_g",
+      freshComment: "Tier A, DERIVED (D9). The control reception&apos;s guards and actions with the data type in place of the control set. MintRoute M3 receive_dataPkt.",
+      typeComment: "MintRoute M3 receive_dataPkt g9. No Tier B hook: update_nbr counts control packets only.",
+      dupComment: "Tier A, DERIVED (D9). MintRoute receive_dup_dataPkt: a repeat is consumed off ctlNeighbours and goes no further. A new event modifying the abstract ctlNeighbours: the same B7 trade as the control duplicate (settled 2026-09-20), with the thesis&apos;s precedent (App. A p. 314).",
+    }),
+  };
+}
+
+// Remove one static extended stub from a bundled machine (D9: the generic event
+// goes where it is split). Only a stub with no children is removed, so an event
+// carrying its own guards or actions can never be dropped by this; and it must
+// be there exactly once, or the bundle has changed shape.
+function dropStub(xml: string, label: string, file: string): string {
+  const stub = new RegExp(`^   <org\\.eventb\\.core\\.event [^>\\n]*org\\.eventb\\.core\\.extended="true" `
+    + `org\\.eventb\\.core\\.label="${label}">\\r?\\n   </org\\.eventb\\.core\\.event>\\r?\\n`, "gm");
+  const hits = xml.match(stub)?.length ?? 0;
+  if (hits !== 1)
+    throw new Error(`patternExtension: ${file} should hold exactly one empty extended ${label}, `
+      + `and holds ${hits}. The bundled machine changed shape.`);
+  return xml.replace(stub, "");
+}
+
+/**
+ * Carry a refined machine's whole interface down into its refinement (§6 item 9).
+ *
+ * In Event-B a refinement must say what it keeps: a variable it does not
+ * redeclare disappears, and so does an event it neither extends nor refines.
+ * `instantiateB` keeps pM5 complete from three explicit lists, which is the
+ * blind spot the 2026-10-06 audit found for variables. This reads both lists off
+ * the parent machine itself, so whatever the parent gains, the child carries.
+ *
+ * An event is covered when the child lists it by label or refines it (a split);
+ * every other parent event gets an empty extended stub. Stubs go before the end,
+ * after the child's own events, in the parent's order; carried variables go
+ * before the child's first invariant or event.
+ */
+function carryDown(child: string, parent: string, file: string): string {
+  const [c] = parseModel([{ name: file, xml: child }]).machines;
+  const [p] = parseModel([{ name: `parent-of-${file}`, xml: parent }]).machines;
+  const declared = new Set(c.variables);
+  const covered = new Set(c.events.flatMap((e) => (e.refines ? [e.label, e.refines] : [e.label])));
+  for (const id of ["cdv", "cde"])
+    if (child.includes(`name="${id}`))
+      throw new Error(`patternExtension: ${file} already uses the element names carryDown gives `
+        + `the parts it adds (${id}…).`);
+  const vars = p.variables.filter((v) => !declared.has(v)).map((v, i) =>
+    `   <org.eventb.core.variable name="cdv${i}" org.eventb.core.identifier="${v}"/>`).join("\n");
+  const events = p.events.filter((e) => !covered.has(e.label)).map((e, i) =>
+    `   <org.eventb.core.event name="cde${i}" org.eventb.core.convergence="0" `
+    + `org.eventb.core.extended="true" org.eventb.core.label="${e.label}">\n   </org.eventb.core.event>`)
+    .join("\n");
+  let xml = child;
+  if (vars) {
+    const at = /^ {3}<org\.eventb\.core\.(invariant|event) /m.exec(xml);
+    if (!at)
+      throw new Error(`patternExtension: ${file} has no invariant or event to put the carried `
+        + "variables in front of.");
+    xml = `${xml.slice(0, at.index)}${vars}\n${xml.slice(at.index)}`;
+  }
+  return events ? spliceBeforeEnd(xml, events, file) : xml;
 }
 
 // Splice `add` in after `anchor`. A missing anchor is an error rather than a
@@ -558,7 +688,7 @@ function instantiateB(xml: string, raw: RawModel): string {
  * difference between the two.
  */
 export function patternExtensionFor(files: EbFiles, base: string,
-  routing?: RoutingStyle): { files: EbFiles; machine: string } {
+  routing?: RoutingStyle, nextHop = false): { files: EbFiles; machine: string } {
   const project = parseModel(files);
 
   const declared = new Set(project.machines.flatMap((m) => m.variables));
@@ -656,6 +786,35 @@ export function patternExtensionFor(files: EbFiles, base: string,
     return { ...f, xml: instantiate(seeSplit(xml, f.name), raw) };
   };
 
+  const bundle = BUNDLED.map(retarget);
   // A new array: the caller's list is theirs.
-  return { files: [...withCtl, ...BUNDLED.map(retarget)], machine: PATTERN_EXTENSION_LEAF };
+  if (!nextHop) return { files: [...withCtl, ...bundle], machine: PATTERN_EXTENSION_LEAF };
+
+  // ── Structure 4, built FROM structure 3's instantiated machines ──────────
+  // D9 (draft §4.5): the generic start_tx and receive go where they are split,
+  // so uM4 and pM5 stop extending them, and uM4 gains the data receptions. Each
+  // generic event is dropped only when its split was actually derived; with no
+  // control set nothing splits it, and it stays. Then item 9: pM5 carries down
+  // whatever uM4 now has that it does not list, and uM6 carries down all of pM5.
+  const xmlOf = (name: string): string => {
+    const f = bundle.find((b) => b.name === name);
+    if (!f) throw new Error(`patternExtension: the instantiated bundle has no ${name}.`);
+    return f.xml;
+  };
+  const txSplit = deriveTransmitEvents(raw).labels.length > 0;
+  const rcvSplit = deriveFloodEvents(raw).uM4 !== "";
+  const d9 = (xml: string, file: string): string => {
+    const noTx = txSplit ? dropStub(xml, "start_tx", file) : xml;
+    return rcvSplit ? dropStub(noTx, "receive", file) : noTx;
+  };
+  const data = deriveDataReceiveEvents(raw).uM4;
+  const um4 = data ? spliceBeforeEnd(d9(xmlOf("uM4.bum"), "uM4.bum"), data, "uM4.bum")
+    : d9(xmlOf("uM4.bum"), "uM4.bum");
+  const pm5 = carryDown(d9(xmlOf("pM5.bum"), "pM5.bum"), um4, "pM5.bum");
+  const um6 = carryDown(seeSplit(uM6, "uM6.bum"), pm5, "uM6.bum");
+  return {
+    files: [...withCtl, { name: "uM4.bum", xml: um4 }, { name: "pM5.bum", xml: pm5 },
+      { name: "uM6.bum", xml: um6 }],
+    machine: NEXT_HOP_LEAF,
+  };
 }

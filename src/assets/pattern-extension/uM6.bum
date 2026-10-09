@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<org.eventb.core.machineFile org.eventb.core.configuration="org.eventb.core.fwd" version="5">
+   <org.eventb.core.seesContext name="sees1" org.eventb.core.target="C1"/>
+   <org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="pM5"/>
+   <org.eventb.core.event name="evt_init" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="INITIALISATION" org.eventb.core.comment="Structure 4, the next-hop design (design/NextHop_Extension_Draft.md). Every pM5 variable and every other pM5 event is carried down when the bundle is instantiated (carryDown in patternExtension.ts), so this file holds only what uM6 adds.">
+   </org.eventb.core.event>
+</org.eventb.core.machineFile>
