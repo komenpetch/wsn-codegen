@@ -20,6 +20,8 @@ import { packetTypeLattice } from "../src/engine/packetTypes";
 import { packetModel } from "../src/engine/packetModel";
 import { packetRules } from "../src/engine/packetRules";
 import { mediumRules } from "../src/engine/mediumRules";
+import { patternExtensionFor } from "../src/engine/patternExtension";
+import type { Rule } from "../src/engine/rules";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -56,15 +58,26 @@ const PROJECT_DIRS: Record<string, [string, string]> = {
 // a rule offered for a shape this model does not use, which is not a defect.
 const AUDITED = ["MintRoute", "RTMCS"] as const;
 
-function loadRaw(rel: string) {
+function loadFiles(rel: string) {
   const dir = resolve(ROOT, rel);
-  return parseModel(readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))
-    .map((f) => ({ name: f, xml: readFileSync(resolve(dir, f), "utf8") })));
+  return readdirSync(dir).filter((f) => /\.(bum|buc)$/.test(f))
+    .map((f) => ({ name: f, xml: readFileSync(resolve(dir, f), "utf8") }));
 }
+const loadRaw = (rel: string) => parseModel(loadFiles(rel));
 
 const MACHINES: Record<string, EncodedMachine> = {};
 for (const [proj, [rel, leaf]] of Object.entries(PROJECT_DIRS))
   MACHINES[proj] = resolveEncodings(flatten(loadRaw(rel), leaf));
+
+// ⚠ THE TOOL'S OWN BUNDLE, AS A CORPUS (decision O2, user 2026-10-09): the shipped
+// structure-4 machines, instantiated on the AppLayer chain exactly as the pipeline
+// instantiates them, so `Bundle.<event>` resolves against uM6's flattened events.
+// It exists for the fields neither case study has by name (`pktNextHop`), and its
+// rules are audited for those fields only -- see the second test below.
+const BUNDLE = patternExtensionFor(loadFiles(PROJECT_DIRS.AppLayer[0]), PROJECT_DIRS.AppLayer[1],
+  undefined, true);
+const BUNDLE_RAW = parseModel(BUNDLE.files);
+MACHINES.Bundle = resolveEncodings(flatten(BUNDLE_RAW, BUNDLE.machine));
 
 // Every guard and action of one named event, split into top-level conjuncts
 // -- exactly the granularity the real rule engine matches at (ruleEngine's
@@ -82,6 +95,28 @@ function clausesOf(evidenceRef: string): string[] | undefined {
     .map((c) => c.trim());
 }
 
+// The rules among `rules` whose cited evidence contains no clause the rule's own
+// match() accepts, one message each.
+function unbacked(rules: (Rule & { evidence: string[] })[]): string[] {
+  const failures: string[] = [];
+  for (const rule of rules) {
+    let hit = false;
+    const uncheckable: string[] = [];
+    for (const evidenceRef of rule.evidence) {
+      const clauses = clausesOf(evidenceRef);
+      if (clauses === undefined) { uncheckable.push(evidenceRef); continue; }
+      if (clauses.some((c) => rule.match(c))) { hit = true; break; }
+    }
+    if (hit) continue;
+    failures.push(
+      uncheckable.length === rule.evidence.length
+        ? `${rule.id}: every cited event is unresolvable -- [${rule.evidence.join(", ")}] does not name a real Project.eventLabel`
+        : `${rule.id}: none of its evidence [${rule.evidence.join(", ")}] contains a clause that ${rule.id}'s match() accepts`
+    );
+  }
+  return failures;
+}
+
 describe("packetRules evidence is real, not just non-empty", () => {
   for (const proj of AUDITED) {
     const [rel, leaf] = PROJECT_DIRS[proj];
@@ -96,23 +131,23 @@ describe("packetRules evidence is real, not just non-empty", () => {
       // test -- packetModel must have found a non-trivial field set.
       expect(rules.length).toBeGreaterThan(0);
 
-      const failures: string[] = [];
-      for (const rule of rules) {
-        let hit = false;
-        const uncheckable: string[] = [];
-        for (const evidenceRef of rule.evidence) {
-          const clauses = clausesOf(evidenceRef);
-          if (clauses === undefined) { uncheckable.push(evidenceRef); continue; }
-          if (clauses.some((c) => rule.match(c))) { hit = true; break; }
-        }
-        if (hit) continue;
-        failures.push(
-          uncheckable.length === rule.evidence.length
-            ? `${rule.id}: every cited event is unresolvable -- [${rule.evidence.join(", ")}] does not name a real Project.eventLabel`
-            : `${rule.id}: none of its evidence [${rule.evidence.join(", ")}] contains a clause that ${rule.id}'s match() accepts`
-        );
-      }
+      const failures = unbacked(rules);
       expect(failures, `\n${failures.join("\n")}`).toEqual([]);
     });
   }
+
+  // ⚠ The audit above builds rules only from MintRoute's and RTMCS's packet
+  // models, so an entry for a field neither has -- `pktNextHop`, cited as
+  // `Bundle.<event>` -- was never checked at all. This audits exactly the rules
+  // that cite the bundle, built from the bundle's own packet model. Not every
+  // bundle rule: the lattice-specific ones fail for the reason AUDITED gives.
+  it("every rule that cites the tool's own bundle is backed by a genuine clause in it", () => {
+    const lattice = packetTypeLattice(BUNDLE_RAW.contexts)!;
+    const pm = packetModel(BUNDLE_RAW, MACHINES.Bundle, lattice);
+    const rules = packetRules(pm.fields).filter((r) => r.evidence.some((e) => e.startsWith("Bundle.")));
+    // pktNextHop's SET and DOM_NOT: two, or the filter found nothing to check.
+    expect(rules.map((r) => r.id).sort()).toEqual(["PKT-DOM-NOT-pktNextHop", "PKT-SET-pktNextHop"]);
+    const failures = unbacked(rules);
+    expect(failures, `\n${failures.join("\n")}`).toEqual([]);
+  });
 });

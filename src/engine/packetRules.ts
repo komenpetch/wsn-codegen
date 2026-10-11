@@ -229,6 +229,20 @@ const EVIDENCE: Record<string, Partial<Record<Kind, string[]>>> = {
     DOM_NOT: ["RTMCS.create_rrer"],
     MEM: ["RTMCS.invalidate_neighbour"],
   },
+  // ⚠ BUNDLE-ONLY: the packet next hop of structure 4 (design/NextHop_Extension_
+  // Draft.md, D4), declared in the tool's own shipped uM6. Neither case study
+  // has a field of this NAME (they call it pktDestAddr / netDestAddr), so its
+  // evidence is the bundle's own clauses -- admitted by decision O2 (user,
+  // 2026-10-09), and audited against the instantiated bundle in
+  // packetRulesEvidence.test.ts like every other entry. Without these two kinds
+  // the stamps and overrides fell to the generic function rules and wrote a
+  // MACHINE MAP, while the transmit reads the chunk: measured, `pktNextHop[pkt] =
+  // BROADCAST;` beside a `pktNextHop` field on PPkt. No GET: no uM6 guard reads
+  // the field (D6 puts "only the next hop takes it" in the channel).
+  pktNextHop: {
+    SET: ["Bundle.create_dataPkt", "Bundle.start_tx_dataPkt_bct", "Bundle.start_tx_dataPkt_fwd"],
+    DOM_NOT: ["Bundle.create_dataPkt"],
+  },
 };
 
 // Once ENC7 has put an attribute on the chunk, every operation on it changes:

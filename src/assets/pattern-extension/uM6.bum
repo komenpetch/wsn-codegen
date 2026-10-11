@@ -2,6 +2,41 @@
 <org.eventb.core.machineFile org.eventb.core.configuration="org.eventb.core.fwd" version="5">
    <org.eventb.core.seesContext name="sees1" org.eventb.core.target="C1"/>
    <org.eventb.core.refinesMachine name="ref1" org.eventb.core.target="pM5"/>
-   <org.eventb.core.event name="evt_init" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="INITIALISATION" org.eventb.core.comment="Structure 4, the next-hop design (design/NextHop_Extension_Draft.md). Every pM5 variable and every other pM5 event is carried down when the bundle is instantiated (carryDown in patternExtension.ts), so this file holds only what uM6 adds.">
+   <org.eventb.core.variable name="var61" org.eventb.core.identifier="pktNextHop"/>
+   <org.eventb.core.variable name="var62" org.eventb.core.identifier="routeTbl"/>
+   <org.eventb.core.variable name="var63" org.eventb.core.identifier="nextHop"/>
+   <org.eventb.core.invariant name="inv61" org.eventb.core.label="inv6_1" org.eventb.core.predicate="pktNextHop ∈ PKT ⇸ (ND ∪ {BROADCAST})" org.eventb.core.comment="The packet next hop (D4): MintRoute M5 pktDestAddr, RTMCS M5 netDestAddr, the same type. No wire copy: ENC7 puts the field on the PPkt chunk, and the chunk is what crosses the air." org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv62" org.eventb.core.label="inv6_2" org.eventb.core.predicate="routeTbl ∈ ND ↔ ND" org.eventb.core.comment="Route entries (D4): x |-&gt; d means node x has a route to d. RTMCS M5 fwdRouteTbl; MintRoute cRouteTree restricted to its one destination." org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv63" org.eventb.core.label="inv6_3" org.eventb.core.predicate="nextHop ∈ routeTbl → ND" org.eventb.core.comment="The next hop of each route entry. RTMCS M5 fwdNextND." org.eventb.core.theorem="false"/>
+   <org.eventb.core.invariant name="inv66" org.eventb.core.label="inv6_6" org.eventb.core.predicate="∀x,d·x ↦ d ∈ routeTbl ⇒ x ↦ nextHop(x ↦ d) ∈ neighbourTbl" org.eventb.core.comment="C7: a next hop is a node x has heard. addEntry&apos;s guard keeps it; neighbourTbl only grows in the bundle. A Specific class that removes a neighbour must first move the routes through it to another next hop with addEntry (D15: no entry is removed)." org.eventb.core.theorem="false"/>
+   <org.eventb.core.event name="evt_init" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="INITIALISATION" org.eventb.core.comment="Structure 4, the next-hop design (design/NextHop_Extension_Draft.md). Every pM5 variable and every other pM5 event is carried down when the bundle is instantiated (carryDown in patternExtension.ts), and the BROADCAST stamps on the creating events are derived there too, so this file holds only what uM6 adds.">
+      <org.eventb.core.action name="act61" org.eventb.core.label="act6_1" org.eventb.core.assignment="pktNextHop ≔ ∅"/>
+      <org.eventb.core.action name="act62" org.eventb.core.label="act6_2" org.eventb.core.assignment="routeTbl ≔ ∅"/>
+      <org.eventb.core.action name="act63" org.eventb.core.label="act6_3" org.eventb.core.assignment="nextHop ≔ ∅"/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_bct" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="start_tx_dataPkt_bct" org.eventb.core.comment="Draft 4.3: no route entry for the packet&apos;s final destination, so it goes out as BROADCAST. Exactly one of _bct/_fwd is enabled for a given x and pkt. MintRoute M5 and RTMCS M5 start_tx_dataPkt_bct.">
+      <org.eventb.core.refinesEvent name="refbct" org.eventb.core.target="start_tx_otherPkt"/>
+      <org.eventb.core.parameter name="prm61" org.eventb.core.identifier="d"/>
+      <org.eventb.core.guard name="grd61" org.eventb.core.label="nh_g1" org.eventb.core.predicate="d = finalDestAddr(pkt)" org.eventb.core.comment="The route key is the packet&apos;s own final destination, as INET&apos;s AODV routes a datagram." org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd62" org.eventb.core.label="nh_g2" org.eventb.core.predicate="x ↦ d ∉ routeTbl" org.eventb.core.comment="No route entry to d. There is no invalid entry (D15)." org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act61" org.eventb.core.label="nh_a1" org.eventb.core.assignment="pktNextHop ≔ pktNextHop  {pkt ↦ BROADCAST}" org.eventb.core.comment="D7: reset to BROADCAST, so a stale next hop from an earlier hop is never reused."/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_fwd" org.eventb.core.convergence="0" org.eventb.core.extended="true" org.eventb.core.label="start_tx_dataPkt_fwd" org.eventb.core.comment="Draft 4.3: a route entry exists, so the packet is stamped with that route&apos;s next hop. Only that node takes it: the channel delivers a unicast frame to its addressee (D6). MintRoute M5 and RTMCS M5 start_tx_dataPkt_fwd.">
+      <org.eventb.core.refinesEvent name="reffwd" org.eventb.core.target="start_tx_otherPkt"/>
+      <org.eventb.core.parameter name="prm61" org.eventb.core.identifier="d"/>
+      <org.eventb.core.parameter name="prm62" org.eventb.core.identifier="nh"/>
+      <org.eventb.core.guard name="grd61" org.eventb.core.label="nh_g1" org.eventb.core.predicate="d = finalDestAddr(pkt)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd62" org.eventb.core.label="nh_g2" org.eventb.core.predicate="x ↦ d ∈ routeTbl" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd63" org.eventb.core.label="nh_g3" org.eventb.core.predicate="nh = nextHop(x ↦ d)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act61" org.eventb.core.label="nh_a1" org.eventb.core.assignment="pktNextHop ≔ pktNextHop  {pkt ↦ nh}"/>
+   </org.eventb.core.event>
+   <org.eventb.core.event name="evt_add" org.eventb.core.convergence="0" org.eventb.core.extended="false" org.eventb.core.label="addEntry" org.eventb.core.comment="Route-table operation (D1, D15): creates a route entry or changes its next hop. Generated, never scheduled, called by a Specific class. It modifies only variables new in uM6, so it refines skip.">
+      <org.eventb.core.parameter name="prm61" org.eventb.core.identifier="x"/>
+      <org.eventb.core.parameter name="prm62" org.eventb.core.identifier="d"/>
+      <org.eventb.core.parameter name="prm63" org.eventb.core.identifier="nh"/>
+      <org.eventb.core.guard name="grd61" org.eventb.core.label="g1" org.eventb.core.predicate="x ∈ ND ∧ d ∈ ND ∧ nh ∈ ND" org.eventb.core.theorem="false"/>
+      <org.eventb.core.guard name="grd62" org.eventb.core.label="g2" org.eventb.core.predicate="x ↦ nh ∈ neighbourTbl" org.eventb.core.comment="C7: the next hop must be a node x has heard." org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="act61" org.eventb.core.label="a1" org.eventb.core.assignment="routeTbl ≔ routeTbl ∪ {x ↦ d}"/>
+      <org.eventb.core.action name="act62" org.eventb.core.label="a2" org.eventb.core.assignment="nextHop ≔ nextHop  {x ↦ d ↦ nh}" org.eventb.core.comment="Override (D15): a second call for the same x |-&gt; d changes its next hop, as AODV&apos;s updateRoutingTable does (Aodv.cc:709). No brackets: ↦ groups to the left, so this is (x ↦ d) ↦ nh, the spelling the bundle already uses for lastSeqno."/>
    </org.eventb.core.event>
 </org.eventb.core.machineFile>

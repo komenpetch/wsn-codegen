@@ -367,6 +367,81 @@ describe("structure 4's bundle", () => {
     expect(machineOf(v4, "uM6").variables).toContain("neighbourTbl");
   });
 
+  // ── Step 3b, with D15 (user, 2026-10-09) ────────────────────────────────
+  // One route-table operation, addEntry, that creates a route entry or changes
+  // its next hop. No invalidation, no removal, no validRoutes: neither baseline
+  // has a function for them (AODV invalidates inline and removes only on a
+  // lifetime; MintRoute has neither), and both change a next hop by updating.
+  const um6Of = (files: readonly EbFiles[number][]) =>
+    machineOf(patternExtensionFor([...files], "pM3", undefined, true).files, "uM6");
+  const texts = (xs: { text: string }[]) => xs.map((x) => x.text);
+
+  it.each(cases)("with %s, D15: uM6's one route-table operation is addEntry, which creates or updates", (_n, files) => {
+    const um6 = um6Of(files);
+    const own = um6.events.map((e) => e.label);
+    expect(own).toContain("addEntry");
+    expect(own).not.toContain("invalidateEntry");
+    expect(own).not.toContain("removeEntry");
+    expect(um6.variables).toEqual(expect.arrayContaining(["pktNextHop", "routeTbl", "nextHop"]));
+    expect(um6.variables).not.toContain("validRoutes");
+    const add = um6.events.find((e) => e.label === "addEntry")!;
+    // New in uM6 and touching only uM6's own state, so it refines skip.
+    expect(add.refines).toBeUndefined();
+    expect(add.extended).toBe(false);
+    // C7 stays; "not yet in the table" goes, so a second call is an update.
+    expect(texts(add.guards)).toContain("x ↦ nh ∈ neighbourTbl");
+    expect(texts(add.guards).filter((g) => g.includes("routeTbl"))).toEqual([]);
+    // ⚠ The next hop is an OVERRIDE, Rodin's U+E103 -- with `∪` a second call
+    // would add a second next hop for the same key, which `nextHop ∈ routeTbl → ND`
+    // forbids. (The generated rule PK-PUT accepts both glyphs, so only this
+    // assertion tells the two apart.)
+    expect(texts(add.actions)).toEqual([
+      "routeTbl ≔ routeTbl ∪ {x ↦ d}",
+      "nextHop ≔ nextHop  {x ↦ d ↦ nh}",
+    ]);
+  });
+
+  it.each(cases)("with %s, D15: the data transmit splits on routeTbl itself", (_n, files) => {
+    const um6 = um6Of(files);
+    const ev = (l: string) => um6.events.find((e) => e.label === l)!;
+    for (const l of ["start_tx_dataPkt_bct", "start_tx_dataPkt_fwd"])
+      expect(ev(l).refines).toBe("start_tx_otherPkt");
+    expect(texts(ev("start_tx_dataPkt_bct").guards)).toContain("x ↦ d ∉ routeTbl");
+    expect(texts(ev("start_tx_dataPkt_fwd").guards)).toContain("x ↦ d ∈ routeTbl");
+    expect(texts(ev("start_tx_dataPkt_fwd").guards)).toContain("nh = nextHop(x ↦ d)");
+  });
+
+  it.each(cases)("with %s, §4.1: every creating event stamps the packet next hop BROADCAST", (_n, files) => {
+    const creating = um6Of(files).events.filter((e) => /^create_\w+Pkt$/.test(e.label));
+    // The data one plus at least one control one, or this proves nothing.
+    expect(creating.map((e) => e.label)).toContain("create_dataPkt");
+    expect(creating.length).toBeGreaterThan(1);
+    for (const e of creating) {
+      expect(texts(e.guards)).toContain("pkt ∉ dom(pktNextHop)");
+      expect(texts(e.actions)).toContain("pktNextHop ≔ pktNextHop ∪ {pkt ↦ BROADCAST}");
+    }
+    // Named as MintRoute and RTMCS name it, so the carry keeps it and it
+    // supersedes the base model's own creatingDataPacket.
+    expect(creating.find((e) => e.label === "create_dataPkt")!.refines).toBe("creatingDataPacket");
+  });
+
+  // Order is behaviour: the flattener orders events by the leaf's own listing and
+  // the scheduler attempts them in that order. Each pM5 event is replaced in place
+  // by the uM6 events that list or refine it; uM6's genuinely new events come last.
+  it.each(cases)("with %s, uM6 lists its events in pM5's order, new ones last", (_n, files) => {
+    const v4 = patternExtensionFor([...files], "pM3", undefined, true).files;
+    const parent = labels(v4, "pM5");
+    const at = machineOf(v4, "uM6").events.map((e) => {
+      const i = parent.indexOf(e.label);
+      return i >= 0 ? i : parent.indexOf(e.refines ?? "");
+    });
+    const covering = at.filter((i) => i >= 0);
+    expect(covering).toEqual([...covering].sort((a, b) => a - b));
+    const firstNew = at.indexOf(-1);
+    expect(firstNew).toBeGreaterThan(0);             // addEntry is new: not vacuous
+    expect(at.slice(firstNew).every((i) => i === -1)).toBe(true);
+  });
+
   it("refuses a project whose types are not the control set and one data type", () => {
     const files = [withCtlSet("CONTROL"), C0_DESTS,
       ctx("C1", ["partition(TYPE, CONTROL, {DATA}, {OTHER})"], ["DATA", "OTHER", "CONTROL", "type"])];

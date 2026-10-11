@@ -25,10 +25,11 @@ decides which routes exist. It extends the generated classes and never replaces 
 _Avoid_: student code, protocol class
 
 **Route-table operation**:
-A generated operation of PRouteTable that adds, invalidates or removes a route
-entry. A Specific class changes route entries only through these.
-_Avoid_: route update; installRoute (that is RouteTableBase publishing an entry
-into INET's table, not a change to the entry)
+A generated operation of PRouteTable that creates a route entry or changes its
+next hop. A Specific class changes route entries only through it. There is one;
+route entries are never invalidated or removed.
+_Avoid_: installRoute (that is RouteTableBase publishing an entry into INET's
+table, not a change to the entry)
 
 ### Routes and addressing
 
@@ -37,8 +38,7 @@ The nodes this node has heard from, with the counters kept per link.
 _Avoid_: route table, routing table
 
 **Route entry**:
-A final destination this node knows how to reach, with the next hop to send through
-and whether the entry is still valid.
+A final destination this node knows how to reach, with the next hop to send through.
 _Avoid_: route (alone), parent
 
 **Next hop**:

@@ -538,25 +538,54 @@ function dataTypeOf(raw: RawModel, controlSet: string): string | null {
  * guard. Neither has the `updateNbrs` hook its control twin gets at M3, because
  * `update_nbr` counts control packets only, so pM5 adds nothing to them.
  */
-function deriveDataReceiveEvents(raw: RawModel): { uM4: string; labels: string[] } {
-  const set = controlSetOf(raw);
-  if (!set) return { uM4: "", labels: [] };
-  const data = dataTypeOf(raw, set);
-  if (!data)
-    throw new Error(`Structure 4 derives one data reception beside the control one, and this `
-      + `project's packet-type partition is not "${set} and one other type", so there is no single `
-      + `data type to receive. Use structure 3.`);
+function deriveDataReceiveEvents(data: string): string {
   const fresh = `receive_${lowerTag(data)}Pkt`, dup = `receive_dup_${lowerTag(data)}Pkt`;
-  return {
-    labels: [fresh, dup],
-    uM4: floodPairXml({
-      ids: ["evt_rcvd", "evt_rcvdupd"], fresh, dup, typeGuard: `type(pkt) = ${data}`,
-      typeLabel: "MFlood_data_g",
-      freshComment: "Tier A, DERIVED (D9). The control reception&apos;s guards and actions with the data type in place of the control set. MintRoute M3 receive_dataPkt.",
-      typeComment: "MintRoute M3 receive_dataPkt g9. No Tier B hook: update_nbr counts control packets only.",
-      dupComment: "Tier A, DERIVED (D9). MintRoute receive_dup_dataPkt: a repeat is consumed off ctlNeighbours and goes no further. A new event modifying the abstract ctlNeighbours: the same B7 trade as the control duplicate (settled 2026-09-20), with the thesis&apos;s precedent (App. A p. 314).",
-    }),
-  };
+  return floodPairXml({
+    ids: ["evt_rcvd", "evt_rcvdupd"], fresh, dup, typeGuard: `type(pkt) = ${data}`,
+    typeLabel: "MFlood_data_g",
+    freshComment: "Tier A, DERIVED (D9). The control reception&apos;s guards and actions with the data type in place of the control set. MintRoute M3 receive_dataPkt.",
+    typeComment: "MintRoute M3 receive_dataPkt g9. No Tier B hook: update_nbr counts control packets only.",
+    dupComment: "Tier A, DERIVED (D9). MintRoute receive_dup_dataPkt: a repeat is consumed off ctlNeighbours and goes no further. A new event modifying the abstract ctlNeighbours: the same B7 trade as the control duplicate (settled 2026-09-20), with the thesis&apos;s precedent (App. A p. 314).",
+  });
+}
+
+// The pattern's own name for the event that creates a data packet (uM2 splits
+// creatingPkt into it). The bundled machines already extend it by this name.
+const DATA_CREATING_EVENT = "creatingDataPacket";
+
+/**
+ * Draft §4.1: every creating event stamps the packet next hop `BROADCAST`, so a
+ * packet leaves as a broadcast unless a route says otherwise. One template for
+ * all of them, spliced into uM6.
+ *
+ * The control ones extend the derived `create_<leaf>Pkt` in place. ⚠ The data
+ * one does NOT extend `creatingDataPacket` under that name: the base model has
+ * an event called `creatingDataPacket`, and the carry keeps the base's version of
+ * any name it already has (packetOps.ts carryEvents), so the stamp would never
+ * reach the module. It is `create_<data>Pkt extends creatingDataPacket` instead,
+ * MintRoute's and RTMCS's own name for it, and supersession retires the base's
+ * `creatingDataPacket` exactly as `create_<leaf>Pkt` retires
+ * `creatingControlPacket` (user, 2026-10-09).
+ *
+ * Sources: MintRoute M5 create_dataPkt g17/a13, create_bconPkt g18/a11,
+ * create_routePkt g21/a11; RTMCS M5 create_dataPkt g23/a18, create_rreq g20/a14,
+ * create_rrep g21/a13, create_controlPkt g20/a14.
+ */
+function deriveCreatingStamps(raw: RawModel, data: string): string {
+  const stamp = (id: string, label: string, refines: string | null, comment: string) =>
+    `   <org.eventb.core.event name="${id}" org.eventb.core.convergence="0" org.eventb.core.extended="true" `
+    + `org.eventb.core.label="${label}" org.eventb.core.comment="${comment}">`
+    + (refines ? `\n      <org.eventb.core.refinesEvent name="refnh" org.eventb.core.target="${refines}"/>` : "")
+    + `
+      <org.eventb.core.guard name="grdnh" org.eventb.core.label="nh_g1" org.eventb.core.predicate="pkt ∉ dom(pktNextHop)" org.eventb.core.theorem="false"/>
+      <org.eventb.core.action name="actnh" org.eventb.core.label="nh_a1" org.eventb.core.assignment="pktNextHop ≔ pktNextHop ∪ {pkt ↦ BROADCAST}"/>
+   </org.eventb.core.event>`;
+  return [
+    ...creatingTargetsOf(raw).map(({ name }, i) => stamp(`nhc${i}`, `create_${lowerTag(name)}Pkt`, null,
+      "Draft 4.1: every creating event stamps the packet next hop BROADCAST.")),
+    stamp("nhd", `create_${lowerTag(data)}Pkt`, DATA_CREATING_EVENT,
+      "Draft 4.1: every creating event stamps the packet next hop BROADCAST. Named as MintRoute and RTMCS name it, so it is carried and supersedes the base model&apos;s creatingDataPacket."),
+  ].join("\n");
 }
 
 // Remove one static extended stub from a bundled machine (D9: the generic event
@@ -582,35 +611,71 @@ function dropStub(xml: string, label: string, file: string): string {
  * blind spot the 2026-10-06 audit found for variables. This reads both lists off
  * the parent machine itself, so whatever the parent gains, the child carries.
  *
- * An event is covered when the child lists it by label or refines it (a split);
- * every other parent event gets an empty extended stub. Stubs go before the end,
- * after the child's own events, in the parent's order; carried variables go
- * before the child's first invariant or event.
+ * An event is covered when the child lists it by label or refines it (a split).
+ *
+ * ⚠ THE CHILD'S EVENTS COME OUT IN THE PARENT'S ORDER, because order is
+ * behaviour here: the flattener orders events by the leaf machine's own listing
+ * (flattener.ts), and the scheduler attempts them in that order. Each parent
+ * event is replaced IN PLACE by the child events that list or refine it, or by an
+ * empty extended stub; the child's genuinely new events (those covering nothing
+ * in the parent) follow at the end, in their own order. Appending the stubs
+ * instead would put every refinement ahead of everything it did not touch.
+ * Carried variables go before the child's first invariant or event.
  */
 function carryDown(child: string, parent: string, file: string): string {
   const [c] = parseModel([{ name: file, xml: child }]).machines;
   const [p] = parseModel([{ name: `parent-of-${file}`, xml: parent }]).machines;
-  const declared = new Set(c.variables);
-  const covered = new Set(c.events.flatMap((e) => (e.refines ? [e.label, e.refines] : [e.label])));
   for (const id of ["cdv", "cde"])
     if (child.includes(`name="${id}`))
       throw new Error(`patternExtension: ${file} already uses the element names carryDown gives `
         + `the parts it adds (${id}…).`);
+  const { head, events, tail } = eventBlocks(child, file);
+  const declared = new Set(c.variables);
   const vars = p.variables.filter((v) => !declared.has(v)).map((v, i) =>
-    `   <org.eventb.core.variable name="cdv${i}" org.eventb.core.identifier="${v}"/>`).join("\n");
-  const events = p.events.filter((e) => !covered.has(e.label)).map((e, i) =>
-    `   <org.eventb.core.event name="cde${i}" org.eventb.core.convergence="0" `
-    + `org.eventb.core.extended="true" org.eventb.core.label="${e.label}">\n   </org.eventb.core.event>`)
-    .join("\n");
-  let xml = child;
-  if (vars) {
-    const at = /^ {3}<org\.eventb\.core\.(invariant|event) /m.exec(xml);
-    if (!at)
-      throw new Error(`patternExtension: ${file} has no invariant or event to put the carried `
-        + "variables in front of.");
-    xml = `${xml.slice(0, at.index)}${vars}\n${xml.slice(at.index)}`;
+    `   <org.eventb.core.variable name="cdv${i}" org.eventb.core.identifier="${v}"/>\n`).join("");
+  const at = /^ {3}<org\.eventb\.core\.(invariant|event) /m.exec(head);
+  const top = !vars ? head : at ? `${head.slice(0, at.index)}${vars}${head.slice(at.index)}` : `${head}${vars}`;
+
+  const placed = new Set<number>();
+  const body: string[] = [];
+  let stubs = 0;
+  for (const pe of p.events) {
+    const mine = events.flatMap((e, k) =>
+      !placed.has(k) && (e.label === pe.label || e.refines === pe.label) ? [k] : []);
+    if (mine.length === 0)
+      body.push(`   <org.eventb.core.event name="cde${stubs++}" org.eventb.core.convergence="0" `
+        + `org.eventb.core.extended="true" org.eventb.core.label="${pe.label}">\n   </org.eventb.core.event>\n`);
+    for (const k of mine) { body.push(events[k].text); placed.add(k); }
   }
-  return events ? spliceBeforeEnd(xml, events, file) : xml;
+  events.forEach((e, k) => { if (!placed.has(k)) body.push(e.text); });
+  return `${top}${body.join("")}${tail}`;
+}
+
+// A bundled machine split into what precedes its events, the events (one text
+// block each, with its label and the event it refines), and what follows.
+// ⚠ The events must be one contiguous run, or reordering them would also move
+// whatever sat between them; anything else means the file changed shape.
+const EVENT_BLOCK =
+  /^ {3}<org\.eventb\.core\.event\b[^>]*?(?:\/>|>[\s\S]*?\n {3}<\/org\.eventb\.core\.event>)\r?\n/gm;
+function eventBlocks(xml: string, file: string): {
+  head: string; tail: string; events: { text: string; label: string; refines?: string }[];
+} {
+  const found = [...xml.matchAll(EVENT_BLOCK)];
+  if (found.length === 0) throw new Error(`patternExtension: ${file} has no events.`);
+  const start = found[0].index!;
+  const end = found[found.length - 1].index! + found[found.length - 1][0].length;
+  if (found.map((m) => m[0]).join("") !== xml.slice(start, end))
+    throw new Error(`patternExtension: ${file}'s events are not one contiguous run, so they cannot `
+      + "be put in their parent's order. The bundled machine changed shape.");
+  return {
+    head: xml.slice(0, start), tail: xml.slice(end),
+    events: found.map((m) => ({
+      text: m[0],
+      // The event's own label is on its first line; guards and actions have labels too.
+      label: /org\.eventb\.core\.label="([^"]+)"/.exec(m[0].split("\n")[0])![1],
+      refines: /<org\.eventb\.core\.refinesEvent [^>]*org\.eventb\.core\.target="([^"]+)"/.exec(m[0])?.[1],
+    })),
+  };
 }
 
 // Splice `add` in after `anchor`. A missing anchor is an error rather than a
@@ -792,26 +857,35 @@ export function patternExtensionFor(files: EbFiles, base: string,
 
   // ── Structure 4, built FROM structure 3's instantiated machines ──────────
   // D9 (draft §4.5): the generic start_tx and receive go where they are split,
-  // so uM4 and pM5 stop extending them, and uM4 gains the data receptions. Each
-  // generic event is dropped only when its split was actually derived; with no
-  // control set nothing splits it, and it stays. Then item 9: pM5 carries down
-  // whatever uM4 now has that it does not list, and uM6 carries down all of pM5.
+  // so uM4 and pM5 stop extending them, and uM4 gains the data receptions. Then
+  // item 9: pM5 carries down whatever uM4 now has that it does not list, and uM6,
+  // with its own state, events and the creating stamps, carries down all of pM5.
   const xmlOf = (name: string): string => {
     const f = bundle.find((b) => b.name === name);
     if (!f) throw new Error(`patternExtension: the instantiated bundle has no ${name}.`);
     return f.xml;
   };
-  const txSplit = deriveTransmitEvents(raw).labels.length > 0;
-  const rcvSplit = deriveFloodEvents(raw).uM4 !== "";
-  const d9 = (xml: string, file: string): string => {
-    const noTx = txSplit ? dropStub(xml, "start_tx", file) : xml;
-    return rcvSplit ? dropStub(noTx, "receive", file) : noTx;
-  };
-  const data = deriveDataReceiveEvents(raw).uM4;
-  const um4 = data ? spliceBeforeEnd(d9(xmlOf("uM4.bum"), "uM4.bum"), data, "uM4.bum")
-    : d9(xmlOf("uM4.bum"), "uM4.bum");
+  //
+  // ⚠ Both splits exist whenever the project has a control set, and structure 4
+  // needs them: `_bct`/`_fwd` refine `start_tx_otherPkt`, and the data receptions
+  // sit beside the control one. So a project without one is refused here, rather
+  // than given a uM6 that refines an event its pM5 does not have.
+  const ctl = controlSetOf(raw);
+  if (!ctl)
+    throw new Error("Structure 4 splits the data transmit that the pattern extension derives beside "
+      + "the control one, and this project declares no control set (no `type(pkt) ∈ <set>` guard), "
+      + "so there is nothing to split. Use structure 3.");
+  const data = dataTypeOf(raw, ctl);
+  if (!data)
+    throw new Error(`Structure 4 derives one data reception beside the control one, and this `
+      + `project's packet-type partition is not "${ctl} and one other type", so there is no single `
+      + `data type to receive. Use structure 3.`);
+  const d9 = (xml: string, file: string): string =>
+    dropStub(dropStub(xml, "start_tx", file), "receive", file);
+  const um4 = spliceBeforeEnd(d9(xmlOf("uM4.bum"), "uM4.bum"), deriveDataReceiveEvents(data), "uM4.bum");
   const pm5 = carryDown(d9(xmlOf("pM5.bum"), "pM5.bum"), um4, "pM5.bum");
-  const um6 = carryDown(seeSplit(uM6, "uM6.bum"), pm5, "uM6.bum");
+  const um6 = carryDown(
+    spliceBeforeEnd(seeSplit(uM6, "uM6.bum"), deriveCreatingStamps(raw, data), "uM6.bum"), pm5, "uM6.bum");
   return {
     files: [...withCtl, { name: "uM4.bum", xml: um4 }, { name: "pM5.bum", xml: pm5 },
       { name: "uM6.bum", xml: um6 }],

@@ -1,70 +1,170 @@
 import { describe, it, expect } from "vitest";
 import { loadProject } from "../scripts/projects";
 import { generateMerged } from "../src/engine/pipeline";
+import { parseModel } from "../src/engine/parser";
+import { flatten } from "../src/engine/flattener";
+import { resolveEncodings } from "../src/engine/encodingResolver";
+import { packetModelOf } from "../src/engine/packetModel";
+import { patternExtensionFor } from "../src/engine/patternExtension";
+import { networkRules, withRules } from "../src/engine/netPipeline";
+import { translateEvent } from "../src/engine/ruleEngine";
+import { carrierSetsOf } from "../src/engine/text";
 
 // Structure 4 = structure 3 plus the next-hop design (design/NextHop_Extension_Draft.md,
 // user 2026-10-09: "name it v4"). Structures 1-3 stay frozen; everything the
 // draft scoped to "structure 3 only" (O1) applies to structure 4 only.
 //
 // Each step of that design is pinned here as the EXACT difference it makes to
-// structure 3's module, so a step that moves anything else fails. The scaffold
-// started this file at "v4 == v3".
+// structure 3's module, method by method, so a step that moves anything else
+// fails.
 //
-// Step 3a (D9, §6 item 9): the bundle drops the generic start_tx/receive where
-// they are split, which the generated C++ never shows (supersession already
-// retired them), and derives the two data receptions. So the module gains
-// exactly receive_dataPkt and receive_dup_dataPkt: two declarations, two
-// methods, and two "not scheduled" lines, since nothing creates a DATA packet
-// until §6 items 5, 12 and 13 land.
+// Step 3a (D9): the two data receptions. Step 3b (with D15): the packet next hop
+// on the chunk, the route entries (`routeTbl`, `nextHop`), the data transmit split
+// into `_bct`/`_fwd`, and the BROADCAST stamp on every creating event. The one
+// route-table operation, `addEntry`, is NOT in the module: structure 4 carries
+// events by role (creating, transmit, receive, enabling, drain), and an operation
+// has none, so it enters with the table classes (§6 item 2).
 const files = () => loadProject("AppLayer");
 const byPath = (tree: { path: string; content: string }[]) =>
   Object.fromEntries(tree.map((f) => [f.path, f.content]));
 
-const DATA_RECEPTIONS = ["receive_dataPkt", "receive_dup_dataPkt"];
-
-// Structure 4's module with the data receptions taken back out: every line
-// naming one goes from the header, and each method body goes from the source.
-// A method ends at the first `}` in column 0, the emitter's own layout.
-const withoutDataReceptions = (v4: Record<string, string>) => {
-  let cc = v4["EbWsn.cc"];
-  for (const m of DATA_RECEPTIONS) {
-    const body = new RegExp(`bool EbWsn::${m}\\([^\\n]*\\) \\{\\n[^]*?\\n\\}\\n\\n`);
-    expect(cc).toMatch(body);           // each is there to take out
-    cc = cc.replace(body, "");
-  }
-  const h = v4["EbWsn.h"].split("\n")
-    .filter((l) => !DATA_RECEPTIONS.some((m) => new RegExp(`\\b${m}\\b`).test(l))).join("\n");
-  return { "EbWsn.cc": cc, "EbWsn.h": h, "EbWsn.ned": v4["EbWsn.ned"] };
+// Each EbWsn method's body, overloads joined, keyed by name. A method ends at
+// the first `}` in column 0, the emitter's own layout. ⚠ The destructor is left
+// out on purpose: it is one line (`EbWsn::~EbWsn() { … }`), so a body read to
+// the next column-0 `}` would swallow the method after it.
+const methods = (cc: string): Map<string, string> => {
+  const out = new Map<string, string>();
+  for (const m of cc.matchAll(/^(?:[^\s#/][^\n]*?\s)?EbWsn::(\w+)\([^\n]*\n([\s\S]*?\n)\}\n/gm))
+    out.set(m[1], [out.get(m[1]), m[2]].filter(Boolean).join("\n// overload\n"));
+  return out;
 };
+const lines = (s: string) => new Set(s.split("\n"));
+const added = (a: string, b: string) => [...lines(b)].filter((l) => !lines(a).has(l));
+const removed = (a: string, b: string) => added(b, a);
+
+const DATA_RECEPTIONS = ["receive_dataPkt", "receive_dup_dataPkt"];
+const STAMP = [
+  "    if (!(live_pktNextHop.count(pkt) == 0))",
+  "    ensurePkt(pkt)->setPktNextHop(BROADCAST); live_pktNextHop.insert(pkt);",
+];
 
 describe("structure 4", () => {
   for (const routing of [undefined, "aodv"] as const) {
     describe(`routing: ${routing ?? "default (flooding)"}`, () => {
       const v3 = byPath(generateMerged(files(), undefined, 3, undefined, true, routing));
       const v4 = byPath(generateMerged(files(), undefined, 4, undefined, true, routing));
+      const m3 = methods(v3["EbWsn.cc"]), m4 = methods(v4["EbWsn.cc"]);
+      // The control creating events, named by this routing's leaves.
+      const controlCreating = [...m4.keys()].filter((n) => /^create_\w+Pkt$/.test(n) && n !== "create_dataPkt");
 
       it("generates the same three files as structure 3", () => {
         expect(Object.keys(v4).sort()).toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
       });
 
-      it("is structure 3 plus the two data receptions, and nothing else", () => {
-        expect(withoutDataReceptions(v4)).toEqual(v3);
+      it("differs from structure 3 by exactly these methods", () => {
+        expect(controlCreating.length).toBeGreaterThan(0);
+        expect([...m3.keys()].filter((n) => !m4.has(n)).sort()).toEqual(
+          ["publishOneHopRoutes", "start_tx_otherPkt", "try_start_tx_otherPkt"]);
+        expect([...m4.keys()].filter((n) => !m3.has(n)).sort()).toEqual(
+          ["create_dataPkt", ...DATA_RECEPTIONS, "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
+            "try_start_tx_dataPkt_bct"].sort());
+        expect([...m4.keys()].filter((n) => m3.has(n) && m3.get(n) !== m4.get(n)).sort()).toEqual(
+          ["EbWsn", "handleLowerPacket", "initialize", "runDeliveryEvents", "runEnabledEvents",
+            ...controlCreating].sort());
       });
 
-      it("emits both receptions, reported as not scheduled until DATA exists", () => {
-        for (const m of DATA_RECEPTIONS) {
-          expect(v4["EbWsn.cc"]).toMatch(new RegExp(`bool EbWsn::${m}\\(`));
+      it("§4.1: each control creating event gains exactly the BROADCAST stamp", () => {
+        for (const n of controlCreating) {
+          expect(added(m3.get(n)!, m4.get(n)!)).toEqual(STAMP);
+          expect(removed(m3.get(n)!, m4.get(n)!)).toEqual([]);
+        }
+      });
+
+      it("D15: the route entries are a set of node pairs with a next hop per entry, cleared at construction", () => {
+        expect(v4["EbWsn.h"]).toContain("    std::set<std::pair<Node, Node>> routeTbl;");
+        expect(v4["EbWsn.h"]).toMatch(/^ {4}std::map<std::pair<Node, Node>, Node> nextHop;/m);
+        expect(added(m3.get("EbWsn")!, m4.get("EbWsn")!)).toEqual(
+          ["    routeTbl.clear();", "    nextHop.clear();"]);
+        expect(v4["EbWsn.h"]).not.toContain("validRoutes");
+      });
+
+      it("D15: the data transmit splits on routeTbl, and _fwd waits for a route", () => {
+        const bct = m4.get("start_tx_dataPkt_bct")!, fwd = m4.get("start_tx_dataPkt_fwd")!;
+        expect(bct).toContain("if (!(routeTbl.count({x, d}) == 0))");
+        expect(bct).toContain("ensurePkt(pkt)->setPktNextHop(BROADCAST); live_pktNextHop.insert(pkt);");
+        expect(fwd).toContain("if (!(routeTbl.count({x, d}) > 0))");
+        expect(fwd).toContain("(nextHop.count({x, d}) > 0 && nh == nextHop.at({x, d}))");
+        expect(fwd).toContain("ensurePkt(pkt)->setPktNextHop(nh); live_pktNextHop.insert(pkt);");
+        // Nothing adds a route until a Specific class calls addEntry.
+        expect(v4["EbWsn.h"]).toContain(
+          "// not scheduled: start_tx_dataPkt_fwd -- nothing that runs ever fills `routeTbl`");
+        expect(v4["EbWsn.h"]).not.toMatch(/try_start_tx_dataPkt_fwd/);
+      });
+
+      it("D9: both data receptions are emitted and reported as not scheduled until DATA exists", () => {
+        for (const m of DATA_RECEPTIONS)
           expect(v4["EbWsn.h"]).toContain(
             `// not scheduled: ${m} -- nothing that runs ever creates a DATA packet`);
-          expect(v3["EbWsn.cc"]).not.toContain(`EbWsn::${m}(`);
-        }
-        // Both translate fully; structure 3's one untranslated clause is still the only one.
+      });
+
+      it("the arrival carries the packet next hop off the wire", () => {
+        const a = added(m3.get("handleLowerPacket")!, m4.get("handleLowerPacket")!);
+        expect(a).toContain("    _local->setPktNextHop(_wire->getPktNextHop());");
+        expect(a).toContain("    live_pktNextHop.insert(_pkt);");
+      });
+
+      // ⚠ PINNED AS A KNOWN GAP, NOT AS A DESIGN. routeTableOf publishes only when
+      // exactly ONE node relation has a pair-keyed function over it; structure 4
+      // has two (`neighbourTbl`, `routeTbl`), so it refuses, and structure 3's one-hop
+      // routes are not published. D5 (route entries over neighbour routes) is what
+      // fixes it, and it has to change this test.
+      it("does not yet publish routes into INET's table (two route tables; D5 not built)", () => {
+        expect(v3["EbWsn.h"]).toContain("inet::ModuleRefByPar<inet::IRoutingTable> routingTable;");
+        expect(v4["EbWsn.h"]).not.toContain("IRoutingTable");
+        expect(removed(m3.get("initialize")!, m4.get("initialize")!)).toEqual([
+          "        routingTable.reference(this, \"routingTableModule\", true);",
+          "        arp.reference(this, \"arpModule\", false);",
+        ]);
+        // And the .ned loses the table's wiring, and nothing else.
+        expect(added(v3["EbWsn.ned"], v4["EbWsn.ned"])).toEqual([]);
+        const gone = removed(v3["EbWsn.ned"], v4["EbWsn.ned"]);
+        expect(gone).toContain("import inet.networklayer.nexthop.NextHopRoutingTable;");
+        expect(gone).toContain("        string routingTableModule;");
+        expect(gone).toContain("        *.routingTableModule = default(absPath(\".routingTable\"));");
+        expect(gone).toContain("        routingTable: NextHopRoutingTable {");
+        expect(gone.filter((l) => !/routingTable|NextHopRoutingTable|^\s*\/\/|^\s*parameters:$|^\s*@display|^\s*\}$/.test(l)))
+          .toEqual([]);
+      });
+
+      it("adds no untranslated clause, and no route-table operation", () => {
         const untranslated = (t: Record<string, string>) =>
           (Object.values(t).join("\n").match(/UNTRANSLATED/g) ?? []).length;
         expect(untranslated(v4)).toBe(untranslated(v3));
+        for (const op of ["addEntry", "invalidateEntry", "removeEntry"])
+          expect(v4["EbWsn.cc"]).not.toContain(op);
       });
     });
   }
+
+  // addEntry is not in the module (see the top of this file), so its translation
+  // is checked directly: the bundled uM6 flattened, with the module's own rule list.
+  it("D15: addEntry translates fully, as create-or-update", () => {
+    const base = loadProject("AppLayer");
+    const ext = patternExtensionFor(base, "pM3", undefined, true);
+    const pRaw = parseModel(ext.files);
+    const model = resolveEncodings(flatten(pRaw, ext.machine));
+    const pm = packetModelOf(pRaw, ext.machine)!;
+    const rules = networkRules(model, pm, carrierSetsOf(parseModel(base), pRaw));
+    const add = model.events.find((e) => e.label === "addEntry")!;
+    const t = withRules(rules, () => translateEvent(add, model));
+    expect(t.parameters).toEqual(["x", "d", "nh"]);
+    expect(t.guards).toEqual(["neighbourTbl.count({x, nh}) > 0"]);
+    // One assignment on the pair key: a second call for the same x ↦ d changes
+    // the next hop rather than adding a second one.
+    expect(t.actions).toEqual(["routeTbl.insert({x, d});", "nextHop[{x, d}] = nh;"]);
+    expect(t.untranslatedGuards).toEqual([]);
+    expect(t.untranslatedActions).toEqual([]);
+  });
 
   it("still refuses a routing outside the structures that carry the pattern", () => {
     expect(() => generateMerged(files(), undefined, 2, undefined, true, "aodv"))

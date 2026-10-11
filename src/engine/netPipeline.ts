@@ -123,7 +123,9 @@ export interface NetworkLayerAttempt {
 // scripts/scan.ts's recount of what stayed untranslated. The recount kept its
 // own translation -- the base catalog alone -- and reported MISMATCH on every
 // network-layer machine for weeks, because nothing checked it (2026-09-27).
-function networkRules(model: EncodedMachine, pm: PacketModel, carriers: Set<string>): Rule[] {
+// Exported so a test can translate an event the module does not (yet) carry
+// with exactly these rules, rather than with a copy of the list.
+export function networkRules(model: EncodedMachine, pm: PacketModel, carriers: Set<string>): Rule[] {
   // ⚠ pairKeyedRules FIRST, and rule order here is BEHAVIOUR, not style. With
   // them last, SETEXPR-PAIR-MEM claims `y ↦ x ∈ dom(sentEst)` and emits "" --
   // the deliberate intercept-and-refuse technique -- so update_route stayed
