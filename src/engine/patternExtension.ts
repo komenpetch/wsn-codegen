@@ -11,6 +11,7 @@ import uM6 from "../assets/pattern-extension/uM6.bum?raw";
 import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
 import C2aodv from "../assets/pattern-extension/C2_aodv.buc?raw";
 import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
+import { lowerTag } from "./text";
 
 // The pattern extension — PPkt and PRouteTable — SHIPPED INSIDE THE TOOL.
 //
@@ -230,8 +231,7 @@ function controlLeavesOf(raw: RawModel): string[] {
 
 // An Event-B packet-type constant is SHOUTED (`BEACON`, `RREQ`); the event and
 // variable names derived from it are not (`create_beaconPkt`, `rreqSeqNo`).
-// Named for what it does: it was called `camel`, which it never was.
-const lowerTag = (s: string) => s.toLowerCase();
+// lowerTag (text.ts) is that lowering; it was called `camel`, which it never was.
 
 /**
  * What the per-control creating events are derived FOR: the leaves of the

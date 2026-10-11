@@ -9,6 +9,7 @@ import { patternExtensionFor } from "../src/engine/patternExtension";
 import { networkRules, withRules } from "../src/engine/netPipeline";
 import { translateEvent } from "../src/engine/ruleEngine";
 import { carrierSetsOf } from "../src/engine/text";
+import { MINTROUTE_LEAVES } from "../src/engine/baselineShell";
 
 // Structure 4 = structure 3 plus the next-hop design (design/NextHop_Extension_Draft.md,
 // user 2026-10-09: "name it v4"). Structures 1-3 stay frozen; everything the
@@ -56,6 +57,15 @@ describe("structure 4", () => {
       const m3 = methods(v3["EbWsn.cc"]), m4 = methods(v4["EbWsn.cc"]);
       // The control creating events, named by this routing's leaves.
       const controlCreating = [...m4.keys()].filter((n) => /^create_\w+Pkt$/.test(n) && n !== "create_dataPkt");
+      // This routing's control leaves (flooding: ROUTE, BEACON; AODV: RREQ, RREP,
+      // RRER), each with its send method.
+      const tags = controlCreating.map((n) => /^create_(\w+)Pkt$/.exec(n)![1].toUpperCase());
+      const sendOf = (tag: string) => `send${tag[0]}${tag.slice(1).toLowerCase()}Broadcast`;
+      // D16: the baseline's leaves this routing has (flooding: BEACON, ROUTE;
+      // AODV: none).
+      const baselineLeaves = Object.entries(MINTROUTE_LEAVES)
+        .filter(([tag]) => tags.includes(tag))
+        .map(([tag, b]) => ({ ...b, send: sendOf(tag) }));
 
       it("generates the same three files as structure 3", () => {
         expect(Object.keys(v4).sort()).toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
@@ -64,13 +74,88 @@ describe("structure 4", () => {
       it("differs from structure 3 by exactly these methods", () => {
         expect(controlCreating.length).toBeGreaterThan(0);
         expect([...m3.keys()].filter((n) => !m4.has(n)).sort()).toEqual(
-          ["publishOneHopRoutes", "start_tx_otherPkt", "try_start_tx_otherPkt"]);
+          ["publishOneHopRoutes", "runEnabledEvents", "start_tx_otherPkt", "try_start_tx_otherPkt"]);
         expect([...m4.keys()].filter((n) => !m3.has(n)).sort()).toEqual(
           ["create_dataPkt", ...DATA_RECEPTIONS, "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
             "try_start_tx_dataPkt_bct"].sort());
+        // Every control leaf's send gains a no-argument overload (D16 piece 2);
+        // finish changes only where the table has the routing's leaves (piece 1).
         expect([...m4.keys()].filter((n) => m3.has(n) && m3.get(n) !== m4.get(n)).sort()).toEqual(
-          ["EbWsn", "handleLowerPacket", "initialize", "runDeliveryEvents", "runEnabledEvents",
-            ...controlCreating].sort());
+          ["EbWsn", "handleLowerPacket", "handleSelfMessage", "initialize", "runDeliveryEvents",
+            ...controlCreating, ...tags.map(sendOf),
+            ...(baselineLeaves.length ? ["finish"] : [])].sort());
+      });
+
+      // D16 piece 2 (user, 2026-10-12, Q1 = a, Q2 = a): one timer per packet
+      // type, every node arming every one, handleSelfMessage in MintRoute's shape
+      // (MintRoute.cc:113-128), the hooks and the route first fire from the table.
+      it("D16: one timer per packet type, armed on every node, in the baseline's handleSelfMessage", () => {
+        const lt = (t: string) => t.toLowerCase();
+        const order = [...Object.keys(MINTROUTE_LEAVES).filter((t) => tags.includes(t)),
+          ...tags.filter((t) => !(t in MINTROUTE_LEAVES))];
+        expect(order.length).toBe(tags.length);
+        for (const t of order) {
+          expect(v4["EbWsn.h"]).toContain(`    double ${lt(t)}FloodsInterval = 0.0;`);
+          expect(v4["EbWsn.h"]).toContain(`    cMessage *${lt(t)}FloodTimer = nullptr;`);
+          expect(v4["EbWsn.ned"]).toContain(`        double ${lt(t)}FloodsInterval @unit(s) = default(5s);`);
+          // The timer's send: the model creates, the delivery events transmit.
+          expect(m4.get(sendOf(t))).toContain(`    try_create_${lt(t)}Pkt();\n    runDeliveryEvents();\n`);
+          expect(m4.get("initialize")).toContain(MINTROUTE_LEAVES[t]?.sinkFirst
+            ? "            simtime_t firstRoute = uniform(0.000003, 0.000009) + (myNetwAddr == sinkAddress ? 1.0 : 5.0);\n"
+              + `            scheduleAfter(firstRoute, ${lt(t)}FloodTimer);\n`
+            : `        if (${lt(t)}FloodsInterval > 0)\n`
+              + `            scheduleAfter(uniform(0.1, 0.9) + ${lt(t)}FloodsInterval, ${lt(t)}FloodTimer);\n`);
+        }
+        expect(m4.get("handleSelfMessage")).toBe(
+          order.map((t, i) => `    ${i ? "else if" : "if"} (msg->getKind() == SEND_${t}_FLOOD_TIMER) {\n`
+            + (MINTROUTE_LEAVES[t]?.hooks ? "        updateNeighborTable();\n        chooseParent();\n" : "")
+            + `        ${sendOf(t)}();\n        scheduleAfter(${lt(t)}FloodsInterval, ${lt(t)}FloodTimer);\n    }\n`)
+            .join("")
+          + "    else {\n        EV_WARN << \"EbWsn: unexpected self message kind \" << msg->getKind() << endl;\n"
+          + "        delete msg;\n    }\n");
+        // The hooks exist only where the table puts them (flooding's ROUTE).
+        const hooks = order.some((t) => MINTROUTE_LEAVES[t]?.hooks);
+        for (const decl of ["    virtual void updateNeighborTable() {}", "    virtual void chooseParent() {}"])
+          expect(v4["EbWsn.h"].includes(decl)).toBe(hooks);
+        // The single model timer is gone, and so is the scheduler only it called.
+        for (const f of Object.values(v4))
+          for (const gone of ["modelTimer", "tickInterval", "MODEL_TICK", "runEnabledEvents"])
+            expect(f).not.toContain(gone);
+        expect(removed(m3.get("initialize")!, m4.get("initialize")!)
+          .filter((l) => !/routingTable|arp\.reference/.test(l)).sort()).toEqual([
+          "        tickInterval = par(\"tickInterval\");",
+          "        modelTimer = new cMessage(\"eb-model-tick\", MODEL_TICK);",
+          "        // Spread the first tick so every node does not transmit at once,",
+          "        // exactly as MintRoute spreads its first beacon flood.",
+          "        scheduleAfter(uniform(0.1, 0.9) + tickInterval, modelTimer);",
+        ].sort());
+      });
+
+      // D16 piece 1 (user, 2026-10-12): the baseline's control counters, reset
+      // and recorded as MintRoute does (MintRoute.cc:48, 62-63, 150, 193, 614-619).
+      it("D16: the baseline's counters, incremented after each send and recorded under `stats`", () => {
+        if (baselineLeaves.length === 0) {
+          // No leaf of this routing is in the table: nothing is added at all.
+          for (const t of [v4["EbWsn.h"], v4["EbWsn.cc"], v4["EbWsn.ned"]]) expect(t).not.toMatch(/\bstats\b/);
+          expect(m4.get("finish")).toBe(m3.get("finish"));
+          return;
+        }
+        expect(baselineLeaves.map((b) => b.sent)).toEqual(["nbBeaconsSent", "nbRouteFloodsSent"]);
+        expect(added(v3["EbWsn.h"], v4["EbWsn.h"])).toEqual(expect.arrayContaining(
+          ["    bool stats = true;", ...baselineLeaves.map((b) => `    long ${b.sent} = 0;`)]));
+        expect(added(m3.get("initialize")!, m4.get("initialize")!)).toEqual(expect.arrayContaining(
+          ["        stats = par(\"stats\");", ...baselineLeaves.map((b) => `        ${b.sent} = 0;`)]));
+        for (const b of baselineLeaves) {
+          // Beside the no-argument overload (piece 2), the transmit gains only the count.
+          expect(added(m3.get(b.send)!, m4.get(b.send)!).filter((l) => !/try_create_|runDeliveryEvents|overload/.test(l)))
+            .toEqual([`    ${b.sent}++;`]);
+          expect(m4.get(b.send)).toContain(`    sendDown(packet);\n    ${b.sent}++;\n`);
+        }
+        expect(added(m3.get("finish")!, m4.get("finish")!)).toEqual([
+          "    if (stats) {",
+          ...baselineLeaves.map((b) => `        recordScalar("${b.sent}", ${b.sent});`),
+          "    }"]);
+        expect(added(v3["EbWsn.ned"], v4["EbWsn.ned"])).toContain("        bool stats = default(true);");
       });
 
       it("§4.1: each control creating event gains exactly the BROADCAST stamp", () => {
@@ -121,13 +206,15 @@ describe("structure 4", () => {
       it("does not yet publish routes into INET's table (two route tables; D5 not built)", () => {
         expect(v3["EbWsn.h"]).toContain("inet::ModuleRefByPar<inet::IRoutingTable> routingTable;");
         expect(v4["EbWsn.h"]).not.toContain("IRoutingTable");
-        expect(removed(m3.get("initialize")!, m4.get("initialize")!)).toEqual([
+        expect(removed(m3.get("initialize")!, m4.get("initialize")!)).toEqual(expect.arrayContaining([
           "        routingTable.reference(this, \"routingTableModule\", true);",
           "        arp.reference(this, \"arpModule\", false);",
-        ]);
-        // And the .ned loses the table's wiring, and nothing else.
-        expect(added(v3["EbWsn.ned"], v4["EbWsn.ned"])).toEqual([]);
-        const gone = removed(v3["EbWsn.ned"], v4["EbWsn.ned"]);
+        ]));
+        // And the .ned loses the table's wiring, and nothing else but D16's timer
+        // swap. (What it gains is D16's, pinned in the counters and timers tests.)
+        expect(added(v3["EbWsn.ned"], v4["EbWsn.ned"])
+          .filter((l) => !/\bstats\b|FloodsInterval|^\s*\/\//.test(l))).toEqual([]);
+        const gone = removed(v3["EbWsn.ned"], v4["EbWsn.ned"]).filter((l) => !/tickInterval/.test(l));
         expect(gone).toContain("import inet.networklayer.nexthop.NextHopRoutingTable;");
         expect(gone).toContain("        string routingTableModule;");
         expect(gone).toContain("        *.routingTableModule = default(absPath(\".routingTable\"));");

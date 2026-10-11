@@ -23,6 +23,10 @@ export const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 export const capTag = (s: string): string =>
   s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
+// The whole tag lowered: `BEACON` -> `beacon`, for names that start with it
+// (`create_beaconPkt`, `beaconFloodTimer`).
+export const lowerTag = (s: string): string => s.toLowerCase();
+
 // Rodin's spellings of "replace these entries of a function".
 //
 // U+E103 is the one that matters: Rodin stores relational override as a

@@ -47,6 +47,15 @@ Deliberately **not** kept:
   generation time. Regenerate it whenever a file is added, removed or renamed.
 - `out/`, `results*/` — build output and measurement data.
 
+## v4_mintroute — structure 4 against the MintRoute baseline (2026-10-12)
+
+Step 2 of D16: the generated structure 4 (`[Config V4]`) and INET's MintRoute
+port (`[Config Baseline]`, in libINET) on `v3_flood`'s field, radio and MAC, no
+apps on either. One executable runs both. `compare.mjs` prints the per-node
+control counters side by side and refuses a run whose config name or per-module
+sensitivity is not what it is read as. Measured results and the three
+differences (who beacons, how often, rebroadcast) are in its own `README.md`.
+
 ## v3_aodv and v3_flood — one folder per routing (2026-09-27)
 
 Both folders generate from **`Update_wsn/C0_project` as it is** — read in place,

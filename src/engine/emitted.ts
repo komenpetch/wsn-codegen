@@ -86,6 +86,7 @@ export function splitParams(params: string): { cppType: string; name: string }[]
 // degraded differently depending on which pass reached it first.
 export const headerOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWith(".h"));
 export const implOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWith(".cc"));
+export const nedOf = (tree: GeneratedTree) => tree.find((f) => f.path.endsWith(".ned"));
 export const implText = (tree: GeneratedTree): string => implOf(tree)?.content ?? "";
 
 // ── Writing INTO the emitted code, and failing loudly when the anchor is gone ──

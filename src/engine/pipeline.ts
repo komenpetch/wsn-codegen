@@ -19,6 +19,7 @@ import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
 import { carrierSetsOf } from "./text";
 import { wrapInNamespace } from "./moduleNamespace";
+import { installBaselineShell } from "./baselineShell";
 
 export type EbFiles = { name: string; xml: string }[];
 
@@ -513,7 +514,12 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // forward and backward routes) needs a modelling decision this pass must
     // not make for it.
     const table = routeTableOf(model, nodeSetsOf([...raw.contexts, ...pRaw.contexts]));
-    return table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
+    const published = table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
+    // Structure 4 matches its shell to the case study's baseline, the way
+    // structure 2's was matched to SensorApp (D16). Last, because it edits
+    // methods every pass above has already shaped. Structure 3 stays as it was
+    // measured.
+    return version === 4 ? installBaselineShell(published, outputName, pm) : published;
   }
   if (version === 2) {
     // One model, whichever way this goes: tryNetworkLayer hands back the one it
