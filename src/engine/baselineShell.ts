@@ -2,7 +2,7 @@ import type { GeneratedTree } from "./types";
 import type { PacketModel } from "./packetModel";
 import { broadcastMethodOf } from "./packetModel";
 import { headerOf, implOf, nedOf, mustFind, mustReplace } from "./emitted";
-import { lowerTag } from "./text";
+import { capTag, lowerTag } from "./text";
 
 // Structure 4's shell, matched to the case study's baseline the way structure 2's
 // was matched to SensorApp (design/NextHop_Extension_Draft.md D16): the baseline's
@@ -25,6 +25,11 @@ export interface LeafBaseline {
    */
   sent: string;
   /**
+   * The counter of this leaf's arrivals, incremented in `onReceive<Leaf>Pkt` and
+   * recorded after `sent`. Only ROUTE has one in the baseline.
+   */
+  received?: string;
+  /**
    * This leaf's timer calls the Specific class's hooks, `updateNeighborTable()`
    * then `chooseParent()`, before it creates (D12).
    */
@@ -41,8 +46,22 @@ export interface LeafBaseline {
 export const MINTROUTE_LEAVES: Readonly<Record<string, LeafBaseline>> = {
   // ++ :150, = 0 :62, declared .h:139
   BEACON: { sent: "nbBeaconsSent" },
-  // ++ :193, = 0 :63, declared .h:140; hooks :120-121; first fire :88-91
-  ROUTE: { sent: "nbRouteFloodsSent", hooks: true, sinkFirst: true },
+  // ++ :193, = 0 :63, declared .h:140; received ++ :245, = 0 :64, .h:141;
+  // hooks :120-121; first fire :88-91
+  ROUTE: { sent: "nbRouteFloodsSent", received: "nbRouteFloodsReceived", hooks: true, sinkFirst: true },
+};
+
+// The bundle's own events (pM5's Tier B, the same in every routing) that do a
+// baseline function's job, emitted under the baseline's name (D16, user
+// 2026-10-12, Q1 = a, Q2 = a), as send_down became sendSensorPacket for SensorApp.
+// add_newEntry creates a neighbour's entry and zeroes its counters -- MintRoute's
+// newEntry (:568) -- and the loop that finds a pending neighbour and runs it is
+// MintRoute's findOrCreateEntry (:552). update_nbr is updateNbrCounters (:373).
+// All three stay inside the delivery fixpoint: run once instead, they are the
+// 2026-09-27 leak (247 of 1571 decoded frames lost).
+export const MINTROUTE_EVENTS: Readonly<Record<string, { name: string; line: number; binder?: string }>> = {
+  add_newEntry: { name: "newEntry", line: 568, binder: "findOrCreateEntry" },
+  update_nbr: { name: "updateNbrCounters", line: 373 },
 };
 
 const PASS = "installBaselineShell";
@@ -189,6 +208,88 @@ function installTimers(t: Texts, cls: string, tags: string[]): Texts {
   return { h, cc, ned };
 }
 
+const onReceiveOf = (tag: string) => `onReceive${capTag(tag)}Pkt`;
+
+/**
+ * D16 piece 3: the receive side (user, 2026-10-12, Q1 = a, Q2 = a).
+ *
+ * 1. The bundle's events in MINTROUTE_EVENTS take the baseline's names, with an
+ *    `// Event-B: <label>` provenance line; the scheduler's `fired:<label>`
+ *    counts keep the Event-B label. add_newEntry's binding loop, inline in
+ *    runDeliveryEvents(), becomes the method `findOrCreateEntry()`.
+ * 2. The arrival's last step -- run the delivery events, delete the packet --
+ *    becomes MintRoute's dispatch on the packet type (MintRoute.cc:196-213): each
+ *    timed leaf to `onReceive<Leaf>Pkt(packet, header)`, which runs the delivery
+ *    events (where the model counts and floods it) and deletes the packet, and
+ *    anything else as before. The table's `received` counter is incremented there.
+ */
+function installReceive(t: Texts, cls: string, tags: string[]): Texts {
+  let { h, cc } = t;
+
+  // ── 1. the events' baseline names ──
+  for (const [label, ev] of Object.entries(MINTROUTE_EVENTS)) {
+    if (!cc.includes(`bool ${cls}::${label}(`)) continue;
+    cc = cc.replace(`bool ${cls}::${label}(`,
+      `// Event-B: ${label} — emitted under MintRoute's name for it (MintRoute.cc:${ev.line}).\n`
+      + `bool ${cls}::${ev.name}(`);
+    h = mustReplace(h, new RegExp(`^( *)bool ${label}\\(([^)]*)\\);$`, "m"),
+      `$1bool ${ev.name}($2);   // Event-B: ${label}`, `${PASS} (.h ${label})`);
+    // Calls only: not `::label(` (done above), not `"label"` (the fired count).
+    cc = cc.replace(new RegExp(`(?<![\\w:"])${label}\\(`, "g"), `${ev.name}(`);
+    h = h.replace(`// not scheduled: ${label} -- the reception runs it, inline in runDeliveryEvents()`,
+      `// not scheduled: ${label} -- the reception runs it, as ${ev.name}`
+      + (ev.binder ? `, through ${ev.binder}()` : "") + ", in runDeliveryEvents()");
+    if (!ev.binder) continue;
+    // The binding loop the scheduler emitted inline, lifted into its own method.
+    const open = `        // ${label} -- run by the reception, not by the timer.\n        if ([&]() -> bool {\n`;
+    const close = "        }()) _any = true;\n";
+    const at = mustFind(cc, open, `${PASS} (${label} binding)`);
+    const end = cc.indexOf(close, at);
+    if (end < 0) throw new Error(`${PASS}: ${label}'s binding loop has no end.`);
+    const inner = cc.slice(at + open.length, end).split("\n").filter((l) => l !== "")
+      .map((l) => l.replace(/^ {8}/, "")).join("\n");
+    cc = cc.slice(0, at) + `        // ${label} -- run by the reception, not by the timer.\n`
+      + `        if (${ev.binder}()) _any = true;\n` + cc.slice(end + close.length);
+    const def = `// Event-B: ${label} — emitted under MintRoute's name for it`;
+    cc = cc.replace(def,
+      `// The binding of ${label}: each pending neighbour pair, and ${ev.name} for the one\n`
+      + `// not yet in the table. MintRoute's own ${ev.binder} finds an entry or creates it\n`
+      + `// (MintRoute.cc:552).\nbool ${cls}::${ev.binder}() {\n${inner}\n}\n\n${def}`);
+    h = mustReplace(h, new RegExp(`^( *)bool ${ev.name}\\(`, "m"),
+      `$1bool ${ev.binder}();\n$1bool ${ev.name}(`, `${PASS} (.h ${ev.binder})`);
+  }
+  for (const label of Object.keys(MINTROUTE_EVENTS))
+    if (new RegExp(`(?<!["\\w])${label}\\(`).test(cc))
+      throw new Error(`${PASS}: ${label} is still called under its Event-B name after the rename.`);
+
+  // ── 2. the dispatch ──
+  const tail = "    runDeliveryEvents();\n    delete packet;";
+  cc = inMethod(cc, `void ${cls}::handleLowerPacket(Packet *packet) {`, (body) => {
+    if (!body.endsWith(tail))
+      throw new Error(`${PASS}: the arrival no longer ends by running the delivery events.`);
+    return body.slice(0, -tail.length)
+      + "    switch (_wire->getType()) {\n"
+      + tags.map((tag) => `        case PktType::${tag}:\n            ${onReceiveOf(tag)}(packet, _wire);\n`
+        + "            break;\n").join("")
+      + "        default:\n            runDeliveryEvents();\n            delete packet;\n            break;\n    }";
+  });
+  const arrival = mustFind(cc, `void ${cls}::handleLowerPacket(Packet *packet) {`, `${PASS} (arrival)`);
+  const after = cc.indexOf("\n}\n", arrival) + 3;
+  cc = cc.slice(0, after) + tags.map((tag) => {
+    const received = MINTROUTE_LEAVES[tag]?.received;
+    return `\n// What an arrival of a ${tag} runs, as MintRoute.cc:216-247 do for theirs: the\n`
+      + "// delivery events, where the model counts the neighbour and floods the packet.\n"
+      + `void ${cls}::${onReceiveOf(tag)}(Packet *packet, const Ptr<const PPkt>& header) {\n`
+      + "    runDeliveryEvents();\n" + (received ? `    ${received}++;\n` : "")
+      + "    delete packet;\n}\n";
+  }).join("") + cc.slice(after);
+  h = mustReplace(h, "    void handleLowerPacket(Packet *packet) override;\n",
+    "    void handleLowerPacket(Packet *packet) override;\n"
+    + tags.map((tag) => `    virtual void ${onReceiveOf(tag)}(Packet *packet, const Ptr<const PPkt>& header);\n`)
+      .join(""), `${PASS} (.h onReceive)`);
+  return { ...t, h, cc };
+}
+
 /**
  * D16 piece 1: the baseline's control counters and `finish()`. Each leaf in the
  * table gets its counter, declared and reset as MintRoute does, incremented in
@@ -199,13 +300,15 @@ function installTimers(t: Texts, cls: string, tags: string[]): Texts {
  */
 function installCounters(t: Texts, cls: string, tags: string[]): Texts {
   const leaves = Object.entries(MINTROUTE_LEAVES).filter(([tag]) => tags.includes(tag));
+  // Every counter, in the order MintRoute's finish() records them (:618-620).
+  const counters = leaves.flatMap(([, b]) => (b.received ? [b.sent, b.received] : [b.sent]));
   if (leaves.length === 0) return t;
 
   // Anchored after the parameters, so the timers above can replace theirs.
   let h = mustReplace(t.h, "    L3Address myNetwAddr;\n",
     "    bool stats = true;\n    L3Address myNetwAddr;\n", `${PASS} (.h parameters)`);
   h = mustReplace(h, "    long receivedCount = 0;\n",
-    "    long receivedCount = 0;\n" + leaves.map(([, b]) => `    long ${b.sent} = 0;\n`).join(""),
+    "    long receivedCount = 0;\n" + counters.map((c) => `    long ${c} = 0;\n`).join(""),
     `${PASS} (.h state)`);
 
   let cc = inMethod(t.cc, `void ${cls}::initialize(int stage) {`, (body) => {
@@ -214,7 +317,7 @@ function installCounters(t: Texts, cls: string, tags: string[]): Texts {
       "        stats = par(\"stats\");\n        sentCount = 0;\n", `${PASS} (initialize, parameters)`);
     // Reset before the timers are made, as MintRoute.cc:62-63 do.
     b = mustReplace(b, "        WATCH(receivedCount);\n",
-      "        WATCH(receivedCount);\n" + leaves.map(([, x]) => `        ${x.sent} = 0;\n`).join(""),
+      "        WATCH(receivedCount);\n" + counters.map((c) => `        ${c} = 0;\n`).join(""),
       `${PASS} (initialize, counters)`);
     return b;
   });
@@ -224,7 +327,7 @@ function installCounters(t: Texts, cls: string, tags: string[]): Texts {
         `${PASS} (${broadcastMethodOf(tag)})`));
   cc = inMethod(cc, `void ${cls}::finish() {`, (body) =>
     body + "\n    if (stats) {\n"
-    + leaves.map(([, b]) => `        recordScalar("${b.sent}", ${b.sent});\n`).join("")
+    + counters.map((c) => `        recordScalar("${c}", ${c});\n`).join("")
     + "    }");
 
   // ⚠ Anchored on arpModule: the wrapper has an `@display("i=block/fork")` of
@@ -250,8 +353,10 @@ export function installBaselineShell(tree: GeneratedTree, cls: string, pm: Packe
   const inTable = Object.keys(MINTROUTE_LEAVES).filter((tag) => scheduled.includes(tag));
   const tags = [...inTable, ...scheduled.filter((tag) => !inTable.includes(tag))];
 
-  const out = installCounters(installTimers({ h: h.content, cc: cc.content, ned: ned.content }, cls, tags),
-    cls, tags);
+  // Timers, then the receive side, then the counters, which declare, reset and
+  // record what the two before them increment.
+  const timed = installTimers({ h: h.content, cc: cc.content, ned: ned.content }, cls, tags);
+  const out = installCounters(installReceive(timed, cls, tags), cls, tags);
   return tree.map((f) =>
     f === h ? { ...f, content: out.h } : f === cc ? { ...f, content: out.cc }
       : f === ned ? { ...f, content: out.ned } : f);

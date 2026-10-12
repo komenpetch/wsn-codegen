@@ -67,6 +67,15 @@ What still differs from the baseline: who originates (the sensors beacon, the
 sink originates nothing) and the flood itself — differences 1 and 3 below,
 both the model's by decision.
 
+## After D16 piece 3 — the receive side (2026-10-12)
+
+Renames and a dispatch to the same delivery loop: every `fired:`, MAC and queue
+scalar identical to the piece-2 run (event #38285 both times), as predicted. The
+baseline's third counter now exists in v4 too: `nbRouteFloodsReceived` sink 16,
+sensors 26 / 64 / 41 / 54 / 84 / 40 / 54 / 40 (sensor1–8), against the baseline's
+3 / 6 / 15 / 9 / 12 / 18 / 12 / 12 / 9 — v4 floods, so each node hears every
+route flood from each neighbour that forwards it.
+
 **Where they differ, and why (the first run, before piece 2):**
 1. **Who sends beacons.** The baseline arms its beacon timer on the sink only. In
    v4 the pattern's creating event guards `x ∈ ND ∖ Dests`, the sink is in

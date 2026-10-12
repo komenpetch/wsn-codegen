@@ -61,11 +61,16 @@ describe("structure 4", () => {
       // RRER), each with its send method.
       const tags = controlCreating.map((n) => /^create_(\w+)Pkt$/.exec(n)![1].toUpperCase());
       const sendOf = (tag: string) => `send${tag[0]}${tag.slice(1).toLowerCase()}Broadcast`;
+      const onReceiveOf = (tag: string) => `onReceive${tag[0]}${tag.slice(1).toLowerCase()}Pkt`;
       // D16: the baseline's leaves this routing has (flooding: BEACON, ROUTE;
       // AODV: none).
       const baselineLeaves = Object.entries(MINTROUTE_LEAVES)
         .filter(([tag]) => tags.includes(tag))
         .map(([tag, b]) => ({ ...b, send: sendOf(tag) }));
+      // The order the shell lists the timed types in (timers, dispatch): the
+      // table's first, in MintRoute's order, then the rest as the model has them.
+      const order = [...Object.keys(MINTROUTE_LEAVES).filter((t) => tags.includes(t)),
+        ...tags.filter((t) => !(t in MINTROUTE_LEAVES))];
 
       it("generates the same three files as structure 3", () => {
         expect(Object.keys(v4).sort()).toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
@@ -73,11 +78,15 @@ describe("structure 4", () => {
 
       it("differs from structure 3 by exactly these methods", () => {
         expect(controlCreating.length).toBeGreaterThan(0);
+        // add_newEntry and update_nbr leave under their Event-B names and come
+        // back under MintRoute's (D16 piece 3).
         expect([...m3.keys()].filter((n) => !m4.has(n)).sort()).toEqual(
-          ["publishOneHopRoutes", "runEnabledEvents", "start_tx_otherPkt", "try_start_tx_otherPkt"]);
+          ["add_newEntry", "publishOneHopRoutes", "runEnabledEvents", "start_tx_otherPkt",
+            "try_start_tx_otherPkt", "update_nbr"]);
         expect([...m4.keys()].filter((n) => !m3.has(n)).sort()).toEqual(
-          ["create_dataPkt", ...DATA_RECEPTIONS, "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
-            "try_start_tx_dataPkt_bct"].sort());
+          ["create_dataPkt", ...DATA_RECEPTIONS, "findOrCreateEntry", "newEntry",
+            ...tags.map(onReceiveOf), "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
+            "try_start_tx_dataPkt_bct", "updateNbrCounters"].sort());
         // Every control leaf's send gains a no-argument overload (D16 piece 2);
         // finish changes only where the table has the routing's leaves (piece 1).
         expect([...m4.keys()].filter((n) => m3.has(n) && m3.get(n) !== m4.get(n)).sort()).toEqual(
@@ -91,8 +100,6 @@ describe("structure 4", () => {
       // (MintRoute.cc:113-128), the hooks and the route first fire from the table.
       it("D16: one timer per packet type, armed on every node, in the baseline's handleSelfMessage", () => {
         const lt = (t: string) => t.toLowerCase();
-        const order = [...Object.keys(MINTROUTE_LEAVES).filter((t) => tags.includes(t)),
-          ...tags.filter((t) => !(t in MINTROUTE_LEAVES))];
         expect(order.length).toBe(tags.length);
         for (const t of order) {
           expect(v4["EbWsn.h"]).toContain(`    double ${lt(t)}FloodsInterval = 0.0;`);
@@ -141,10 +148,13 @@ describe("structure 4", () => {
           return;
         }
         expect(baselineLeaves.map((b) => b.sent)).toEqual(["nbBeaconsSent", "nbRouteFloodsSent"]);
+        // Every counter, in MintRoute's finish() order (:618-620).
+        const counters = baselineLeaves.flatMap((b) => (b.received ? [b.sent, b.received] : [b.sent]));
+        expect(counters).toEqual(["nbBeaconsSent", "nbRouteFloodsSent", "nbRouteFloodsReceived"]);
         expect(added(v3["EbWsn.h"], v4["EbWsn.h"])).toEqual(expect.arrayContaining(
-          ["    bool stats = true;", ...baselineLeaves.map((b) => `    long ${b.sent} = 0;`)]));
+          ["    bool stats = true;", ...counters.map((c) => `    long ${c} = 0;`)]));
         expect(added(m3.get("initialize")!, m4.get("initialize")!)).toEqual(expect.arrayContaining(
-          ["        stats = par(\"stats\");", ...baselineLeaves.map((b) => `        ${b.sent} = 0;`)]));
+          ["        stats = par(\"stats\");", ...counters.map((c) => `        ${c} = 0;`)]));
         for (const b of baselineLeaves) {
           // Beside the no-argument overload (piece 2), the transmit gains only the count.
           expect(added(m3.get(b.send)!, m4.get(b.send)!).filter((l) => !/try_create_|runDeliveryEvents|overload/.test(l)))
@@ -153,9 +163,42 @@ describe("structure 4", () => {
         }
         expect(added(m3.get("finish")!, m4.get("finish")!)).toEqual([
           "    if (stats) {",
-          ...baselineLeaves.map((b) => `        recordScalar("${b.sent}", ${b.sent});`),
+          ...counters.map((c) => `        recordScalar("${c}", ${c});`),
           "    }"]);
         expect(added(v3["EbWsn.ned"], v4["EbWsn.ned"])).toContain("        bool stats = default(true);");
+      });
+
+      // D16 piece 3 (user, 2026-10-12, Q1 = a, Q2 = a): the receive side under
+      // MintRoute's names (MintRoute.cc:196-247, 373, 552, 568), the drains still
+      // inside the delivery fixpoint (the 2026-09-27 leak fix).
+      it("D16: the receive side, dispatched by type, with the drains under MintRoute's names", () => {
+        // A rename and nothing else: each body is the Event-B event's, unchanged.
+        expect(m4.get("newEntry")).toBe(m3.get("add_newEntry"));
+        expect(m4.get("updateNbrCounters")).toBe(m3.get("update_nbr"));
+        expect(v4["EbWsn.cc"]).toContain(
+          "// Event-B: add_newEntry — emitted under MintRoute's name for it (MintRoute.cc:568).\n"
+          + "bool EbWsn::newEntry(Node x, Node y) {");
+        expect(v4["EbWsn.cc"]).toContain(
+          "// Event-B: update_nbr — emitted under MintRoute's name for it (MintRoute.cc:373).\n"
+          + "bool EbWsn::updateNbrCounters(");
+        // The binding loop, lifted out of the fixpoint and called from it.
+        expect(m4.get("findOrCreateEntry")).toContain(
+          "    if (newEntry(x, y)) { firedCount[\"add_newEntry\"]++; return true; }\n");
+        const drain = m4.get("runDeliveryEvents")!;
+        expect(drain).toContain("        if (findOrCreateEntry()) _any = true;\n");
+        expect(drain).toContain("if (updateNbrCounters(x, y, sNo, delta, pkt)) { firedCount[\"update_nbr\"]++;");
+        expect(drain).not.toMatch(/\b(add_newEntry|update_nbr)\(/);
+        // The arrival ends in MintRoute's dispatch: one case per timed type.
+        expect(m4.get("handleLowerPacket")).toContain(
+          "    switch (_wire->getType()) {\n"
+          + order.map((t) => `        case PktType::${t}:\n            ${onReceiveOf(t)}(packet, _wire);\n`
+            + "            break;\n").join("")
+          + "        default:\n            runDeliveryEvents();\n            delete packet;\n            break;\n    }\n");
+        for (const t of tags) {
+          const received = MINTROUTE_LEAVES[t]?.received;
+          expect(m4.get(onReceiveOf(t))).toBe(
+            "    runDeliveryEvents();\n" + (received ? `    ${received}++;\n` : "") + "    delete packet;\n");
+        }
       });
 
       it("§4.1: each control creating event gains exactly the BROADCAST stamp", () => {
