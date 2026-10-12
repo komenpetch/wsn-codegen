@@ -26,6 +26,7 @@ import type { EncodedMachine, GeneratedTree } from "./types";
 import { pairKeyedVars } from "./pairKeyed";
 import { headerOf, implOf, mustFind, mustReplace } from "./emitted";
 import { netLayerName } from "./netProtocolShell";
+import { broadcastMethodOf } from "./packetModel";
 
 /**
  * WHICH variable is the route table — read off the model, never named.
@@ -281,4 +282,191 @@ void ${cls}::publishOneHopRoutes() {
       `${PASS} (wrapper import)`);
     return { ...f, content: imported + withTable };
   });
+}
+
+// ── Structure 4: route entries as well as neighbours (step 3d) ────────────────
+
+export interface RouteTables {
+  /** The neighbour table: published as one-hop routes, as structure 3 does. */
+  neighbours: string;
+  /** The route entries, and the function giving each entry's next hop. */
+  routes: string;
+  nextHop: string;
+}
+
+/**
+ * Structure 4's two tables, read off the model as routeTableOf reads one: node
+ * relations with per-entry data. What tells them apart is the data. The route
+ * table is the one whose entries carry a NODE -- `nextHop ∈ routeTbl → ND`, the
+ * neighbour to send through -- and the neighbour table is the other, whose
+ * entries carry counters (`lastSeqno ∈ neighbourTbl → ℕ`).
+ *
+ * Exactly one of each, or null: RTMCS declares two route tables
+ * (`fwdRouteTbl`/`fwdNextND`, `bwdRouteTbl`/`bwdNextND`), and which one INET's
+ * table shows is the RTMCS round's question, not this pass's.
+ */
+export function routeTablesOf(model: EncodedMachine, nodeSets: ReadonlySet<string>): RouteTables | null {
+  const keyed = pairKeyedVars(model);
+  const isNodeRelation = (r: string): boolean => {
+    const m = new RegExp(`^\\s*${r}\\s*∈\\s*(\\w+)\\s*↔\\s*(\\w+)\\s*$`).exec(model.variableTypes.get(r) ?? "");
+    return m !== null && nodeSets.has(m[1]) && nodeSets.has(m[2]);
+  };
+  // ⚠ The value type off the invariant itself: PairKeyedVar.value is the C++
+  // alias, which maps every non-ND set to `int` and so cannot tell a node
+  // subset from a counter.
+  const valueSet = (v: string) => /(\S+)\s*$/.exec(model.variableTypes.get(v) ?? "")?.[1] ?? "";
+  const relations = [...new Set(keyed.map((v) => v.domain).filter(isNodeRelation))];
+  const routing = keyed.filter((v) => relations.includes(v.domain) && nodeSets.has(valueSet(v.name)));
+  const others = relations.filter((r) => !routing.some((v) => v.domain === r));
+  if (routing.length !== 1 || others.length !== 1) return null;
+  return { neighbours: others[0], routes: routing[0].domain, nextHop: routing[0].name };
+}
+
+/**
+ * D5 for structure 4, applied over what bindRoutingTable wired for the neighbour
+ * table (the table reference, the learnt addresses, the NED). Three changes:
+ *
+ * - the publisher becomes `publishRoutes()`: each route entry (me ↦ d) as "d via
+ *   nextHop(me ↦ d)", in place of a one-hop route to d where there is one, and
+ *   each other neighbour as a one-hop route. Reconciled on destination and next
+ *   hop: a published route whose next hop changed is updated in place, as INET's
+ *   AODV updates its own (`Aodv.cc:709`); nothing is withdrawn, since no entry is
+ *   ever removed (D15). Metric 1 for a one-hop route, which is exact, and 2 for a
+ *   route through another node, the fewest hops it can be (user, 2026-10-12, Q2 =
+ *   b): the model holds no hop count.
+ * - `addressOfNode(n)`: a destination this node has never heard is addressed
+ *   through its node module (a node id is its node module's id), the form
+ *   GlobalArp maps (D5). In a model with a Sink constant the sink's id is that
+ *   constant, so the sink is `sinkAddress`.
+ * - the reconcile runs once, at the end of `runDeliveryEvents()` (Q1 = a): after
+ *   every arrival, and on every timer after it creates -- on the route timer
+ *   that is after `chooseParent()`, so a next hop `addEntry` changes there is
+ *   published in the same event. And ARP becomes required, as in the baseline
+ *   (`MintRoute.cc:39`): the unicast branch needs it.
+ */
+export function bindRouteEntries(tree: GeneratedTree, cls: string, t: RouteTables,
+  sink: string | null): GeneratedTree {
+  const PASS = "bindRouteEntries";
+  const h = headerOf(tree), cc = implOf(tree);
+  if (!h || !cc) throw new Error(`${PASS}: the module is missing a .h or .cc.`);
+
+  let hText = mustReplace(h.content, "    // ── PRouteTable → INET (one-hop routes) ──\n",
+    "    // ── PRouteTable → INET (route entries, and one-hop routes to neighbours) ──\n",
+    `${PASS} (.h comment)`);
+  hText = mustReplace(hText, "    void publishOneHopRoutes();\n",
+    "    inet::L3Address addressOfNode(Node n);\n    void publishRoutes();\n", `${PASS} (.h publisher)`);
+
+  let ccText = mustReplace(cc.content, '        arp.reference(this, "arpModule", false);',
+    '        arp.reference(this, "arpModule", true);', `${PASS} (ARP required)`);
+  ccText = mustReplace(ccText, "    runDeliveryEvents();\n    publishOneHopRoutes();\n",
+    "    runDeliveryEvents();\n", `${PASS} (arrival call)`);
+  const drainAt = mustFind(ccText, `bool ${cls}::runDeliveryEvents()\n{`, `${PASS} (runDeliveryEvents)`);
+  const ret = ccText.indexOf("    return fired;\n}\n", drainAt);
+  if (ret < 0) throw new Error(`${PASS}: runDeliveryEvents() does not end in \`return fired;\`.`);
+  ccText = ccText.slice(0, ret)
+    + "    // INET's table follows the model's (D5): after every arrival, and after\n"
+    + "    // every timer's own events, the route timer's chooseParent() included.\n"
+    + "    publishRoutes();\n" + ccText.slice(ret);
+
+  const start = mustFind(ccText, `\nvoid ${cls}::publishOneHopRoutes() {`, `${PASS} (old publisher)`);
+  const end = ccText.indexOf("\n}\n", start + 1);
+  if (end < 0) throw new Error(`${PASS}: publishOneHopRoutes() has no end.`);
+  ccText = ccText.slice(0, start) + `
+// A node id as INET addresses it (D5). Learnt at an arrival when this node has
+// heard it; otherwise through its node module, since a node id is its node
+// module's id, as the module-path address GlobalArp maps -- so the two agree.
+inet::L3Address ${cls}::addressOfNode(Node n) {
+    auto known = nodeAddress.find(n);
+    if (known != nodeAddress.end()) return known->second;
+${sink ? `    if (n == ${sink}) return sinkAddress;   // the sink's id is the model's ${sink}\n` : ""}\
+    cModule *host = getSimulation()->getModule(n);
+    if (host == nullptr) return inet::L3Address();
+    return inet::L3AddressResolver().addressOf(host, inet::L3AddressResolver::ADDR_MODULEPATH);
+}
+
+// What INET's routing table shows (D5): every route entry of this node as
+// "d via ${t.nextHop}", in place of a one-hop route to d, and every other neighbour
+// as a one-hop route. Reconciled on destination and next hop.
+void ${cls}::publishRoutes() {
+    inet::NetworkInterface *out =
+        interfaceTable ? interfaceTable->findFirstNonLoopbackInterface() : nullptr;
+
+    std::map<Node, Node> via;   // destination -> next hop, route entries first
+    for (const auto& e : ${t.routes})
+        if (e.first == myNodeId && ${t.nextHop}.count(e) > 0) via[e.second] = ${t.nextHop}.at(e);
+    for (const auto& e : ${t.neighbours})
+        if (e.first == myNodeId && via.count(e.second) == 0) via[e.second] = e.second;
+
+    for (const auto& dv : via) {
+        inet::L3Address dest = addressOfNode(dv.first), gw = addressOfNode(dv.second);
+        if (dest.isUnspecified() || gw.isUnspecified()) continue;
+        // 1 for a neighbour, which is exact; 2 for a route through another node,
+        // the fewest hops it can be. The model holds no hop count.
+        int metric = dv.second == dv.first ? 1 : 2;
+
+        inet::IRoute *have = nullptr;
+        for (int i = 0; i < routingTable->getNumRoutes(); i++) {
+            inet::IRoute *r = routingTable->getRoute(i);
+            if (r->getSource() == this && r->getDestinationAsGeneric() == dest) { have = r; break; }
+        }
+        if (have != nullptr) {
+            // A changed next hop is updated in place, as Aodv.cc:709 does; no
+            // entry is ever removed (D15), so nothing is withdrawn.
+            if (have->getNextHopAsGeneric() != gw) {
+                have->setNextHop(gw);
+                have->setMetric(metric);
+                EV_INFO << "route to " << dest << " now via " << gw << endl;
+            }
+            continue;
+        }
+        inet::IRoute *route = routingTable->createRoute();
+        route->setDestination(dest);
+        route->setPrefixLength(dest.getAddressType()->getMaxPrefixLength());
+        route->setNextHop(gw);
+        route->setMetric(metric);
+        if (out != nullptr) route->setInterface(out);
+        route->setSourceType(inet::IRoute::MANET);
+        route->setSource(this);
+        routingTable->addRoute(route);
+        if (dv.second == dv.first)
+            EV_INFO << "one-hop route to " << dest << " via itself" << endl;
+        else
+            EV_INFO << "route to " << dest << " via " << gw << endl;
+    }` + ccText.slice(end);
+
+  if (/publishOneHopRoutes/.test(hText + ccText))
+    throw new Error(`${PASS}: something still names publishOneHopRoutes after it was replaced.`);
+  return tree.map((f) => (f === h ? { ...f, content: hText } : f === cc ? { ...f, content: ccText } : f));
+}
+
+/**
+ * §6 item 1 (user, 2026-10-12, Q3 = a): the data packet's send unicasts to its
+ * packet next hop, as MintRoute.cc:296-306 forwards a sensing packet -- the next
+ * hop's MAC through ARP, and a hop it cannot resolve throws. Only the data send:
+ * only the data transmit (`_fwd`) stamps a next hop, and control packets stay
+ * broadcast (D8). `pktNextHop` is partial, so a packet outside its domain has no
+ * next hop and goes out as a broadcast. Compiled and never run in v4: nothing
+ * creates a data packet (D10).
+ */
+export function installUnicast(tree: GeneratedTree, cls: string, dataType: string): GeneratedTree {
+  const PASS = "installUnicast";
+  const cc = implOf(tree);
+  if (!cc) throw new Error(`${PASS}: the module has no .cc.`);
+  const sig = `void ${cls}::${broadcastMethodOf(dataType)}(Node x, PktId pkt) {`;
+  const at = mustFind(cc.content, sig, `${PASS} (${broadcastMethodOf(dataType)})`);
+  const end = cc.content.indexOf("\n}\n", at);
+  const body = mustReplace(cc.content.slice(at, end),
+    "    setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);\n",
+    "    // The packet next hop (D6): BROADCAST, or the one neighbour a route chose,\n"
+    + "    // unicast to its MAC address as MintRoute.cc:296-306 forwards a packet.\n"
+    + "    MacAddress nextHopMac = MacAddress::BROADCAST_ADDRESS;\n"
+    + "    if (live_pktNextHop.count(pkt) > 0 && chunk->getPktNextHop() != BROADCAST) {\n"
+    + "        nextHopMac = arp->resolveL3Address(addressOfNode(chunk->getPktNextHop()), nullptr);\n"
+    + "        if (nextHopMac.isUnspecified())\n"
+    + `            throw cRuntimeError("${cls}: cannot resolve MAC for next hop %d -- configure GlobalArp", chunk->getPktNextHop());\n`
+    + "    }\n"
+    + "    setDownControlInfo(packet, nextHopMac);\n",
+    `${PASS} (MAC address)`);
+  const out = cc.content.slice(0, at) + body + cc.content.slice(end);
+  return tree.map((f) => (f === cc ? { ...f, content: out } : f));
 }

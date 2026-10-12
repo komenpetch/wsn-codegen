@@ -6,13 +6,13 @@ import { emit, carriesPattern, type EmitVersion } from "./codeEmitter";
 import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
 import { installNetProtocolShell, renameCommPatternPair } from "./netProtocolShell";
 import { installScheduler } from "./scheduler";
-import { bindNodeIdentity, nodeSetsOf } from "./nodeIdentity";
+import { bindNodeIdentity, nodeSetsOf, sinkConstantOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, hoistedReceiveEvents, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
-import { routeTableOf, bindRoutingTable } from "./routingTable";
-import { patternExtensionFor } from "./patternExtension";
+import { routeTableOf, bindRoutingTable, routeTablesOf, bindRouteEntries, installUnicast } from "./routingTable";
+import { patternExtensionFor, controlSetOf, dataTypeOf } from "./patternExtension";
 import type { RoutingStyle } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
 import { methodForLabel, implText, splitParams } from "./emitted";
@@ -513,8 +513,31 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // carrying per-entry data has no table, and one with TWO (RTMCS M5's
     // forward and backward routes) needs a modelling decision this pass must
     // not make for it.
-    const table = routeTableOf(model, nodeSetsOf([...raw.contexts, ...pRaw.contexts]));
-    const published = table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
+    const nodeSets = nodeSetsOf([...raw.contexts, ...pRaw.contexts]);
+    let published: GeneratedTree;
+    if (version === 4) {
+      // Structure 4 has two tables, the neighbours and the route entries, and
+      // publishes both (D5, step 3d). ⚠ Refused rather than skipped: with two
+      // candidates routeTableOf returns null, and structure 4 then published
+      // nothing at all without a word (found in step 3b).
+      const tables = routeTablesOf(model, nodeSets);
+      if (!tables)
+        throw new Error("Structure 4 publishes its route entries and its neighbour routes, and this "
+          + "model does not have exactly one of each: a node relation whose entries carry a next hop "
+          + "(the route table) and one whose entries carry counters (the neighbour table).");
+      const ctl = controlSetOf(raw);
+      const data = ctl ? dataTypeOf(raw, ctl) : null;
+      if (!data)
+        throw new Error("Structure 4's unicast branch is the data packet's send, and this model has "
+          + "no single data type beside its control set.");
+      const wired = bindRoutingTable(scheduled, outputName, tables.neighbours);
+      published = installUnicast(
+        bindRouteEntries(wired, outputName, tables, sinkConstantOf([...raw.contexts, ...pRaw.contexts])),
+        outputName, data);
+    } else {
+      const table = routeTableOf(model, nodeSets);
+      published = table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
+    }
     // Structure 4 matches its shell to the case study's baseline, the way
     // structure 2's was matched to SensorApp (D16). Last, because it edits
     // methods every pass above has already shaped. Structure 3 stays as it was

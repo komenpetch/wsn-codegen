@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { routeTableOf } from "../src/engine/routingTable";
+import { routeTableOf, routeTablesOf } from "../src/engine/routingTable";
 import type { EncodedMachine } from "../src/engine/types";
 
 // WHICH variable is the route table, read off the model rather than named.
@@ -81,5 +81,53 @@ describe("routeTableOf", () => {
       tbl: "tbl ∈ Destination ↔ ND",
       hop: "hop ∈ tbl → ℕ",
     }), new Set(["ND", "Destination"]))).toBe("tbl");
+  });
+});
+
+// Structure 4 (step 3d): two tables, told apart by what their entries carry. The
+// route table's entries carry a NODE (the next hop); the neighbour table's carry
+// counters. Exactly one of each, or a refusal.
+describe("routeTablesOf", () => {
+  const STRUCTURE_4 = {
+    updateNbrs: "updateNbrs ∈ ND ↔ ND",
+    neighbourTbl: "neighbourTbl ∈ ND ↔ ND",
+    lastSeqno: "lastSeqno ∈ neighbourTbl → ℕ",
+    missed: "missed ∈ neighbourTbl → ℕ",
+    received: "received ∈ neighbourTbl → ℕ",
+    routeTbl: "routeTbl ∈ ND ↔ ND",
+    nextHop: "nextHop ∈ routeTbl → ND",
+  };
+
+  it("finds structure 4's route table by its next hop, and the neighbour table beside it", () => {
+    expect(routeTablesOf(model(STRUCTURE_4), ND))
+      .toEqual({ neighbours: "neighbourTbl", routes: "routeTbl", nextHop: "nextHop" });
+    // routeTableOf, structure 3's, sees two candidates here and refuses: the
+    // reason structure 4 has its own.
+    expect(routeTableOf(model(STRUCTURE_4), ND)).toBeNull();
+  });
+
+  it("reads a next hop typed by a node SUBSET as a node", () => {
+    // PairKeyedVar.value is the C++ alias, `int` for every set but ND, so the
+    // value set has to come off the invariant itself.
+    expect(routeTablesOf(model({ ...STRUCTURE_4, nextHop: "nextHop ∈ routeTbl → Dests" }),
+      new Set(["ND", "Dests"]))?.routes).toBe("routeTbl");
+  });
+
+  it("refuses two route tables (RTMCS's forward and backward)", () => {
+    expect(routeTablesOf(model({
+      fwdRouteTbl: "fwdRouteTbl ∈ ND ↔ ND",
+      fwdNextND: "fwdNextND ∈ fwdRouteTbl → ND",
+      bwdRouteTbl: "bwdRouteTbl ∈ ND ↔ ND",
+      bwdNextND: "bwdNextND ∈ bwdRouteTbl → ND",
+    }), ND)).toBeNull();
+  });
+
+  it("refuses a model with no route table, or no neighbour table", () => {
+    const neighboursOnly = Object.fromEntries(
+      Object.entries(STRUCTURE_4).filter(([v]) => v !== "routeTbl" && v !== "nextHop"));
+    expect(routeTablesOf(model(neighboursOnly), ND)).toBeNull();
+    expect(routeTablesOf(model({
+      routeTbl: "routeTbl ∈ ND ↔ ND", nextHop: "nextHop ∈ routeTbl → ND",
+    }), ND)).toBeNull();
   });
 });

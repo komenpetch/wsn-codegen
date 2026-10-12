@@ -198,7 +198,7 @@ const BUNDLED = [
 // saying what a control packet is. MintRoute and the pattern call it CONTROL;
 // the advisor's flooding case study calls the same thing FLOOD. Reading the
 // guard works for both, and for a fourth name nobody has written yet.
-function controlSetOf(raw: RawModel): string | null {
+export function controlSetOf(raw: RawModel): string | null {
   for (const m of raw.machines)
     for (const e of m.events)
       for (const g of e.guards) {
@@ -521,7 +521,7 @@ function deriveFloodEvents(raw: RawModel): { uM4: string; pM5: string } {
 // pattern that is `partition(TYPE, CONTROL, {DATA})`, so it is DATA. Null when
 // the rest is not exactly one leaf, which the caller refuses: the data receptions
 // below would then not cover every non-control packet.
-function dataTypeOf(raw: RawModel, controlSet: string): string | null {
+export function dataTypeOf(raw: RawModel, controlSet: string): string | null {
   const lattice = packetTypeLattice(raw.contexts);
   const top = lattice?.children.get(lattice.root) ?? [];
   if (!top.includes(controlSet)) return null;

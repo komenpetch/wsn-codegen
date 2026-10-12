@@ -76,6 +76,16 @@ sensors 26 / 64 / 41 / 54 / 84 / 40 / 54 / 40 (sensor1–8), against the baselin
 3 / 6 / 15 / 9 / 12 / 18 / 12 / 12 / 9 — v4 floods, so each node hears every
 route flood from each neighbour that forwards it.
 
+## After step 3d — route publication and the unicast branch (2026-10-12)
+
+Run with `--cmdenv-express-mode=false --cmdenv-log-level=info` to see the routes.
+Every scalar identical to the piece-3 run (event #38285 both times), as predicted:
+publishing creates no simulation events and the unicast branch never runs (no
+DATA). The log shows **31 one-hop routes**, one per neighbour-table entry
+(`fired:add_newEntry` = 31), and no route through another node, since nothing calls
+`addEntry` until a Specific class does (3e, 3f). Structure 4 publishes the routes
+structure 3 does again, through the two-table publisher.
+
 **Where they differ, and why (the first run, before piece 2):**
 1. **Who sends beacons.** The baseline arms its beacon timer on the sink only. In
    v4 the pattern's creating event guards `x ∈ ND ∖ Dests`, the sink is in

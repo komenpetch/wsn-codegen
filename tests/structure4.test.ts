@@ -84,14 +84,14 @@ describe("structure 4", () => {
           ["add_newEntry", "publishOneHopRoutes", "runEnabledEvents", "start_tx_otherPkt",
             "try_start_tx_otherPkt", "update_nbr"]);
         expect([...m4.keys()].filter((n) => !m3.has(n)).sort()).toEqual(
-          ["create_dataPkt", ...DATA_RECEPTIONS, "findOrCreateEntry", "newEntry",
-            ...tags.map(onReceiveOf), "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
+          ["addressOfNode", "create_dataPkt", ...DATA_RECEPTIONS, "findOrCreateEntry", "newEntry",
+            ...tags.map(onReceiveOf), "publishRoutes", "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
             "try_start_tx_dataPkt_bct", "updateNbrCounters"].sort());
         // Every control leaf's send gains a no-argument overload (D16 piece 2);
         // finish changes only where the table has the routing's leaves (piece 1).
         expect([...m4.keys()].filter((n) => m3.has(n) && m3.get(n) !== m4.get(n)).sort()).toEqual(
           ["EbWsn", "handleLowerPacket", "handleSelfMessage", "initialize", "runDeliveryEvents",
-            ...controlCreating, ...tags.map(sendOf),
+            "sendDataBroadcast", ...controlCreating, ...tags.map(sendOf),
             ...(baselineLeaves.length ? ["finish"] : [])].sort());
       });
 
@@ -241,29 +241,54 @@ describe("structure 4", () => {
         expect(a).toContain("    live_pktNextHop.insert(_pkt);");
       });
 
-      // ⚠ PINNED AS A KNOWN GAP, NOT AS A DESIGN. routeTableOf publishes only when
-      // exactly ONE node relation has a pair-keyed function over it; structure 4
-      // has two (`neighbourTbl`, `routeTbl`), so it refuses, and structure 3's one-hop
-      // routes are not published. D5 (route entries over neighbour routes) is what
-      // fixes it, and it has to change this test.
-      it("does not yet publish routes into INET's table (two route tables; D5 not built)", () => {
-        expect(v3["EbWsn.h"]).toContain("inet::ModuleRefByPar<inet::IRoutingTable> routingTable;");
-        expect(v4["EbWsn.h"]).not.toContain("IRoutingTable");
-        expect(removed(m3.get("initialize")!, m4.get("initialize")!)).toEqual(expect.arrayContaining([
-          "        routingTable.reference(this, \"routingTableModule\", true);",
-          "        arp.reference(this, \"arpModule\", false);",
-        ]));
-        // And the .ned loses the table's wiring, and nothing else but D16's timer
-        // swap. (What it gains is D16's, pinned in the counters and timers tests.)
+      // D5 (step 3d, user 2026-10-12: Q1 = a, Q2 = b): structure 4 publishes its
+      // route entries and its neighbours. Until 3d routeTableOf saw two tables and
+      // refused, so structure 4 published nothing.
+      it("D5: publishes route entries over one-hop routes, reconciled at the end of the delivery events", () => {
+        // The table wiring is structure 3's, with ARP now required, as in the
+        // baseline (MintRoute.cc:39): the unicast branch needs it.
+        expect(v4["EbWsn.h"]).toContain("    inet::ModuleRefByPar<inet::IRoutingTable> routingTable;");
+        expect(m4.get("initialize")).toContain("        routingTable.reference(this, \"routingTableModule\", true);");
+        expect(m4.get("initialize")).toContain("        arp.reference(this, \"arpModule\", true);");
+        expect(m3.get("initialize")).toContain("        arp.reference(this, \"arpModule\", false);");
+        // The .ned is structure 3's, table included, plus D16's lines.
         expect(added(v3["EbWsn.ned"], v4["EbWsn.ned"])
           .filter((l) => !/\bstats\b|FloodsInterval|^\s*\/\//.test(l))).toEqual([]);
-        const gone = removed(v3["EbWsn.ned"], v4["EbWsn.ned"]).filter((l) => !/tickInterval/.test(l));
-        expect(gone).toContain("import inet.networklayer.nexthop.NextHopRoutingTable;");
-        expect(gone).toContain("        string routingTableModule;");
-        expect(gone).toContain("        *.routingTableModule = default(absPath(\".routingTable\"));");
-        expect(gone).toContain("        routingTable: NextHopRoutingTable {");
-        expect(gone.filter((l) => !/routingTable|NextHopRoutingTable|^\s*\/\/|^\s*parameters:$|^\s*@display|^\s*\}$/.test(l)))
-          .toEqual([]);
+        expect(removed(v3["EbWsn.ned"], v4["EbWsn.ned"])
+          .filter((l) => !/tickInterval|^\s*\/\//.test(l))).toEqual([]);
+        // One publisher for both tables, called once: at the end of the delivery
+        // events, which every arrival and every timer runs (Q1 = a).
+        expect(v4["EbWsn.cc"]).not.toContain("publishOneHopRoutes");
+        expect(m4.get("runDeliveryEvents")).toMatch(/ {4}publishRoutes\(\);\n {4}return fired;\n$/);
+        expect(v4["EbWsn.cc"].match(/publishRoutes\(\);/g)).toHaveLength(1);
+        const pub = m4.get("publishRoutes")!;
+        // Route entries first, so an entry takes the place of a one-hop route to
+        // the same destination.
+        expect(pub.indexOf("for (const auto& e : routeTbl)"))
+          .toBeLessThan(pub.indexOf("for (const auto& e : neighbourTbl)"));
+        expect(pub).toContain("if (e.first == myNodeId && nextHop.count(e) > 0) via[e.second] = nextHop.at(e);");
+        expect(pub).toContain("if (e.first == myNodeId && via.count(e.second) == 0) via[e.second] = e.second;");
+        expect(pub).toContain("int metric = dv.second == dv.first ? 1 : 2;");   // Q2 = b
+        // A changed next hop is updated in place; nothing is withdrawn (D15).
+        expect(pub).toContain("have->setNextHop(gw);");
+        expect(pub).not.toMatch(/deleteRoute|removeRoute/);
+        // An unheard destination is addressed through its node module.
+        expect(m4.get("addressOfNode")).toContain(
+          "    return inet::L3AddressResolver().addressOf(host, inet::L3AddressResolver::ADDR_MODULEPATH);\n");
+        expect(m4.get("addressOfNode")).not.toContain("sinkAddress");   // C0_project has no Sink
+      });
+
+      // §6 item 1 (Q3 = a): the data send unicasts to the packet next hop; the
+      // control sends stay broadcast (D8). Compiled, never run: no DATA (D10).
+      it("§6 item 1: only the data send can unicast, to its next hop's MAC through ARP", () => {
+        const data = m4.get("sendDataBroadcast")!;
+        expect(data).toContain(
+          "    if (live_pktNextHop.count(pkt) > 0 && chunk->getPktNextHop() != BROADCAST) {\n"
+          + "        nextHopMac = arp->resolveL3Address(addressOfNode(chunk->getPktNextHop()), nullptr);\n");
+        expect(data).toContain("    setDownControlInfo(packet, nextHopMac);\n");
+        expect(data).not.toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
+        for (const t of tags)
+          expect(m4.get(sendOf(t))).toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
       });
 
       it("adds no untranslated clause, and no route-table operation", () => {
