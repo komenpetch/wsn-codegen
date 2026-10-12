@@ -79,6 +79,29 @@ first version said RED there: it checked the new route before checking that the
 update had happened, so "not tested" read as "failed". Fixed, and the five
 mutants re-run against the fixed gates.
 
+**Reported, not gated** (§7), Static, 60 s:
+
+| node | beacons / route floods created | `send_down` | `send_up` = MAC Rx | consumed | queue overflow |
+|---|---|---|---|---|---|
+| sink | 0 / 0 | 0 | 66 | 66 | 0 |
+| sensor1 | 11 / 3 | 66 | 105 | 0 | 0 |
+| sensor2 | 11 / 3 | 80 | 259 | 0 | 4 |
+| sensor3 | 11 / 3 | 80 | 164 | 0 | 7 |
+| sensor4 | 11 / 3 | 78 | 216 | 0 | 13 |
+| sensor5 | 11 / 3 | 88 | 344 | 0 | 27 |
+| sensor6 | 11 / 3 | 70 | 160 | 0 | 0 |
+| sensor7 | 11 / 3 | 85 | 211 | 0 | 13 |
+| sensor8 | 11 / 3 | 71 | 159 | 0 | 0 |
+| **total** | **88 / 24** | **618** | **1684** | **66 of 112** | **64** |
+
+These are `../v4_mintroute`'s piece-2 figures exactly. Against `../v3_flood
+[Config Sink]` (88 / 88 created, `send_down` 763, `send_up` 1677, 68 of 176
+consumed, overflow 180) the difference is the timers alone: structure 4 equalled
+v3_flood counter for counter at `266ad76` (with the PPkt chunk grown from 28 to
+32 B), and of every step since, only D16 piece 2 (one timer per packet type, the
+route flood at 20 s) moved a counter; piece 3, 3d, 3e and this run left every
+scalar identical (event #38285).
+
 `type_check.sh` **GREEN** on Static: every per-type law holds, reach full for
 both types (7 of 7 originators on each sensor, 8 of 8 on the sink), staged
 module restored byte-identical. `leak_check.sh` **GREEN**: 0 of 1684 deliveries
