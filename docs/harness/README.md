@@ -47,6 +47,18 @@ Deliberately **not** kept:
   generation time. Regenerate it whenever a file is added, removed or renamed.
 - `out/`, `results*/` — build output and measurement data.
 
+## v4_static — step 3f, the route-table run test (2026-10-12)
+
+`design/NextHop_Extension_Draft.md` §7: structure 4 generated from `C0_project`
+as it is, on `v3_flood`'s field with `v4_mintroute [Config V4]`'s settings, and a
+hand-written Specific class `StaticRoutes` (`StaticRoutes.{h,cc,ned}`) that feeds
+fixed route entries to the generated `addEntry` and records what happened as
+`static:*` scalars. `[Config Plain]` is the generated module alone, as a control.
+`derive_wrapper.mjs` writes `StaticRoutesNetworkLayer.ned` from the generated
+`EbWsn.ned` at staging (exactly two renames, refused otherwise), so it is not
+kept here. `loop.sh` gates conditions 1–4; `invariants.sh` restates v3's I9 for
+separate timers. Measured results are in its own `README.md`.
+
 ## v4_mintroute — structure 4 against the MintRoute baseline (2026-10-12)
 
 Step 2 of D16: the generated structure 4 (`[Config V4]`) and INET's MintRoute
