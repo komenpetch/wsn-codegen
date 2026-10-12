@@ -39,6 +39,10 @@ const methods = (cc: string): Map<string, string> => {
     out.set(m[1], [out.get(m[1]), m[2]].filter(Boolean).join("\n// overload\n"));
   return out;
 };
+// One method of another class in the module's .cc (the Route Table column's,
+// step 3e), read the same way.
+const classMethod = (cc: string, cls: string, name: string): string | undefined =>
+  new RegExp(`^[^\\n]*\\b${cls}::${name}\\([^\\n]*\\n([\\s\\S]*?\\n)\\}\\n`, "m").exec(cc)?.[1];
 const lines = (s: string) => new Set(s.split("\n"));
 const added = (a: string, b: string) => [...lines(b)].filter((l) => !lines(a).has(l));
 const removed = (a: string, b: string) => added(b, a);
@@ -84,9 +88,9 @@ describe("structure 4", () => {
           ["add_newEntry", "publishOneHopRoutes", "runEnabledEvents", "start_tx_otherPkt",
             "try_start_tx_otherPkt", "update_nbr"]);
         expect([...m4.keys()].filter((n) => !m3.has(n)).sort()).toEqual(
-          ["addressOfNode", "create_dataPkt", ...DATA_RECEPTIONS, "findOrCreateEntry", "newEntry",
+          ["create_dataPkt", ...DATA_RECEPTIONS, "findOrCreateEntry", "newEntry",
             ...tags.map(onReceiveOf), "publishRoutes", "start_tx_dataPkt_bct", "start_tx_dataPkt_fwd",
-            "try_start_tx_dataPkt_bct", "updateNbrCounters"].sort());
+            "try_start_tx_dataPkt_bct", "try_start_tx_dataPkt_fwd", "updateNbrCounters"].sort());
         // Every control leaf's send gains a no-argument overload (D16 piece 2);
         // finish changes only where the table has the routing's leaves (piece 1).
         expect([...m4.keys()].filter((n) => m3.has(n) && m3.get(n) !== m4.get(n)).sort()).toEqual(
@@ -216,17 +220,18 @@ describe("structure 4", () => {
         expect(v4["EbWsn.h"]).not.toContain("validRoutes");
       });
 
-      it("D15: the data transmit splits on routeTbl, and _fwd waits for a route", () => {
+      it("D15: the data transmit splits on routeTbl, and _fwd is scheduled once addEntry can fill it", () => {
         const bct = m4.get("start_tx_dataPkt_bct")!, fwd = m4.get("start_tx_dataPkt_fwd")!;
         expect(bct).toContain("if (!(routeTbl.count({x, d}) == 0))");
         expect(bct).toContain("ensurePkt(pkt)->setPktNextHop(BROADCAST); live_pktNextHop.insert(pkt);");
         expect(fwd).toContain("if (!(routeTbl.count({x, d}) > 0))");
         expect(fwd).toContain("(nextHop.count({x, d}) > 0 && nh == nextHop.at({x, d}))");
         expect(fwd).toContain("ensurePkt(pkt)->setPktNextHop(nh); live_pktNextHop.insert(pkt);");
-        // Nothing adds a route until a Specific class calls addEntry.
-        expect(v4["EbWsn.h"]).toContain(
-          "// not scheduled: start_tx_dataPkt_fwd -- nothing that runs ever fills `routeTbl`");
-        expect(v4["EbWsn.h"]).not.toMatch(/try_start_tx_dataPkt_fwd/);
+        // addEntry is in the module from step 3e and counts as running (§6 item
+        // 2), so routeTbl has a filler and _fwd is scheduled. It never fires in
+        // v4: no data packet exists (D10).
+        expect(v4["EbWsn.h"]).not.toContain("// not scheduled: start_tx_dataPkt_fwd");
+        expect(m4.get("runDeliveryEvents")).toContain("if (try_start_tx_dataPkt_fwd()) _any = true;");
       });
 
       it("D9: both data receptions are emitted and reported as not scheduled until DATA exists", () => {
@@ -269,13 +274,53 @@ describe("structure 4", () => {
         expect(pub).toContain("if (e.first == myNodeId && nextHop.count(e) > 0) via[e.second] = nextHop.at(e);");
         expect(pub).toContain("if (e.first == myNodeId && via.count(e.second) == 0) via[e.second] = e.second;");
         expect(pub).toContain("int metric = dv.second == dv.first ? 1 : 2;");   // Q2 = b
-        // A changed next hop is updated in place; nothing is withdrawn (D15).
-        expect(pub).toContain("have->setNextHop(gw);");
-        expect(pub).not.toMatch(/deleteRoute|removeRoute/);
-        // An unheard destination is addressed through its node module.
-        expect(m4.get("addressOfNode")).toContain(
+        expect(pub).toContain("        installRoute(this, out, dest, gw, metric);\n");
+        // One route, created or brought up to date (RouteTableBase since 3e): a
+        // changed next hop is updated in place; nothing is withdrawn (D15).
+        const install = classMethod(v4["EbWsn.cc"], "RouteTableBase", "installRoute")!;
+        expect(install).toContain("            r->setNextHop(nextHop);\n");
+        expect(install).not.toMatch(/deleteRoute|removeRoute/);
+        // An unheard destination is addressed through its node module, with no
+        // special case for a sink (Q3 = a: a model's Sink is known by name).
+        const addressOf = classMethod(v4["EbWsn.cc"], "RouteTableBase", "addressOfNode")!;
+        expect(addressOf).toContain(
           "    return inet::L3AddressResolver().addressOf(host, inet::L3AddressResolver::ADDR_MODULEPATH);\n");
-        expect(m4.get("addressOfNode")).not.toContain("sinkAddress");   // C0_project has no Sink
+        expect(addressOf).not.toContain("sinkAddress");
+      });
+
+      // D2 (step 3e, user 2026-10-12: Q1 = a, Q2 = a): the Route Table column's
+      // own classes, RouteTableBase -> PRouteTable -> the module.
+      it("D2: PRouteTable holds the derived members and addEntry, RouteTableBase the INET binding", () => {
+        const h = v4["EbWsn.h"];
+        const base = h.slice(h.indexOf("class RouteTableBase {"), h.indexOf("class PRouteTable "));
+        const table = h.slice(h.indexOf("class PRouteTable "), h.indexOf("class EbWsn "));
+        const module = h.slice(h.indexOf("class EbWsn "));
+        expect(h).toContain("class PRouteTable : public RouteTableBase {");
+        expect(h).toContain("class EbWsn : public NetworkProtocolBase, public INetworkProtocol, public PRouteTable {");
+        // The members D2 derives, and only there.
+        for (const m of ["neighbourTbl", "routeTbl", "nextHop", "lastSeqno", "missed", "received"]) {
+          expect(table).toMatch(new RegExp(`^ {4}[^\\n(]*[\\s>]${m};`, "m"));
+          expect(module).not.toMatch(new RegExp(`^ {4}[^\\n(/]*[\\s>]${m};`, "m"));
+        }
+        expect(table).toContain("    bool addEntry(Node x, Node d, Node nh);");
+        // The INET binding; no purgeRoutes, since nothing is withdrawn (Q2 = a).
+        for (const d of ["inet::ModuleRefByPar<inet::IRoutingTable> routingTable;",
+          "std::map<Node, inet::L3Address> nodeAddress;", "inet::L3Address addressOfNode(Node n);",
+          "void installRoute(cObject *source, inet::NetworkInterface *out,"])
+          expect(base).toContain(d);
+        expect(h + v4["EbWsn.cc"]).not.toContain("purgeRoutes");
+        // What needs the module stays there: arp, and publishRoutes.
+        expect(module).toContain("inet::ModuleRefByPar<inet::IArp> arp;");
+        expect(module).toContain("    void publishRoutes();");
+        // addEntry: carried by D2's rule, translated, never scheduled (D1).
+        expect(classMethod(v4["EbWsn.cc"], "PRouteTable", "addEntry")).toBe(
+          "    if (!(neighbourTbl.count({x, nh}) > 0))\n        return false;\n"
+          + "    routeTbl.insert({x, d});\n    nextHop[{x, d}] = nh;\n    return true;\n");
+        expect(h).toContain(
+          "// not scheduled: addEntry -- a route-table operation: never scheduled, a Specific class calls it (D1)");
+        expect(v4["EbWsn.cc"]).not.toContain("try_addEntry");
+        // The events that use the tables but read the queue stay in the module.
+        for (const m of ["newEntry", "updateNbrCounters"]) expect(m4.has(m)).toBe(true);
       });
 
       // §6 item 1 (Q3 = a): the data send unicasts to the packet next hop; the
@@ -291,12 +336,14 @@ describe("structure 4", () => {
           expect(m4.get(sendOf(t))).toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
       });
 
-      it("adds no untranslated clause, and no route-table operation", () => {
+      it("adds no untranslated clause, and only the one route-table operation D15 kept", () => {
         const untranslated = (t: Record<string, string>) =>
           (Object.values(t).join("\n").match(/UNTRANSLATED/g) ?? []).length;
         expect(untranslated(v4)).toBe(untranslated(v3));
-        for (const op of ["addEntry", "invalidateEntry", "removeEntry"])
-          expect(v4["EbWsn.cc"]).not.toContain(op);
+        // addEntry since step 3e, in PRouteTable; the two D15 dropped, nowhere.
+        expect(v4["EbWsn.cc"]).toContain("bool PRouteTable::addEntry(");
+        for (const op of ["invalidateEntry", "removeEntry"])
+          expect(v4["EbWsn.h"] + v4["EbWsn.cc"]).not.toContain(op);
       });
     });
   }
@@ -319,6 +366,38 @@ describe("structure 4", () => {
     expect(t.actions).toEqual(["routeTbl.insert({x, d});", "nextHop[{x, d}] = nh;"]);
     expect(t.untranslatedGuards).toEqual([]);
     expect(t.untranslatedActions).toEqual([]);
+  });
+
+  // Q3 = a (step 3e, user 2026-10-12): in a model with a Sink constant the sink's
+  // node id is that constant, not its module id, so addressOfNode could not find
+  // it through the module (getModule(0) is nullptr; another value would find an
+  // unrelated module). Its address is recorded by name at initialisation instead.
+  // No project on disk that reaches structure 4 has a Sink, so this one feeds
+  // C0_project one more context declaring it, as v3_flood's C2_sink.buc once did.
+  it("Q3: a model's Sink is known by name at initialisation, so addressOfNode has no special case", () => {
+    const sinkCtx = {
+      name: "C2_sink.buc",
+      xml: '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + '<org.eventb.core.contextFile org.eventb.core.configuration="org.eventb.core.fwd" version="3">\n'
+        + '   <org.eventb.core.extendsContext name="ext1" org.eventb.core.target="C0"/>\n'
+        + '   <org.eventb.core.constant name="cst1" org.eventb.core.identifier="Sink"/>\n'
+        + '   <org.eventb.core.axiom name="axm1" org.eventb.core.label="axm_sink_1" org.eventb.core.predicate="Sink ∈ ND" org.eventb.core.theorem="false"/>\n'
+        + '   <org.eventb.core.axiom name="axm2" org.eventb.core.label="axm_sink_2" org.eventb.core.predicate="Sink = 0" org.eventb.core.theorem="false"/>\n'
+        + '</org.eventb.core.contextFile>\n',
+    };
+    const v4 = byPath(generateMerged([...files(), sinkCtx], undefined, 4));
+    const init = methods(v4["EbWsn.cc"]).get("initialize")!;
+    // The binding that makes it necessary, and the record that answers it.
+    expect(init).toContain("myNodeId = isSink ? Sink : getContainingNode(this)->getId();");
+    expect(init).toContain(
+      "            sinkAddress = addressResolver.resolve(sinkStr);\n"
+      + "        // The sink's node id is the model's Sink, not its module id, so its\n"
+      + "        // address is known by name rather than looked up through the module.\n"
+      + "        if (!sinkAddress.isUnspecified())\n"
+      + "            nodeAddress[Sink] = sinkAddress;\n");
+    expect(classMethod(v4["EbWsn.cc"], "RouteTableBase", "addressOfNode")).not.toContain("sinkAddress");
+    // And without a Sink there is no such record.
+    expect(byPath(generateMerged(files(), undefined, 4))["EbWsn.cc"]).not.toContain("nodeAddress[Sink]");
   });
 
   it("still refuses a routing outside the structures that carry the pattern", () => {

@@ -27,6 +27,7 @@ import { pairKeyedVars } from "./pairKeyed";
 import { headerOf, implOf, mustFind, mustReplace } from "./emitted";
 import { netLayerName } from "./netProtocolShell";
 import { broadcastMethodOf } from "./packetModel";
+import { variablesUsedBy } from "./packetOps";
 
 /**
  * WHICH variable is the route table — read off the model, never named.
@@ -354,10 +355,25 @@ export function bindRouteEntries(tree: GeneratedTree, cls: string, t: RouteTable
     "    // ── PRouteTable → INET (route entries, and one-hop routes to neighbours) ──\n",
     `${PASS} (.h comment)`);
   hText = mustReplace(hText, "    void publishOneHopRoutes();\n",
-    "    inet::L3Address addressOfNode(Node n);\n    void publishRoutes();\n", `${PASS} (.h publisher)`);
+    "    inet::L3Address addressOfNode(Node n);\n"
+    + "    void installRoute(cObject *source, inet::NetworkInterface *out,\n"
+    + "                      const inet::L3Address& dest, const inet::L3Address& nextHop, int metric);\n"
+    + "    void publishRoutes();\n", `${PASS} (.h publisher)`);
 
   let ccText = mustReplace(cc.content, '        arp.reference(this, "arpModule", false);',
     '        arp.reference(this, "arpModule", true);', `${PASS} (ARP required)`);
+  // In a model with a Sink constant the sink's node id is that constant, not its
+  // node module's id, so addressOfNode cannot find it through the module. Its
+  // address is known by name instead, and recorded beside the learnt ones (user,
+  // 2026-10-12, Q3 = a), so the lookup needs no special case.
+  if (sink)
+    ccText = mustReplace(ccText, "            sinkAddress = addressResolver.resolve(sinkStr);\n",
+      "            sinkAddress = addressResolver.resolve(sinkStr);\n"
+      + `        // The sink's node id is the model's ${sink}, not its module id, so its\n`
+      + "        // address is known by name rather than looked up through the module.\n"
+      + "        if (!sinkAddress.isUnspecified())\n"
+      + `            nodeAddress[${sink}] = sinkAddress;\n`,
+      `${PASS} (the sink's address)`);
   ccText = mustReplace(ccText, "    runDeliveryEvents();\n    publishOneHopRoutes();\n",
     "    runDeliveryEvents();\n", `${PASS} (arrival call)`);
   const drainAt = mustFind(ccText, `bool ${cls}::runDeliveryEvents()\n{`, `${PASS} (runDeliveryEvents)`);
@@ -373,12 +389,12 @@ export function bindRouteEntries(tree: GeneratedTree, cls: string, t: RouteTable
   if (end < 0) throw new Error(`${PASS}: publishOneHopRoutes() has no end.`);
   ccText = ccText.slice(0, start) + `
 // A node id as INET addresses it (D5). Learnt at an arrival when this node has
-// heard it; otherwise through its node module, since a node id is its node
-// module's id, as the module-path address GlobalArp maps -- so the two agree.
+// heard it (or, for a model's Sink, known by name from initialisation); otherwise
+// through its node module, since a node id is its node module's id, as the
+// module-path address GlobalArp maps -- so the two agree.
 inet::L3Address ${cls}::addressOfNode(Node n) {
     auto known = nodeAddress.find(n);
     if (known != nodeAddress.end()) return known->second;
-${sink ? `    if (n == ${sink}) return sinkAddress;   // the sink's id is the model's ${sink}\n` : ""}\
     cModule *host = getSimulation()->getModule(n);
     if (host == nullptr) return inet::L3Address();
     return inet::L3AddressResolver().addressOf(host, inet::L3AddressResolver::ADDR_MODULEPATH);
@@ -403,36 +419,38 @@ void ${cls}::publishRoutes() {
         // 1 for a neighbour, which is exact; 2 for a route through another node,
         // the fewest hops it can be. The model holds no hop count.
         int metric = dv.second == dv.first ? 1 : 2;
+        installRoute(this, out, dest, gw, metric);
+    }
+}
 
-        inet::IRoute *have = nullptr;
-        for (int i = 0; i < routingTable->getNumRoutes(); i++) {
-            inet::IRoute *r = routingTable->getRoute(i);
-            if (r->getSource() == this && r->getDestinationAsGeneric() == dest) { have = r; break; }
+// One route in INET's table, created or brought up to date (D5). Matched on the
+// source and the destination; a changed next hop is updated in place, as
+// Aodv.cc:709 does. No entry is ever removed (D15), so nothing is withdrawn.
+void ${cls}::installRoute(cObject *source, inet::NetworkInterface *out,
+                         const inet::L3Address& dest, const inet::L3Address& nextHop, int metric) {
+    for (int i = 0; i < routingTable->getNumRoutes(); i++) {
+        inet::IRoute *r = routingTable->getRoute(i);
+        if (r->getSource() != source || r->getDestinationAsGeneric() != dest) continue;
+        if (r->getNextHopAsGeneric() != nextHop) {
+            r->setNextHop(nextHop);
+            r->setMetric(metric);
+            EV_INFO << "route to " << dest << " now via " << nextHop << endl;
         }
-        if (have != nullptr) {
-            // A changed next hop is updated in place, as Aodv.cc:709 does; no
-            // entry is ever removed (D15), so nothing is withdrawn.
-            if (have->getNextHopAsGeneric() != gw) {
-                have->setNextHop(gw);
-                have->setMetric(metric);
-                EV_INFO << "route to " << dest << " now via " << gw << endl;
-            }
-            continue;
-        }
-        inet::IRoute *route = routingTable->createRoute();
-        route->setDestination(dest);
-        route->setPrefixLength(dest.getAddressType()->getMaxPrefixLength());
-        route->setNextHop(gw);
-        route->setMetric(metric);
-        if (out != nullptr) route->setInterface(out);
-        route->setSourceType(inet::IRoute::MANET);
-        route->setSource(this);
-        routingTable->addRoute(route);
-        if (dv.second == dv.first)
-            EV_INFO << "one-hop route to " << dest << " via itself" << endl;
-        else
-            EV_INFO << "route to " << dest << " via " << gw << endl;
-    }` + ccText.slice(end);
+        return;
+    }
+    inet::IRoute *route = routingTable->createRoute();
+    route->setDestination(dest);
+    route->setPrefixLength(dest.getAddressType()->getMaxPrefixLength());
+    route->setNextHop(nextHop);
+    route->setMetric(metric);
+    if (out != nullptr) route->setInterface(out);
+    route->setSourceType(inet::IRoute::MANET);
+    route->setSource(source);
+    routingTable->addRoute(route);
+    if (nextHop == dest)
+        EV_INFO << "one-hop route to " << dest << " via itself" << endl;
+    else
+        EV_INFO << "route to " << dest << " via " << nextHop << endl;` + ccText.slice(end);
 
   if (/publishOneHopRoutes/.test(hText + ccText))
     throw new Error(`${PASS}: something still names publishOneHopRoutes after it was replaced.`);
@@ -469,4 +487,121 @@ export function installUnicast(tree: GeneratedTree, cls: string, dataType: strin
     `${PASS} (MAC address)`);
   const out = cc.content.slice(0, at) + body + cc.content.slice(end);
   return tree.map((f) => (f === cc ? { ...f, content: out } : f));
+}
+
+// ── Structure 4: the Route Table column's own classes (D2, step 3e) ──────────
+
+/**
+ * PRouteTable's members, derived (D2): the two node relations, the functions
+ * keyed over them, and any declared subset of one (none since D15). In that
+ * order, which is the order the class declares them.
+ */
+export function routeTableMembersOf(model: EncodedMachine, t: RouteTables): string[] {
+  const relations = [t.neighbours, t.routes];
+  const functions = pairKeyedVars(model).filter((v) => relations.includes(v.domain)).map((v) => v.name);
+  const subsets = [...model.variableTypes].filter(([, ty]) =>
+    relations.some((r) => new RegExp(`^\\s*\\w+\\s*⊆\\s*${r}\\s*$`).test(ty))).map(([v]) => v);
+  return [...relations, ...functions, ...subsets];
+}
+
+/**
+ * The route-table operations (D2): the events whose every variable, read or
+ * written, is a PRouteTable member. ⚠ Reads count, which is what keeps
+ * `add_newEntry` out: it writes only table members but reads the `updateNbrs`
+ * queue. On structure 4's model this is `addEntry` alone (D15).
+ */
+export function routeTableOperationsOf(model: EncodedMachine, t: RouteTables): string[] {
+  const members = new Set(routeTableMembersOf(model, t));
+  return model.events.filter((e) => e.label !== "INITIALISATION").filter((e) => {
+    const used = variablesUsedBy(e, model.variableTypes);
+    return used.length > 0 && used.every((v) => members.has(v));
+  }).map((e) => e.label);
+}
+
+/**
+ * D2 for structure 4 (user, 2026-10-12, Q1 = a, Q2 = a): the Route Table column
+ * gets its own classes, in the 4×4 spec's order, Specific → PRouteTable →
+ * RouteTableBase → INET's IRoutingTable.
+ *
+ * - `RouteTableBase`: the INET binding -- the routing table, the learnt
+ *   addresses, `addressOfNode` and `installRoute` (D4's name; `purgeRoutes` is
+ *   not emitted, since nothing is withdrawn after D15).
+ * - `PRouteTable : RouteTableBase`: the derived members and operations.
+ * - The module inherits PRouteTable, so every event that uses a member reaches it
+ *   by inheritance and its translated body does not change. What needs the module
+ *   itself stays there: `publishRoutes()` (node id, interface, the module as each
+ *   route's source) and `arp` (the arrival and the transmit).
+ *
+ * Moves only: every declaration and definition already exists, and each is
+ * matched exactly once or the pass refuses.
+ */
+export function installRouteTableClasses(tree: GeneratedTree, cls: string, members: string[],
+  ops: string[]): GeneratedTree {
+  const PASS = "installRouteTableClasses";
+  const h = headerOf(tree), cc = implOf(tree);
+  if (!h || !cc) throw new Error(`${PASS}: the module is missing a .h or .cc.`);
+  let hText = h.content;
+
+  // Take one declaration out of the module class, verbatim; exactly one match.
+  const take = (pattern: RegExp, what: string): string => {
+    const all = [...hText.matchAll(new RegExp(pattern.source, "gm"))];
+    if (all.length !== 1)
+      throw new Error(`${PASS}: expected one declaration of ${what} in the header, found ${all.length}.`);
+    hText = hText.replace(all[0][0], "");
+    return all[0][0];
+  };
+  const decl = (name: string) => new RegExp(`^ {4}(?!\\/\\/)[^\\n(]*[\\s>]${name};[^\\n]*\\n`);
+  const memberDecls = members.map((m) => take(decl(m), m));
+  const opDecls = ops.map((op) => take(new RegExp(`^ {4}bool ${op}\\([^)]*\\);[^\\n]*\\n`), op));
+  const baseDecls = [
+    take(decl("routingTable"), "routingTable"),
+    take(/^ {4}\/\/ Learnt at the arrival[^\n]*\n(?: {4}\/\/[^\n]*\n)*/, "nodeAddress's comment"),
+    take(decl("nodeAddress"), "nodeAddress"),
+    take(/^ {4}inet::L3Address addressOfNode\(Node n\);\n/, "addressOfNode"),
+    take(/^ {4}void installRoute\([^;]*;\n/, "installRoute"),
+  ];
+  hText = mustReplace(hText,
+    "    // ── PRouteTable → INET (route entries, and one-hop routes to neighbours) ──\n",
+    "    // ── publishing PRouteTable into INET (D5): what needs the module itself ──\n",
+    `${PASS} (.h comment)`);
+
+  const classes = [
+    "// ── The Route Table column (D2): RouteTableBase -> PRouteTable -> the module ──",
+    "//",
+    "// RouteTableBase is the INET binding: how the simulator sees the model's table.",
+    "class RouteTableBase {",
+    "  protected:",
+    ...baseDecls.map((d) => d.replace(/\n$/, "")),
+    "",
+    "  public:",
+    "    virtual ~RouteTableBase() = default;",
+    "};",
+    "",
+    "// PRouteTable is the model's table: the node relations with a function keyed",
+    "// over them, those functions, and the route-table operations, all derived (D2).",
+    "// A Specific class changes route entries only through the operations (D1).",
+    "class PRouteTable : public RouteTableBase {",
+    "  protected:",
+    ...memberDecls.map((d) => d.replace(/\n$/, "")),
+    ...opDecls.map((d) => d.replace(/\n$/, "")),
+    "};",
+    "",
+    "",
+  ].join("\n");
+  const moduleClass = `class ${cls} : public NetworkProtocolBase, public INetworkProtocol {`;
+  hText = mustReplace(hText, moduleClass,
+    classes + `class ${cls} : public NetworkProtocolBase, public INetworkProtocol, public PRouteTable {`,
+    `${PASS} (module class)`);
+
+  let ccText = cc.content;
+  for (const op of ops)
+    ccText = mustReplace(ccText, `bool ${cls}::${op}(`,
+      `// Event-B: ${op} — the route-table operation (D1, D2): never scheduled; a Specific\n`
+      + `// class calls it.\nbool PRouteTable::${op}(`, `${PASS} (${op})`);
+  ccText = mustReplace(ccText, `inet::L3Address ${cls}::addressOfNode(`,
+    "inet::L3Address RouteTableBase::addressOfNode(", `${PASS} (addressOfNode)`);
+  ccText = mustReplace(ccText, `void ${cls}::installRoute(`, "void RouteTableBase::installRoute(",
+    `${PASS} (installRoute)`);
+
+  return tree.map((f) => (f === h ? { ...f, content: hText } : f === cc ? { ...f, content: ccText } : f));
 }

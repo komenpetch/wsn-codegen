@@ -40,7 +40,7 @@ import { OVERRIDE_GLYPHS } from "./text";
 
 
 // Machine variables an event mentions, in its guards or its actions.
-function variablesUsedBy(ev: FlatEvent, known: Map<string, string>): string[] {
+export function variablesUsedBy(ev: FlatEvent, known: Map<string, string>): string[] {
   const text = [...ev.guards, ...ev.actions].join(" ");
   return [...new Set(text.match(/[A-Za-z_]\w*/g) ?? [])].filter((t) => known.has(t));
 }

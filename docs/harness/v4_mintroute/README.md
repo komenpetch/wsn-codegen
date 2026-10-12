@@ -86,6 +86,14 @@ DATA). The log shows **31 one-hop routes**, one per neighbour-table entry
 `addEntry` until a Specific class does (3e, 3f). Structure 4 publishes the routes
 structure 3 does again, through the two-table publisher.
 
+## After step 3e — the Route Table classes (2026-10-12)
+
+`RouteTableBase` → `PRouteTable` → the module, `addEntry` in `PRouteTable` (never
+scheduled), `_fwd` now scheduled. As predicted, every scalar identical to the 3d
+run (event #38285), the same 31 one-hop routes, and neither `addEntry` nor
+`start_tx_dataPkt_fwd` fires: nothing calls the first until a Specific class does,
+and the second has no data packet.
+
 **Where they differ, and why (the first run, before piece 2):**
 1. **Who sends beacons.** The baseline arms its beacon timer on the sink only. In
    v4 the pattern's creating event guards `x ∈ ND ∖ Dests`, the sink is in

@@ -11,7 +11,7 @@ import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, hoistedReceiveEvents, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
-import { routeTableOf, bindRoutingTable, routeTablesOf, bindRouteEntries, installUnicast } from "./routingTable";
+import { routeTableOf, bindRoutingTable, routeTablesOf, bindRouteEntries, installUnicast, routeTableOperationsOf, routeTableMembersOf, installRouteTableClasses } from "./routingTable";
 import { patternExtensionFor, controlSetOf, dataTypeOf } from "./patternExtension";
 import type { RoutingStyle } from "./patternExtension";
 import { packetIdentityOf } from "./mediumBinding";
@@ -253,6 +253,16 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       .filter((l) => !baseLabels.has(l));
     const drainLabels = drainEventsOf(model, pModel, carriedWithEnabling);
     model = carryEvents(model, pModel, drainLabels);
+    // Structure 4's route-table operations (D2, step 3e): the events whose every
+    // variable is a PRouteTable member -- `addEntry` alone since D15. No role
+    // above carries them, since a Specific class calls them, not the timer or an
+    // arrival; without this the module has no `addEntry` to call.
+    const routeOps: string[] = [];
+    if (version === 4) {
+      const tables = routeTablesOf(pModel, nodeSetsOf([...raw.contexts, ...pRaw.contexts]));
+      if (tables) routeOps.push(...routeTableOperationsOf(pModel, tables));
+      model = carryEvents(model, pModel, routeOps);
+    }
     const mergedRaw = { ...raw, contexts: mergeContexts(raw.contexts, pRaw.contexts) };
     // The same two encoding fixes the network branch applies, and for the same
     // reason: encodingResolver's infer() silently defaults an unrecognised type
@@ -468,6 +478,12 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // unreachableEvents.
     const neverRuns = new Set(superseded.keys());
     superseded.set("send_up", "the arrival realises it, on a real reception");
+    // ⚠ The route-table operations too, AFTER neverRuns for the same reason as
+    // send_up: never scheduled (a Specific class calls them, D1), but they do
+    // run, so what they fill counts as filled (§6 item 2). Left schedulable, the
+    // scheduler would bind addEntry itself and add routes every tick.
+    for (const op of routeOps)
+      superseded.set(op, "a route-table operation: never scheduled, a Specific class calls it (D1)");
     // The batch is the receive events FIRST — flattening puts a carried
     // refinement after every pM1 event, so `receive_controlPkt` would otherwise
     // run last and an arrival would consume nothing — then everything else in
@@ -514,7 +530,6 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // forward and backward routes) needs a modelling decision this pass must
     // not make for it.
     const nodeSets = nodeSetsOf([...raw.contexts, ...pRaw.contexts]);
-    let published: GeneratedTree;
     if (version === 4) {
       // Structure 4 has two tables, the neighbours and the route entries, and
       // publishes both (D5, step 3d). ⚠ Refused rather than skipped: with two
@@ -531,18 +546,20 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
         throw new Error("Structure 4's unicast branch is the data packet's send, and this model has "
           + "no single data type beside its control set.");
       const wired = bindRoutingTable(scheduled, outputName, tables.neighbours);
-      published = installUnicast(
+      const published = installUnicast(
         bindRouteEntries(wired, outputName, tables, sinkConstantOf([...raw.contexts, ...pRaw.contexts])),
         outputName, data);
-    } else {
-      const table = routeTableOf(model, nodeSets);
-      published = table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
+      // Structure 4 matches its shell to the case study's baseline, the way
+      // structure 2's was matched to SensorApp (D16). After every pass that
+      // shapes the methods it edits.
+      const shell = installBaselineShell(published, outputName, pm);
+      // Then the Route Table column's own classes (D2, step 3e), last: they only
+      // move declarations and definitions the passes above have finished.
+      return installRouteTableClasses(shell, outputName, routeTableMembersOf(model, tables), routeOps);
     }
-    // Structure 4 matches its shell to the case study's baseline, the way
-    // structure 2's was matched to SensorApp (D16). Last, because it edits
-    // methods every pass above has already shaped. Structure 3 stays as it was
-    // measured.
-    return version === 4 ? installBaselineShell(published, outputName, pm) : published;
+    const table = routeTableOf(model, nodeSets);
+    // Structure 3 stays as it was measured.
+    return table ? bindRoutingTable(scheduled, outputName, table) : scheduled;
   }
   if (version === 2) {
     // One model, whichever way this goes: tryNetworkLayer hands back the one it
