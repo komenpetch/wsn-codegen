@@ -70,7 +70,18 @@ const decls = (tags: string[], once: boolean, shell: ShellKind): string => [
 ].join("\n");
 
 const defs = (cls: string, tags: string[], senderSetter: string | null,
-  shell: ShellKind): string => {
+  shell: ShellKind, lengthInBits: boolean): string => {
+  // The frame's length. The shell declares `int headerLength @unit(b)`, so the
+  // number the module reads is a count of BITS. MintRoute's INET port applies it
+  // as bytes, `B(headerLength)` (MintRoute.cc:135), and so do the MiXiM modules
+  // it descends from (WiseRoute's and the thesis MintRoute's `setByteLength`
+  // on the same bit-declared parameter) and INET's WiseRoute: a configured
+  // `80b` makes an 80-byte frame. Structure 4 applies it in the unit it is
+  // declared in, as INET's Flooding does (`b(headerLength)`, Flooding.cc:283)
+  // and MiXiM's BaseNetwLayer (`setBitLength`). User, 2026-10-13: "q1 a".
+  // Measured with the frame at 10 B: structure 4's flood becomes complete (the
+  // sink consumes 112 of 112, overflow 64 -> 0). Structures 1-3 keep `B` (O1).
+  const length = lengthInBits ? "b(headerLength)" : "B(headerLength)";
   // The last three steps are the only thing the two shells do differently, and
   // the network form is not invented here: it is the medium binding's own
   // transmit, which ends every frame the network module sends. An
@@ -80,7 +91,7 @@ const defs = (cls: string, tags: string[], senderSetter: string | null,
   // members that installNetProtocolShell replaces, so neither may be named on
   // the network side -- `headerLength` is the network shell's own parameter.
   const send = (tag: string): string[] => shell === "network" ? [
-    "    chunk->setChunkLength(B(headerLength));",
+    `    chunk->setChunkLength(${length});`,
     `    Packet *packet = new Packet("eb-${tag.toLowerCase()}", chunk);`,
     "    // setDownControlInfo tags the protocol in both directions, so there is",
     "    // no separate PacketProtocolTag here as there is on the socket path.",
@@ -246,7 +257,10 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
   drain: readonly string[] = [],
   // Which shell this transmit is being installed into. The three steps are the
   // same; where the frame goes is not. See `send` in defs().
-  shell: ShellKind = "application"): GeneratedTree {
+  shell: ShellKind = "application",
+  // Structure 4 only: the network shell's frame length in the unit its
+  // parameter declares (bits). See `length` in defs().
+  lengthInBits = false): GeneratedTree {
   // Ordered by tag value, the same order the PktType enum is emitted in.
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t);
   if (tags.length === 0) return tree;
@@ -273,7 +287,7 @@ export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketM
       const at = body.search(new RegExp(`^bool ${esc(cls)}::`, "m"));
       if (at < 0) throw new Error("appTransmit: no event method to place the transmit definitions before.");
       return { ...f, content: body.slice(0, at)
-        + defs(cls, tags, senderField ? setterOf(senderField) : null, shell)
+        + defs(cls, tags, senderField ? setterOf(senderField) : null, shell, lengthInBits)
         + "\n\n" + body.slice(at) };
     }
     return f;

@@ -160,8 +160,10 @@ describe("structure 4", () => {
         expect(added(m3.get("initialize")!, m4.get("initialize")!)).toEqual(expect.arrayContaining(
           ["        stats = par(\"stats\");", ...counters.map((c) => `        ${c} = 0;`)]));
         for (const b of baselineLeaves) {
-          // Beside the no-argument overload (piece 2), the transmit gains only the count.
-          expect(added(m3.get(b.send)!, m4.get(b.send)!).filter((l) => !/try_create_|runDeliveryEvents|overload/.test(l)))
+          // Beside the no-argument overload (piece 2) and the length in bits
+          // (pinned in its own test below), the transmit gains only the count.
+          expect(added(m3.get(b.send)!, m4.get(b.send)!)
+            .filter((l) => !/try_create_|runDeliveryEvents|overload|setChunkLength/.test(l)))
             .toEqual([`    ${b.sent}++;`]);
           expect(m4.get(b.send)).toContain(`    sendDown(packet);\n    ${b.sent}++;\n`);
         }
@@ -339,6 +341,27 @@ describe("structure 4", () => {
         expect(data).not.toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
         for (const t of tags)
           expect(m4.get(sendOf(t))).toContain("setDownControlInfo(packet, MacAddress::BROADCAST_ADDRESS);");
+      });
+
+      // The frame size (user, 2026-10-13, Q1 = a): the shell declares
+      // `headerLength @unit(b)`, and structure 4 applies it in bits, as INET's
+      // Flooding does. Structure 3 keeps the baseline's bytes (O1), so a
+      // configured 80b is a 10-byte frame here and an 80-byte frame there.
+      it("applies the frame length in the unit the shell declares, bits; structure 3 keeps bytes", () => {
+        expect(v4["EbWsn.ned"]).toContain("        int headerLength @unit(b) = default(96b);");
+        const sends = ["sendDataBroadcast", ...tags.map(sendOf)];
+        for (const s of sends) {
+          expect(m4.get(s)).toContain("    chunk->setChunkLength(b(headerLength));\n");
+          expect(m3.get(s)).toContain("    chunk->setChunkLength(B(headerLength));\n");
+          // The length is the one line a control send loses; the data send also
+          // lost its broadcast address in step 3d (§6 item 1).
+          const gone = removed(m3.get(s)!, m4.get(s)!);
+          expect(s === "sendDataBroadcast" ? gone.filter((l) => /setChunkLength/.test(l)) : gone)
+            .toEqual(["    chunk->setChunkLength(B(headerLength));"]);
+        }
+        // Every length in the module, and only those.
+        expect(v4["EbWsn.cc"].match(/setChunkLength\(b\(headerLength\)\)/g)?.length).toBe(sends.length);
+        expect(v4["EbWsn.cc"]).not.toContain("B(headerLength)");
       });
 
       it("adds no untranslated clause, and only the one route-table operation D15 kept", () => {

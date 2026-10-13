@@ -327,7 +327,10 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // And having taken that record on, it must also put back the pair the
       // model's own delivery event would have removed -- which in a per-node
       // module it removes on the RECEIVER, never on the sender.
-      senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""), "network");
+      senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""), "network",
+      // Structure 4 applies the frame length in bits, the unit the shell
+      // declares; structures 1-3 keep the baseline's bytes (O1).
+      version === 4);
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
