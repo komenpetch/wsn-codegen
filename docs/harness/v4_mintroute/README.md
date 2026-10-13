@@ -94,6 +94,78 @@ run (event #38285), the same 31 one-hop routes, and neither `addEntry` nor
 `start_tx_dataPkt_fwd` fires: nothing calls the first until a Specific class does,
 and the second has no data packet.
 
+## Step 3g — MintRoute's Specific class (2026-10-13)
+
+MintRoute's parent choice on the generated structure 4, ported from this
+project's INET `MintRoute.cc` under its own names and constants. Settled with
+the user in seven rounds (design/NextHop_Extension_Draft.md, history "Step 3g").
+Hand-written case-study code, not generated:
+
+| file | class | diagram cell |
+|---|---|---|
+| `MintRoute.{h,cc,ned}` | `MintRoute : EbWsn, MintRouteTable` — `updateNeighborTable`, `updateEst`, `chooseParent`, `evaluateCost`, `sendRouteBroadcast(Node, PktId)` (the generated transmit, copied, plus the route fields), `onReceiveRoutePkt`, `onReceiveBeaconPkt` | Specific · Operation |
+| `MintRouteTable.h` | `MintRouteTable : virtual PRouteTable` — per-neighbour parent, hop, cost, receiveEst, sendEst, liveliness, and this node's route | Specific · Route Table |
+| `MintRoutePkt.h` | `MintRoutePkt : RoutePkt` — hop count, parent, cost, estimate list (MiXiM's `MintRoutePkt.msg` names, node ids) | Specific · Packet |
+
+The generator gained one word for it: the module inherits `PRouteTable`
+**virtually** (wsn-codegen `routingTable.ts`), so `MintRouteTable` shares the
+module's one table instead of holding an empty copy.
+
+- **The estimate** reads the model's own counters (`received`, `lastSeqno` in
+  `PRouteTable`), never resets them: each window's `received`/`missed` is their
+  growth since the last estimate; the first window starts at 0.
+- **The root**: `[Config Parent]` takes the sink out of `Dests`, so it originates
+  and can be chosen; only the sink beacons (the sensors' `beaconFloodsInterval =
+  0s`, as `[Config Baseline]`). The sink is recognised as the baseline does it,
+  `myNetwAddr == sinkAddress`.
+- **The route**: `chooseParent` calls the generated `addEntry(me, sink, parent)`,
+  so INET's table shows "sink via parent".
+
+```bash
+MSYSTEM=CLANG64 CHERE_INVOKING=1 /c/Users/Komen/Desktop/omnetpp-6.3.0/tools/win32.x86_64/usr/bin/bash.exe -lc '/c/Users/Komen/Desktop/Proj/Simulation/v4_mintroute/loop.sh'
+```
+
+`loop.sh`: generate `--v4` → stage → `derive_wrapper.mjs` (EbMintRouteNetworkLayer)
+→ `check_copy.mjs` (REFUSE, exit 2, if the copied transmit or PPkt's field list
+drifted from the generated module) → build → run `V4` 60 s, `ParentPlain` and
+`Parent` 300 s → `tree.mjs` gates → `invariants.sh` on the same run. Separate,
+on the staged build: `type_check.sh`, `leak_check.sh` (both default `Parent`,
+300 s).
+
+### Measured, 300 s — every prediction in `omnetpp.ini` held
+
+| sensor | parent | hop (= shortest path) | first parent | switches | cost |
+|---|---|---|---|---|---|
+| sensor6 | sink | 1 | 45 s | 0 | 4 |
+| sensor3, sensor5, sensor8 | sensor6 | 2 | 65 s | 0 | 8 |
+| sensor2 | sensor3 | 3 | 85 s | 0 | 12 |
+| sensor4, sensor7 | sensor5 | 3 | 85 s | 0 | 12 |
+| sensor1 | sensor2 | 4 | 105 s | 0 | 16 |
+
+- Every sensor has a parent it heard; the parents reach the sink; INET's route to
+  the sink is via the parent on all eight; `addEntry` refused 0 times.
+- **4318 of 4318** ROUTE arrivals carried MintRoute's fields.
+- **The class changes no model behaviour:** `Parent` and `ParentPlain` both end at
+  event **#123697** with **0 scalars differing** (mrt:* aside), and
+  `ParentPlain` equals the probe of the same settings run before the generator's
+  `virtual` change, all 680 scalars. `V4` still ends at **#38285**.
+- **Overflow 0 on every node**; every node transmits 194 frames: 59 sink
+  beacons + 135 route floods, a complete flood.
+- `invariants.sh` GREEN (I9a over the nodes whose timer is armed), `type_check.sh`
+  GREEN (MintRoute's copied transmit counted), `leak_check.sh` GREEN (0 of 6206
+  deliveries left waiting).
+- **Red-capable:** six faults in the hand-written code (no `addEntry`; no
+  `sendEst`; no root; a parent never heard; the copied transmit drifted; a PPkt
+  field not copied) each turn the loop RED or REFUSE on the right condition, and
+  `tree.mjs` catches a parent loop, a missing field, a data event, an unheard
+  parent, a missing parent, a wrong INET route, a sink with a cost, two sinks and
+  no class scalars on doctored copies of the real `.sca`.
+- **Similarity** (`node scratch/similarity_mintroute.mjs --specific
+  Simulation/v4_mintroute`): the six ported functions **65.6 % sym / 68.7 %
+  recall**, `updateNeighborTable` and `evaluateCost` statement-identical. What
+  stays different is structural: node ids where the baseline has addresses, the
+  model's counters read instead of counted, and the generated transmit.
+
 **Where they differ, and why (the first run, before piece 2):**
 1. **Who sends beacons.** The baseline arms its beacon timer on the sink only. In
    v4 the pattern's creating event guards `x ∈ ND ∖ Dests`, the sink is in

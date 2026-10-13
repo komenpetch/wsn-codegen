@@ -68,6 +68,17 @@ control counters side by side and refuses a run whose config name or per-module
 sensitivity is not what it is read as. Measured results and the three
 differences (who beacons, how often, rebroadcast) are in its own `README.md`.
 
+**Step 3g (2026-10-13), `[Config Parent]`:** MintRoute's Specific class on the
+generated module, hand-written and ported from the baseline under its own names:
+`MintRoute.{h,cc,ned}` (operations), `MintRouteTable.h` (ETX state, under
+`PRouteTable` virtually), `MintRoutePkt.h` (the route fields, under the generated
+`RoutePkt`). `derive_wrapper.mjs` writes `EbMintRouteNetworkLayer.ned` at
+staging; `check_copy.mjs` refuses the build if MintRoute's copy of the generated
+transmit, or of PPkt's fields, has drifted; `loop.sh` runs `V4`, the control
+`ParentPlain` and `Parent`, then `tree.mjs` (the tree's gates) and
+`invariants.sh`; `type_check.sh`, `leak_check.sh` and their probes default to
+`Parent`. The measured tree and every check are in its own `README.md`.
+
 ## v3_aodv and v3_flood — one folder per routing (2026-09-27)
 
 Both folders generate from **`Update_wsn/C0_project` as it is** — read in place,
