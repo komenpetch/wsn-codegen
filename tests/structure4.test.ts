@@ -296,7 +296,12 @@ describe("structure 4", () => {
         const table = h.slice(h.indexOf("class PRouteTable "), h.indexOf("class EbWsn "));
         const module = h.slice(h.indexOf("class EbWsn "));
         expect(h).toContain("class PRouteTable : public RouteTableBase {");
-        expect(h).toContain("class EbWsn : public NetworkProtocolBase, public INetworkProtocol, public PRouteTable {");
+        // Virtually (Q14 = b, 2026-10-13): a Specific class's own table class that
+        // also inherits PRouteTable virtually shares this one table. A plain base
+        // gives the Specific module two tables, one never filled.
+        expect(h).toContain(
+          "class EbWsn : public NetworkProtocolBase, public INetworkProtocol, public virtual PRouteTable {");
+        expect(h).not.toMatch(/public PRouteTable \{/);
         // The members D2 derives, and only there.
         for (const m of ["neighbourTbl", "routeTbl", "nextHop", "lastSeqno", "missed", "received"]) {
           expect(table).toMatch(new RegExp(`^ {4}[^\\n(]*[\\s>]${m};`, "m"));

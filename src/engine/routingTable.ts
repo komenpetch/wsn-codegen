@@ -531,6 +531,14 @@ export function routeTableOperationsOf(model: EncodedMachine, t: RouteTables): s
  *   by inheritance and its translated body does not change. What needs the module
  *   itself stays there: `publishRoutes()` (node id, interface, the module as each
  *   route's source) and `arp` (the arrival and the transmit).
+ * - ⚠ VIRTUALLY (user, 2026-10-13, Q14 = b): a Specific class's own table class
+ *   sits under PRouteTable too (MintRoute's `MintRouteTable`, RouteTable_Design.md
+ *   §"re-parented under PRouteTable"), and the module that uses it inherits both.
+ *   With a plain base that module holds TWO PRouteTables: unqualified names do not
+ *   compile (`addEntry` found in multiple base-class subobjects), and the table
+ *   class's own methods compile against the second copy, which no event ever
+ *   fills. Measured with clang against INET 4.5 on the staged header. Virtual on
+ *   both sides makes it one table.
  *
  * Moves only: every declaration and definition already exists, and each is
  * matched exactly once or the pass refuses.
@@ -580,6 +588,8 @@ export function installRouteTableClasses(tree: GeneratedTree, cls: string, membe
     "// PRouteTable is the model's table: the node relations with a function keyed",
     "// over them, those functions, and the route-table operations, all derived (D2).",
     "// A Specific class changes route entries only through the operations (D1).",
+    "// The module inherits it virtually, so a Specific class's own table class",
+    "// that also inherits it virtually shares this one table rather than a copy.",
     "class PRouteTable : public RouteTableBase {",
     "  protected:",
     ...memberDecls.map((d) => d.replace(/\n$/, "")),
@@ -590,7 +600,7 @@ export function installRouteTableClasses(tree: GeneratedTree, cls: string, membe
   ].join("\n");
   const moduleClass = `class ${cls} : public NetworkProtocolBase, public INetworkProtocol {`;
   hText = mustReplace(hText, moduleClass,
-    classes + `class ${cls} : public NetworkProtocolBase, public INetworkProtocol, public PRouteTable {`,
+    classes + `class ${cls} : public NetworkProtocolBase, public INetworkProtocol, public virtual PRouteTable {`,
     `${PASS} (module class)`);
 
   let ccText = cc.content;
