@@ -201,7 +201,7 @@ void MintRoute::sendRouteBroadcast(Node x, PktId pkt)
     if (held == nullptr) return;
     auto chunk = makeShared<MintRoutePkt>(*held);
     chunk->setFwdrAddr(x);
-    chunk->setChunkLength(B(headerLength));
+    chunk->setChunkLength(b(headerLength));
     // ---- [MintRoute] the route fields (MintRoute.cc:163, :169-188) ----
     chunk->setHopCount(gbCurrentHopCount);
     chunk->setParent(gpCurrentParent);

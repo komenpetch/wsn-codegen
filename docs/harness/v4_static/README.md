@@ -11,7 +11,8 @@ logic, so whatever fails here belongs to the generated code. No DATA (D10).
   every run.
 - **Field, radio, MAC, queue:** `../v3_flood`'s `[General]`, verbatim.
 - **Settings:** `../v4_mintroute [Config V4]`'s: the baseline's timers (5 s beacons,
-  20 s route floods), header 80b, the sink in `Dests`.
+  20 s route floods), header 80b (80-byte frames until 2026-10-13, 10-byte
+  frames since; see the last section), the sink in `Dests`.
 - **`[Config Plain]`:** the generated `EbWsn` alone (control).
 - **`[Config Static]`:** `StaticRoutes`, the fixed route entries below.
 
@@ -112,3 +113,23 @@ copies of the real `.sca`: a node starved of route floods (I9a), four route
 floods against a 20 s timer in 60 s (I9b), a destination originating (I10), and
 a missing interval or `inDests` parameter (BROKEN), each caught on its own line;
 a difference of one between nodes is not flagged (I9a's tolerance).
+
+## Re-measured with 10-byte frames (2026-10-13)
+
+Every figure above was measured with 80-byte control frames: the transmit applied
+`headerLength` as bytes while the shell declares it in bits. Structure 4 now
+applies it in bits (wsn-codegen, user "q1 a"), so the configured `80b` is 10
+bytes. Predictions were written into `omnetpp.ini` first, and all held:
+
+| | 80-byte frames | 10-byte frames |
+|---|---|---|
+| `addEntry` calls / accepted / refused / disagreeing with "heard" | 20 / 9 / 11 / 0 | 20 / 9 / 11 / 0 |
+| entries in INET's table / wrong / one-hop route replaced / update applied | 8 / 0 / 1 / yes | 8 / 0 / 1 / yes |
+| log: one-hop / through another node / updated in place | 31 / 7 / 2 | 31 / 7 / 2 |
+| Plain and Static: last event / scalars differing (`static:*` aside) | #38285 / 0 | #36346 / 0 |
+| `send_down` / `send_up` = MAC Rx | 618 / 1684 | 896 / 3472 |
+| packets the sink consumes / queue overflow | 66 of 112 / 64 | **112 of 112 / 0** |
+
+Plain equals `../v4_mintroute [Config V4]` scalar for scalar at both frame sizes.
+`loop.sh`, `invariants.sh` (both configs), `type_check.sh` and `leak_check.sh`
+GREEN; 0 of 3472 deliveries left waiting.

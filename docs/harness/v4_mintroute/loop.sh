@@ -14,7 +14,8 @@
 # event) and invariants.sh on the same run.
 # REPORTED, not gated: hops against shortest paths, first-parent times, switches,
 # costs, estimates (tree.mjs); [Config V4]'s event number against the recorded
-# #38285; how many scalars differ between Parent and ParentPlain (mrt:* aside).
+# #36346 (#38285 before 2026-10-13, with 80-byte frames); how many scalars differ
+# between Parent and ParentPlain (mrt:* aside).
 #
 # EXIT CODES
 #   0  GREEN   every gate holds
@@ -104,7 +105,7 @@ sens=$(grep -E "^par SensorScopeNetwork\.\w+\.wlan\[0\]\.radio\.receiver sensiti
 for c in V4 ParentPlain Parent; do
   echo "$c: $(grep -m1 -o 'limit reached -- at t=[^,]*, event #[0-9]*' "$TMP/run_$c.log")"
 done
-echo "V4 recorded: event #38285 (steps 3e/3f)"
+echo "V4 recorded: event #36346 (10-byte frames, 2026-10-13; #38285 at 80 bytes, steps 3e/3f)"
 diffs=$(diff <(grep '^scalar ' "$PLAIN" | grep -v ' mrt:' | sort) \
              <(grep '^scalar ' "$PARENT" | grep -v ' mrt:' | sort) | grep -c '^[<>]' || true)
 echo "scalars differing between ParentPlain and Parent (mrt:* excluded): $diffs"
