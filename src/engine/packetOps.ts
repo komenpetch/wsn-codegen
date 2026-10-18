@@ -271,6 +271,32 @@ export function receiveEventsOf(base: EncodedMachine, source: EncodedMachine,
 // settles two checkable cases and leaves everything else in model order). This
 // asks one question -- does an event EARLIER in the batch than its own producer
 // get hoisted past it -- and answers it only for the hoist this function feeds.
+// What an event requires to be NON-EMPTY: `p ∈ ran(V)` or `a ↦ b ∈ V`, for a
+// machine variable V. Positive positions only — a `∉` guard states an absence
+// and needs no producer at all.
+//
+// ⚠ PER CONJUNCT, NOT PER GUARD. Both patterns are `$`-anchored on the whole
+// guard, so a COMPOUND one contributed NOTHING: `pkt ∈ ran(sentUp) ∧ pkt ∉
+// ran(sentDown)` matches neither, because the trailing conjunct defeats the
+// anchor. `finish_tx_pkt` was covered only because a second, separate guard
+// happened to state the same requirement — i.e. by luck.
+//
+// Splitting on ∧ keeps the anchors doing their job (each conjunct must end in
+// the shape, so `∈ ran(V)` inside a larger expression still does not count) and
+// cannot admit a negative: `∉` is U+2209, a different codepoint from `∈`, so a
+// negated conjunct matches neither pattern.
+export function positiveNeeds(model: EncodedMachine, ev: FlatEvent): Set<string> {
+  const needs = new Set<string>();
+  for (const g of ev.guards) {
+    for (const conj of g.split("∧")) {
+      const t = conj.trim();
+      const m = /∈\s*ran\s*\(\s*(\w+)\s*\)$/.exec(t) ?? /↦\s*\w+\s*∈\s*(\w+)$/.exec(t);
+      if (m && model.variableTypes.has(m[1])) needs.add(m[1]);
+    }
+  }
+  return needs;
+}
+
 export function starvedByHoisting(model: EncodedMachine, recv: readonly string[],
   deliverySet: readonly string[]): Set<string> {
   const byLabel = new Map(model.events.map((e) => [e.label, e]));
@@ -279,29 +305,7 @@ export function starvedByHoisting(model: EncodedMachine, recv: readonly string[]
   for (const label of recv) {
     const ev = byLabel.get(label);
     if (!ev) continue;
-    // What this event requires to be NON-EMPTY: `p ∈ ran(V)` or `a ↦ b ∈ V`.
-    // Positive positions only — a `∉` guard states an absence and needs no
-    // producer at all.
-    // ⚠ PER CONJUNCT, NOT PER GUARD. Both patterns are `$`-anchored on the
-    // whole guard, so a COMPOUND one contributed NOTHING: `pkt ∈ ran(sentUp) ∧
-    // pkt ∉ ran(sentDown)` matches neither, because the trailing conjunct
-    // defeats the anchor. `finish_tx_pkt` was covered only because a second,
-    // separate guard happened to state the same requirement — i.e. by luck.
-    //
-    // Splitting on ∧ keeps the anchors doing their job (each conjunct must end
-    // in the shape, so `∈ ran(V)` inside a larger expression still does not
-    // count) and cannot admit a negative: `∉` is U+2209, a different codepoint
-    // from `∈`, so a negated conjunct matches neither pattern. That is the
-    // "positive positions only" rule this function already relies on — a `∉`
-    // guard states an absence and needs no producer.
-    const needs = new Set<string>();
-    for (const g of ev.guards) {
-      for (const conj of g.split("∧")) {
-        const t = conj.trim();
-        const m = /∈\s*ran\s*\(\s*(\w+)\s*\)$/.exec(t) ?? /↦\s*\w+\s*∈\s*(\w+)$/.exec(t);
-        if (m && model.variableTypes.has(m[1])) needs.add(m[1]);
-      }
-    }
+    const needs = positiveNeeds(model, ev);
     if (needs.size === 0) continue;
     // Filled by an event that is NOT itself hoisted — so hoisting jumps ahead
     // of the only thing in this batch that could have enabled it.
@@ -337,6 +341,45 @@ export function hoistedReceiveEvents(model: EncodedMachine, recv: readonly strin
     if (starved.size === 0) return hoisted;
     hoisted = hoisted.filter((l) => !starved.has(l));
   }
+}
+
+/**
+ * Where in the delivery round the drain events (the ones the arrival runs
+ * inline, e.g. add_newEntry and update_nbr) go: the index just after the LAST
+ * delivery event that fills something they require. With nothing in the round
+ * filling what they need, the end of the round, as before.
+ *
+ * ⚠ "After the receive events, never before" was the only stated reason for
+ * their position, and appending them after EVERY delivery event also put them
+ * after the rebroadcast. That is not neutral: `start_tx_controlPkt` re-stamps
+ * the packet it rebroadcasts with this node's id and link sequence number
+ * (`pktFwdr ⊕ {pkt ↦ x}`, `netSeqNo(pkt) ≔ lsno`), and update_nbr reads exactly
+ * those (`pkt ↦ x ∈ pktFwdr`, `sNo = netSeqNo(pkt)`). Measured 2026-10-18 on
+ * copy-sim's field, all seven runs: a neighbour's FIRST frame was never counted
+ * (first counted sequence number 2 on 28 of 28 links; counted = decoded - 1), so
+ * every first estimate window read one frame as missed and a lossless link
+ * stayed at receiveEst 254 instead of 255. With the drains placed here, in a
+ * scratch build: first counted sequence number 1 on 28 of 28 links, counted =
+ * decoded (6523 of 6523), estimates 255, the same trees and the same event
+ * numbers.
+ *
+ * "Fills" is `addsTo` (`V ≔ V ∪ …`), deliberately: an override (`⊕`) re-stamps
+ * what is there, which is what falsifies the drain, not what enables it.
+ */
+export function drainSlotOf(model: EncodedMachine, delivery: readonly string[],
+  drains: readonly string[]): number {
+  const byLabel = new Map(model.events.map((e) => [e.label, e]));
+  const needs = new Set<string>();
+  for (const d of drains) {
+    const ev = byLabel.get(d);
+    if (ev) for (const v of positiveNeeds(model, ev)) needs.add(v);
+  }
+  let slot = -1;
+  delivery.forEach((label, i) => {
+    const ev = byLabel.get(label);
+    if (ev && ev.actions.some((a) => [...needs].some((v) => addsTo(a, v)))) slot = i;
+  });
+  return slot < 0 ? delivery.length : slot + 1;
 }
 
 // Carry named events plus the state they need, on the same terms as the

@@ -99,6 +99,34 @@ describe("structure 4", () => {
             ...(baselineLeaves.length ? ["finish"] : [])].sort());
       });
 
+      // 2026-10-18 (user: "q1 a"): a reception is counted before the rebroadcast
+      // re-stamps the packet. Appended after every delivery event, update_nbr ran
+      // after start_tx, which overwrites the forwarder and link sequence number it
+      // reads, so a neighbour's first frame was never counted (measured: first
+      // counted sequence number 2 on 28 of 28 links). See drainSlotOf.
+      it("counts a reception before the rebroadcast: the drains right after the receive events", () => {
+        const at = (body: string, s: string) => {
+          const i = body.indexOf(s);
+          expect(i, s).toBeGreaterThanOrEqual(0);
+          return i;
+        };
+        const r4 = m4.get("runDeliveryEvents")!, r3 = m3.get("runDeliveryEvents")!;
+        const add4 = at(r4, "// add_newEntry -- run by the reception");
+        const upd4 = at(r4, "// update_nbr -- run by the reception");
+        expect(at(r4, "if (try_receive_dup_controlPkt()) _any = true;")).toBeLessThan(add4);
+        expect(add4).toBeLessThan(upd4);
+        for (const later of ["try_send_down()", "try_fwdr_receive_pkt()", "try_final_tx_pkt()",
+          "try_start_tx_controlPkt()"])
+          expect(at(r4, later), later).toBeGreaterThan(upd4);
+        // Structure 3 keeps its round as measured (O1): the drains last.
+        expect(at(r3, "// update_nbr -- run by the reception")).toBeGreaterThan(at(r3, "try_start_tx_controlPkt()"));
+        // The move is the whole change: the same lines, in another order.
+        expect(r4.split("\n").filter((l) => /^\s+if \(try_\w+\(\)\) _any = true;$/.test(l)).sort())
+          .toEqual(r3.split("\n").filter((l) => /^\s+if \(try_\w+\(\)\) _any = true;$/.test(l))
+            .map((l) => l.replace("try_start_tx_otherPkt", "try_start_tx_dataPkt_bct")).concat(
+              ["        if (try_start_tx_dataPkt_fwd()) _any = true;"]).sort());
+      });
+
       // D16 piece 2 (user, 2026-10-12, Q1 = a, Q2 = a): one timer per packet
       // type, every node arming every one, handleSelfMessage in MintRoute's shape
       // (MintRoute.cc:113-128), the hooks and the route first fire from the table.

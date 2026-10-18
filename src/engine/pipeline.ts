@@ -526,7 +526,11 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       fwdr,
       // Drain the non-creating events to a bounded fixpoint. ON by default since
       // 2026-09-27; `--no-drain` reproduces the per-pass backlog it fixes.
-      drain);
+      drain,
+      // Structure 4 counts a reception before the rebroadcast re-stamps the
+      // packet (drainSlotOf: a neighbour's first frame was never counted).
+      // Structure 3 keeps its round as measured (O1).
+      version === 4);
     // PRouteTable published to INET, when the model has a route table to
     // publish. Null is a legitimate answer -- a model with no node-relation
     // carrying per-entry data has no table, and one with TWO (RTMCS M5's

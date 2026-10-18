@@ -7,6 +7,7 @@ import { pairKeyedVars } from "./pairKeyed";
 import { emittedMethods, splitParams, implOf, headerOf, unreachableEvents, mustFind, mustReplace, packetTypeLeaves } from "./emitted";
 import { DELIVERED_BY } from "./packetModel";
 import { orderByPhase } from "./phaseFlags";
+import { drainSlotOf } from "./packetOps";
 import { esc } from "./text";
 
 // A relational image, in either of the two spellings the corpus uses.
@@ -809,7 +810,11 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   // because the network branch (structure 2's MintRoute M4 / RTMCS M6 modules) calls this without
   // it and never had it; structure 3's pipeline passes true by default since
   // 2026-09-27.
-  drain = false): { decls: string; defs: string } {
+  drain = false,
+  // Place the inline drains right after what fills them (drainSlotOf), so a
+  // reception is counted before the rebroadcast re-stamps the packet. Structure
+  // 4 only (O1): structure 3 keeps its round as measured.
+  countOnArrival = false): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -1013,12 +1018,18 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
   if (deliveryLabels.length > 0 || inlined.size > 0) {
     const usable = deliveryLabels.filter((l) => scheduled.some((p) => p.label === l));
     const indent = (block: string) => block.split("\n").map((l) => `    ${l}`).join("\n");
+    const drains = firable.filter((p) => inlined.has(p.label));
+    // ⚠ After the receive events, never before: they are what fills the state
+    // these drain, so running them first would find nothing. With
+    // countOnArrival, right after the last of them and so BEFORE the
+    // rebroadcast, which re-stamps the packet the drain reads (drainSlotOf
+    // has the measurement); without it, at the end of the round, as before.
+    const slot = countOnArrival ? drainSlotOf(model, usable, drains.map((p) => p.label)) : usable.length;
+    const tryLine = (l: string) => `    if (try_${l}()) _any = true;`;
     const round = [
-      ...usable.map((l) => `    if (try_${l}()) _any = true;`),
-      // ⚠ After the receive events, never before: they are what fills the
-      // state these drain, so running them first would find nothing.
-      ...firable.filter((p) => inlined.has(p.label))
-        .map((p) => inlineAt(p).replace(/\}\(\)\) fired = true;$/, "}()) _any = true;")),
+      ...usable.slice(0, slot).map(tryLine),
+      ...drains.map((p) => inlineAt(p).replace(/\}\(\)\) fired = true;$/, "}()) _any = true;")),
+      ...usable.slice(slot).map(tryLine),
     ].join("\n");
     defs.push(
       "// The events a DELIVERY enables -- the subset an arrival may run -- to a\n" +
@@ -1082,7 +1093,9 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   // See planFor.
   senderField: PacketField | null = null,
   // See emitScheduler.
-  drain = false): GeneratedTree {
+  drain = false,
+  // See emitScheduler.
+  countOnArrival = false): GeneratedTree {
   const ccFile = implOf(tree);
   if (!ccFile)
     throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
@@ -1090,7 +1103,7 @@ export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls
   const hdr = headerOf(tree);
   const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets,
     deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""), senderField,
-    drain);
+    drain, countOnArrival);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { starvedByHoisting, hoistedReceiveEvents } from "../src/engine/packetOps";
+import { starvedByHoisting, hoistedReceiveEvents, drainSlotOf } from "../src/engine/packetOps";
 import type { EncodedMachine, FlatEvent } from "../src/engine/types";
 
 // THE DELIVERY BATCH ORDER IS BEHAVIOUR. `runDeliveryEvents()` attempts each
@@ -165,5 +165,66 @@ describe("hoistedReceiveEvents demotes to a FIXPOINT, not in one pass", () => {
     const safe = ev("s", ["x ∈ ND"], []);
     expect(hoistedReceiveEvents(machine([safe, C], TYPES), ["s"], ["s", "c"]))
       .toEqual(["s"]);
+  });
+});
+
+// Where the drains the arrival runs inline (add_newEntry, update_nbr) go in the
+// delivery round, for structure 4. Measured 2026-10-18: appended after every
+// delivery event they ran after the rebroadcast, whose start_tx re-stamps the
+// packet's forwarder and link sequence number -- exactly what update_nbr reads --
+// so a neighbour's FIRST frame was never counted (first counted sequence number 2
+// on 28 of 28 links). Right after the events that fill what they need, every
+// frame is counted.
+describe("drainSlotOf", () => {
+  const OVERRIDE = "";   // Rodin's relational override, as the models store it
+  const DTYPES: [string, string][] = [
+    ["updateNbrs", "updateNbrs ∈ ND ↔ ND"],
+    ["neighbourTbl", "neighbourTbl ∈ ND ↔ ND"],
+    ["pktFwdr", "pktFwdr ∈ PKT ⇸ ND"],
+    ["recvBuff", "recvBuff ∈ ND ↔ PKT"],
+    ["ndBuff", "ndBuff ∈ ND ↔ PKT"],
+  ];
+  // The bundle's shapes, reduced to what the slot turns on.
+  const recvCtl = ev("receive_controlPkt", ["pkt ↦ nb ∈ ctlNeighbours", "f ↦ nb ∉ updateNbrs"],
+    ["recvBuff ≔ recvBuff ∪ {nb ↦ pkt}", "updateNbrs ≔ updateNbrs ∪ {f ↦ nb}"]);
+  const recvDup = ev("receive_dup_controlPkt", ["f ↦ nb ∉ updateNbrs"],
+    ["updateNbrs ≔ updateNbrs ∪ {f ↦ nb}"]);
+  const sendDown = ev("send_down", ["x ↦ pkt ∈ sentDown"], []);
+  const fwdrRecv = ev("fwdr_receive_pkt", ["nb ↦ pkt ∈ recvBuff"], ["ndBuff ≔ ndBuff ∪ {nb ↦ pkt}"]);
+  const startTx = ev("start_tx_controlPkt", ["x ↦ pkt ∈ ndBuff"],
+    [`pktFwdr ≔ pktFwdr ${OVERRIDE} {pkt ↦ x}`, "ndBuff ≔ ndBuff ∖ {x ↦ pkt}"]);
+  const addNew = ev("add_newEntry", ["x ↦ y ∈ updateNbrs", "y ↦ x ∉ neighbourTbl"],
+    ["neighbourTbl ≔ neighbourTbl ∪ {y ↦ x}"]);
+  const updNbr = ev("update_nbr", ["x ↦ y ∈ updateNbrs", "y ↦ x ∈ neighbourTbl", "pkt ↦ x ∈ pktFwdr"],
+    ["updateNbrs ≔ updateNbrs ∖ {x ↦ y}"]);
+  const round = ["receive_controlPkt", "receive_dup_controlPkt", "send_down", "fwdr_receive_pkt",
+    "start_tx_controlPkt"];
+  const m = machine([recvCtl, recvDup, sendDown, fwdrRecv, startTx, addNew, updNbr], DTYPES);
+
+  it("puts the drains right after the last event that fills what they need, before the rebroadcast", () => {
+    expect(drainSlotOf(m, round, ["add_newEntry", "update_nbr"])).toBe(2);
+  });
+
+  it("⚠ does not count an override as filling: re-stamping is what falsifies the drain", () => {
+    // update_nbr needs `pkt ↦ x ∈ pktFwdr`, and start_tx writes pktFwdr -- by ⊕.
+    // Were that a filler, the slot would be after start_tx, which is the defect.
+    const filling = ev("start_tx_controlPkt", ["x ↦ pkt ∈ ndBuff"], ["pktFwdr ≔ pktFwdr ∪ {pkt ↦ x}"]);
+    const m2 = machine([recvCtl, recvDup, sendDown, fwdrRecv, filling, addNew, updNbr], DTYPES);
+    expect(drainSlotOf(m2, round, ["update_nbr"])).toBe(5);
+    expect(drainSlotOf(m, round, ["update_nbr"])).toBe(2);
+  });
+
+  it("reads POSITIVE positions only: a ∉ guard needs no producer", () => {
+    // add_newEntry's `y ↦ x ∉ neighbourTbl` must not tie it to whatever fills
+    // neighbourTbl; only its `∈ updateNbrs` places it.
+    const fillsTbl = ev("fills_tbl", [], ["neighbourTbl ≔ neighbourTbl ∪ {a ↦ b}"]);
+    const m3 = machine([recvCtl, recvDup, fillsTbl, addNew], DTYPES);
+    expect(drainSlotOf(m3, ["receive_controlPkt", "receive_dup_controlPkt", "fills_tbl"], ["add_newEntry"]))
+      .toBe(2);
+  });
+
+  it("with nothing in the round filling what they need, the end of the round, as before", () => {
+    expect(drainSlotOf(m, ["send_down", "fwdr_receive_pkt", "start_tx_controlPkt"], ["update_nbr"]))
+      .toBe(3);
   });
 });
