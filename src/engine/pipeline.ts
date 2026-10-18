@@ -6,7 +6,7 @@ import { emit, carriesPattern, type EmitVersion } from "./codeEmitter";
 import { tryNetworkLayer, emitWithPacketClasses } from "./netPipeline";
 import { installNetProtocolShell, renameCommPatternPair } from "./netProtocolShell";
 import { installScheduler } from "./scheduler";
-import { bindNodeIdentity, nodeSetsOf, sinkConstantOf } from "./nodeIdentity";
+import { bindNodeIdentity, nodeSetsOf, releaseNodeIdentity, sinkConstantOf } from "./nodeIdentity";
 import { packetModelOf } from "./packetModel";
 import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, hoistedReceiveEvents, senderFieldOf, mergeContexts } from "./packetOps";
@@ -149,7 +149,11 @@ function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
   packetSource?: PacketSource, drain = true): GeneratedTree {
-  const tree = emitBody(raw, target, outputName, version, packetSource, drain);
+  // Every node takes its id out of the shared node sets when its module is
+  // destroyed (releaseNodeIdentity). Here, after every pass that shapes the
+  // destructor; a no-op for an output that puts no id in a shared set.
+  const tree = releaseNodeIdentity(
+    emitBody(raw, target, outputName, version, packetSource, drain), outputName);
   // ONE exit point for the namespace, so a future structure cannot be added
   // without it. A module emitted without the wrap compiles perfectly on its own
   // and fails only when linked beside a second generated module, with

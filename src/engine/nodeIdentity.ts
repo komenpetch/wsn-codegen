@@ -1,6 +1,6 @@
 import { INITIALISATION } from "./types";
 import type { EncodedMachine, GeneratedTree, RawContext } from "./types";
-import { mustFind, markRealised } from "./emitted";
+import { mustFind, markRealised, headerOf, implText } from "./emitted";
 import { subsetClosure } from "./text";
 
 // The node-level identity binding: bind the model's carrier set to the
@@ -396,5 +396,72 @@ export function bindNodeIdentity(tree: GeneratedTree, model: EncodedMachine,
       };
     }
     return f;
+  });
+}
+
+// ── Taking the ids out again ─────────────────────────────────────────────────
+//
+// ND and the node subsets the harness fills are namespace-scope sets: one per
+// program, shared by every module, and they outlive the network. The binding
+// above puts each node's id in at initialisation and, until 2026-10-18, nothing
+// took it out. OMNeT++'s deleteNetwork() deletes every module and then hands the
+// next network the same module ids again (csimulation.cc:521, `lastComponentId
+// = 0` at :536), so a second run in one process (Qtenv choosing another config,
+// or Cmdenv running several) started with the first run's members. Measured:
+// V4, whose sink is in Dests, then Parent360 in one Qtenv window left the sink in
+// Dests, so it never beaconed and no tree formed. Same family as the protocol
+// kept across networks (0d8ad7d): state that lives per process while the
+// network lives per run.
+//
+// So a node takes its id out of every shared set it put it in, in its
+// destructor: the one place C++ guarantees runs for every module, a run that
+// ended in an error included (finish() does not), and before the next network is
+// set up. Which sets is read off the emitted code, so the two halves cannot
+// disagree: a namespace-scope `std::set<int>` the .cc inserts `myNodeId` into. A
+// module's own member set is not one of them: it goes with the module.
+//
+// Called at the pipeline's single exit, after every pass that shapes the
+// destructor: structure 4's timer pass replaces the one-line destructor by its
+// exact text, so an edit made here earlier would break that pass.
+export function releaseNodeIdentity(tree: GeneratedTree, cls: string): GeneratedTree {
+  const shared = new Set([...(headerOf(tree)?.content ?? "")
+    .matchAll(/^inline std::set<int> (\w+)\s*[;=]/gm)].map((m) => m[1]));
+  const sets = [...new Set([...implText(tree).matchAll(/\b(\w+)\.insert\(myNodeId\);/g)]
+    .map((m) => m[1]).filter((n) => shared.has(n)))];
+  if (!sets.length) return tree;
+
+  return tree.map((f) => {
+    if (!f.path.endsWith(".cc")) return f;
+    const cc = f.content;
+    const open = `${cls}::~${cls}() {`;
+    const at = cc.indexOf(open);
+    if (at < 0)
+      throw new Error(`releaseNodeIdentity: the module puts its id in ${sets.join(", ")} and the `
+        + `emitted .cc has no destructor (${open}) to take it out again.`);
+    const brace = at + open.length - 1;
+    let depth = 0, close = -1;
+    for (let i = brace; i < cc.length && close < 0; i++) {
+      if (cc[i] === "{") depth++;
+      else if (cc[i] === "}" && --depth === 0) close = i;
+    }
+    if (close < 0)
+      throw new Error(`releaseNodeIdentity: ${cls}'s destructor has no closing brace.`);
+    // The destructor's own statements, kept: a one-line body becomes its own
+    // indented line, a block keeps its lines as they are.
+    const body = cc.slice(brace + 1, close);
+    const block = body.replace(/^[ \t]*\n/, "").replace(/\s+$/, "");
+    const kept = !block.trim() ? [] : body.includes("\n") ? block.split("\n") : [`    ${block.trim()}`];
+    const release = [
+      "    // Take this node's id out of the node sets it joined in initialize():",
+      `    // ${sets.join(", ")}. They are shared by every module and kept for the`,
+      "    // whole program, and OMNeT++ gives the next network the same module ids",
+      "    // (cSimulation::deleteNetwork), so without this the next run in this",
+      "    // process would start with this run's members.",
+      ...sets.map((s) => `    ${s}.erase(myNodeId);`),
+    ];
+    return {
+      ...f,
+      content: cc.slice(0, at) + [open, ...kept, ...release, "}"].join("\n") + cc.slice(close + 1),
+    };
   });
 }
