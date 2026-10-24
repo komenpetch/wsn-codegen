@@ -422,38 +422,43 @@ function installCounters(t: Texts, cls: string, tags: string[]): Texts {
 // Exported for its own test: no generated module leaves an old name behind, so
 // only a crafted one can show the survival check works.
 export function installLeafNames(t: Texts, cls: string, tags: string[],
-  names: BaselineNames = TAG_NAMES): Texts {
+  names: BaselineNames): Texts {
   let { h, cc } = t;
   const { leaves, cite } = names;
   for (const tag of tags) {
-    const names = leaves[tag];
-    if (!names) continue;
+    const leaf = leaves[tag];
+    if (!leaf) continue;
     const send = broadcastMethodOf(tag), rec = onReceiveOf(tag);
     const where = (what: string) => `${PASS} (${tag} ${what})`;
-    if (names.timer) {
-      const n = names.timer.name;
+    if (leaf.timer) {
+      const n = leaf.timer.name;
       h = mustReplace(h, `    virtual void ${send}();\n`, `    virtual void ${n}();\n`, where("timer, .h"));
       cc = mustReplace(cc,
         `// put it on the air through the overload below.\nvoid ${cls}::${send}() {`,
-        `// put it on the air through ${names.send?.name ?? "the overload"} below.\n`
-        + `${cite(names.timer.line)}void ${cls}::${n}() {`, where("timer, definition"));
+        `// put it on the air through ${leaf.send?.name ?? "the overload"} below.\n`
+        + `${cite(leaf.timer.line)}void ${cls}::${n}() {`, where("timer, definition"));
       cc = mustReplace(cc, `        ${send}();\n`, `        ${n}();\n`, where("timer, call"));
     }
-    if (names.send) {
-      const n = names.send.name;
+    if (leaf.send) {
+      const n = leaf.send.name;
       h = mustReplace(h, `    virtual void ${send}(Node x, PktId pkt);\n`,
         `    virtual void ${n}(Node x, PktId pkt);\n`, where("send, .h"));
       cc = mustReplace(cc, `void ${cls}::${send}(Node x, PktId pkt) {`,
-        `${cite(names.send.line)}void ${cls}::${n}(Node x, PktId pkt) {`, where("send, definition"));
+        `${cite(leaf.send.line)}void ${cls}::${n}(Node x, PktId pkt) {`, where("send, definition"));
       cc = mustReplace(cc, `case PktType::${tag}: ${send}(x, pkt); break;`,
         `case PktType::${tag}: ${n}(x, pkt); break;`, where("send, dispatch"));
+      // The timer's target keeps its name when only the transmit is renamed
+      // (DSR); its comment names the overload it calls, which has a new name.
+      if (!leaf.timer)
+        cc = mustReplace(cc, `// put it on the air through the overload below.\nvoid ${cls}::${send}() {`,
+          `// put it on the air through ${n} below.\nvoid ${cls}::${send}() {`, where("send, timer comment"));
     }
-    if (names.receive) {
-      const n = names.receive.name;
+    if (leaf.receive) {
+      const n = leaf.receive.name;
       h = mustReplace(h, `    virtual void ${rec}(Packet *packet, const Ptr<const PPkt>& header);\n`,
         `    virtual void ${n}(Packet *packet, const Ptr<const PPkt>& header);\n`, where("receive, .h"));
       cc = mustReplace(cc, `void ${cls}::${rec}(Packet *packet, const Ptr<const PPkt>& header) {`,
-        `${cite(names.receive.line)}void ${cls}::${n}(Packet *packet, const Ptr<const PPkt>& header) {`,
+        `${cite(leaf.receive.line)}void ${cls}::${n}(Packet *packet, const Ptr<const PPkt>& header) {`,
         where("receive, definition"));
       cc = mustReplace(cc, `            ${rec}(packet, _wire);\n`, `            ${n}(packet, _wire);\n`,
         where("receive, dispatch"));
@@ -462,13 +467,15 @@ export function installLeafNames(t: Texts, cls: string, tags: string[],
     // as two overloads. Renamed together (AODV), no use of the name may survive;
     // renamed alone (DSR renames only the transmit), only that overload's.
     const gone: { what: string; re: RegExp }[] = [];
-    if (names.timer && names.send) gone.push({ what: send, re: new RegExp(`\\b${send}\\b`) });
+    if (leaf.timer && leaf.send) gone.push({ what: send, re: new RegExp(`\\b${send}\\b`) });
     else {
-      if (names.timer) gone.push({ what: `${send}()`, re: new RegExp(`\\b${send}\\(\\)`) });
-      if (names.send)
-        gone.push({ what: `${send}(Node, PktId)`, re: new RegExp(`\\b${send}\\((?:Node x, PktId pkt|x, pkt)\\)`) });
+      if (leaf.timer) gone.push({ what: `${send}()`, re: new RegExp(`\\b${send}\\(\\)`) });
+      // Any non-empty argument list: a use that kept the old name under other
+      // argument names survives as surely as `(x, pkt)` does.
+      if (leaf.send)
+        gone.push({ what: `${send}(Node, PktId)`, re: new RegExp(`\\b${send}\\(\\s*[^)\\s]`) });
     }
-    if (names.receive) gone.push({ what: rec, re: new RegExp(`\\b${rec}\\b`) });
+    if (leaf.receive) gone.push({ what: rec, re: new RegExp(`\\b${rec}\\b`) });
     for (const { what, re } of gone)
       if (re.test(h + cc))
         throw new Error(`${PASS}: ${what} survives after ${tag}'s methods took the baseline's names.`);
@@ -482,7 +489,7 @@ export function installLeafNames(t: Texts, cls: string, tags: string[],
  * order (MintRoute's), then any others as the model lists them.
  */
 export function installBaselineShell(tree: GeneratedTree, cls: string, pm: PacketModel,
-  names: BaselineNames = TAG_NAMES): GeneratedTree {
+  names: BaselineNames): GeneratedTree {
   const h = headerOf(tree), cc = implOf(tree), ned = nedOf(tree);
   if (!h || !cc || !ned) throw new Error(`${PASS}: the module is missing a .h, .cc or .ned.`);
   const scheduled = pm.leaves.filter((l) => cc.content.includes(`bool ${cls}::try_${l.event}()`))

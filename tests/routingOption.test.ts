@@ -75,6 +75,13 @@ describe("routing: choosing the bundled split without editing the input", () => 
         .toThrow(new RegExp(`routing "${bad}" is not one of flooding, aodv, dsr`));
   });
 
+  // dsr is structure 4 only, and structure 4 is what `nextHop` builds: the rule
+  // holds here as well as in the pipeline, for a caller that skips the pipeline.
+  it("refuses dsr without the next-hop design (structure 3's bundle)", () => {
+    expect(() => patternExtensionFor(project, "pM3", "dsr"))
+      .toThrow("The dsr routing applies to structure 4 only");
+  });
+
   it("refuses a project whose control set the bundled splits do not partition", () => {
     const flood = [machine("FLOOD"), ctx("C1", ["partition(TYPE, FLOOD, {DATA})"], ["DATA", "FLOOD", "type"])];
     expect(() => patternExtensionFor(flood, "pM3", "flooding")).toThrow(/control set is FLOOD/);

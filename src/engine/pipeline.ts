@@ -12,7 +12,7 @@ import { packetTypeLattice, type TypeLattice } from "./packetTypes";
 import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablingEventsOf, senderQueuesOf, arrivalRequirementsOf, deliveryRequirementsOf, supersededEventsOf, drainEventsOf, deserialiseFieldsOf, transmitRecordsItsOwnFiring, senderSideDrainOf, hoistedReceiveEvents, senderFieldOf, mergeContexts } from "./packetOps";
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { routeTableOf, bindRoutingTable, routeTablesOf, bindRouteEntries, installUnicast, routeTableOperationsOf, routeTableMembersOf, installRouteTableClasses } from "./routingTable";
-import { patternExtensionFor, controlSetOf, dataTypeOf } from "./patternExtension";
+import { patternExtensionFor, controlSetOf, dataTypeOf, resolveRouting } from "./patternExtension";
 import { routingProfile, checkRoutingStructure, type RoutingStyle } from "./routing";
 import { structureProfile } from "./structure";
 import { packetIdentityOf } from "./mediumBinding";
@@ -561,7 +561,19 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // not make for it.
     if (tables) {
       // Structure 4 publishes both tables (D5, step 3d), read once above.
-      // ⚠ Their MEMBERS, though, come off the merged model below
+      // ⚠ The MODULE must hold exactly those, and is checked rather than
+      // assumed: a base project declaring a node relation of its own with
+      // per-entry data would give the merged model more candidates than the
+      // packet source, and its relation would go unpublished without a word.
+      // Before the tables were read once that case was refused here; it still is.
+      const inModule = routeTablesOf(model, nodeSets);
+      if (!inModule || inModule.neighbours !== tables.neighbours || inModule.routes !== tables.routes
+          || inModule.nextHop !== tables.nextHop)
+        throw new Error(`Structure 4's module does not hold exactly the packet source's route tables `
+          + `(${tables.neighbours}, ${tables.routes} with ${tables.nextHop}): `
+          + (inModule ? `it reads as ${inModule.neighbours}, ${inModule.routes} with ${inModule.nextHop}.`
+            : "it has more or fewer candidate node relations, so which to publish is not settled."));
+      // ⚠ Their MEMBERS come off the merged model below
       // (routeTableMembersOf(model, …)): that is the order PRouteTable declares
       // them in, and the packet source's model lists them in another.
       const ctl = controlSetOf(raw);
@@ -577,11 +589,12 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // structure 2's was matched to SensorApp (D16). After every pass that
       // shapes the methods it edits.
       // The routing's profile gives the shell its baseline names (a DSR module
-      // takes DSR's, the v4 DSR plan Q4); with no routing given, the names
-      // keyed by leaf tag that flooding and AODV share.
+      // takes DSR's, the v4 DSR plan Q4). With none given, the routing the
+      // project's shape reads as, by the same rule that chose the split
+      // (resolveRouting).
       const shell = structure.baselineShell
         ? installBaselineShell(published, outputName, pm,
-          routing === undefined ? undefined : routingProfile(routing).names)
+          routingProfile(resolveRouting(routing, raw.contexts)).names)
         : published;
       // Then the Route Table column's own classes (D2, step 3e), last: they only
       // move declarations and definitions the passes above have finished.

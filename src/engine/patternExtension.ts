@@ -8,7 +8,7 @@ import { packetTypeLattice } from "./packetTypes";
 import uM4 from "../assets/pattern-extension/uM4.bum?raw";
 import pM5 from "../assets/pattern-extension/pM5.bum?raw";
 import uM6 from "../assets/pattern-extension/uM6.bum?raw";
-import { routingProfile, type RoutingStyle } from "./routing";
+import { routingProfile, checkRoutingStructure, type RoutingStyle } from "./routing";
 import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
 import { lowerTag } from "./text";
 
@@ -69,9 +69,10 @@ import { lowerTag } from "./text";
 // means. ⚠ The uploaded project is NOT edited to obtain them — that was tried
 // on 2026-09-21 and reversed.
 //
-// ✅ AND THERE ARE TWO NOW (2026-09-27): MintRoute's split for a flooding-shaped
-// project and RTMCS's for an AODV-shaped one, chosen by routingStyleOf. The
-// events derived from either are the same derivation; only the leaves differ.
+// ✅ AND THERE ARE SEVERAL (2026-09-27, DSR's 2026-10-24): MintRoute's split for
+// a flooding-shaped project and RTMCS's for an AODV-shaped one, chosen by
+// routingStyleOf, and DSR's when `--routing dsr` asks for it (routing.ts). The
+// events derived from any of them are the same derivation; only the leaves differ.
 // ⚠ Under the current scope (no unicast) an AODV-shaped module FLOODS all three
 // of RREQ, RREP and RRER, where RTMCS sends RREP and RRER to one next hop — a
 // deliberate stand-in (user decision d2), recorded in
@@ -81,7 +82,7 @@ export const PATTERN_EXTENSION_LEAF = "pM5";
 export const NEXT_HOP_LEAF = "uM6";
 
 // The context uM4 sees when no bundled split is in play: the pattern's own,
-// which both bundled splits extend.
+// which every bundled split extends.
 const SEES_WITHOUT_SPLIT = "C1";
 
 /**
@@ -131,6 +132,17 @@ export function routingStyleOf(contexts: RawModel["contexts"]): RoutingStyle {
     .flatMap((c) => c.axioms.map((a) => member.exec(a.text.trim())))
     .some((m) => m !== null && declared.has(m[1]) && destinationSets.has(m[2]));
   return namedDestination ? "aodv" : "flooding";
+}
+
+/**
+ * The routing a structure-3 or -4 module is generated for: the one asked for,
+ * or else the one the project's shape reads as. The ONE place that rule is
+ * written: the bundled split (patternExtensionFor) and the baseline shell's
+ * names (pipeline) both take it from here, so the two cannot disagree.
+ */
+export function resolveRouting(routing: RoutingStyle | undefined,
+  contexts: RawModel["contexts"]): RoutingStyle {
+  return routing ?? routingStyleOf(contexts);
 }
 
 // The machine `uM4` is authored against the app-layer pattern's own leaf name.
@@ -730,8 +742,10 @@ function instantiateB(xml: string, raw: RawModel): string {
  */
 export function patternExtensionFor(files: EbFiles, base: string,
   routing?: RoutingStyle, nextHop = false): { files: EbFiles; machine: string } {
-  // Checked before the project is read: an unknown routing is refused by name.
-  if (routing !== undefined) routingProfile(routing);
+  // Checked before the project is read: an unknown routing is refused by name,
+  // and one the structure cannot carry (dsr is structure 4 only, which is what
+  // `nextHop` builds) by its profile's rule, as the pipeline does.
+  if (routing !== undefined) checkRoutingStructure(routing, nextHop ? 4 : 3);
   const project = parseModel(files);
 
   const declared = new Set(project.machines.flatMap((m) => m.variables));
@@ -756,19 +770,19 @@ export function patternExtensionFor(files: EbFiles, base: string,
   //                    set is FLOOD, or which declares none, would receive a
   //                    partition of a set it does not have.
   //
-  // WHICH of the two bundled splits is read off the project's shape
-  // (routingStyleOf). Only one is ever added: the two partition the same set
+  // WHICH bundled split is read off the project's shape (routingStyleOf) when
+  // no routing is given. Only one is ever added: they partition the same set
   // differently and would contradict each other.
   //
-  // ⚠ OR BY THE CALLER (`routing`, the CLI's `--routing`). Both routings come
+  // ⚠ OR BY THE CALLER (`routing`, the CLI's `--routing`). Every routing comes
   // from the pattern the tool ships, and the input is never edited to say which
   // (user, 2026-09-27: "we not try to edit the input, everything that we build
   // came from pattern"), so a project that names no sink can still be generated
-  // either way. It only ever chooses between the TOOL's two splits: a project
+  // any way. It only ever chooses between the TOOL's splits: a project
   // that declares its own, or whose control set is not the one they split, is
   // REFUSED rather than silently left as it is — a flag that does nothing is the
   // failure this project has paid for before.
-  const split = routingProfile(routing ?? routingStyleOf(project.contexts)).split;
+  const split = routingProfile(resolveRouting(routing, project.contexts)).split;
   const ctlSet = controlSetOf(project);
   const ownLeaves = controlLeavesOf(project);
   if (routing !== undefined && ownLeaves.length > 0)

@@ -488,4 +488,23 @@ describe("structure 4", () => {
     expect(() => generateMerged(files(), undefined, 4, { files: loadProject("MintRoute"), machine: "" }))
       .toThrow(/does not have exactly one of each/);
   });
+
+  // The module must hold exactly the packet source's tables. A base project with
+  // a node relation of its own carrying per-entry data (added here in memory;
+  // the input is not edited), given the plain project's bundle as its packet
+  // source, was generated with that relation silently unpublished.
+  it("refuses a module whose route tables differ from the packet source's", () => {
+    const withExtra = files().map((f) => f.name !== "pM3.bum" ? f : {
+      ...f,
+      xml: f.xml.replace("</org.eventb.core.machineFile>",
+        `   <org.eventb.core.variable name="varX1" org.eventb.core.identifier="extraTbl"/>
+   <org.eventb.core.variable name="varX2" org.eventb.core.identifier="extraCnt"/>
+   <org.eventb.core.invariant name="invX1" org.eventb.core.label="inv_x1" org.eventb.core.predicate="extraTbl ∈ ND ↔ ND"/>
+   <org.eventb.core.invariant name="invX2" org.eventb.core.label="inv_x2" org.eventb.core.predicate="extraCnt ∈ extraTbl → ℕ"/>
+</org.eventb.core.machineFile>`),
+    });
+    const plain = patternExtensionFor(files(), "pM3", undefined, true);
+    expect(() => generateMerged(withExtra, undefined, 4, { files: plain.files, machine: plain.machine }))
+      .toThrow(/does not hold exactly the packet source's route tables/);
+  });
 });

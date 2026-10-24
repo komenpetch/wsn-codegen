@@ -53,8 +53,13 @@ describe("structure 4, DSR: its own context and the Final Report's name", () => 
     }
   });
 
-  it("the transmit overload's old name does not survive", () => {
-    expect(h + cc).not.toMatch(/\bsendRreqBroadcast\((?:Node x, PktId pkt|x, pkt)\)/);
+  it("the transmit overload's old name does not survive, under any argument names", () => {
+    expect(h + cc).not.toMatch(/\bsendRreqBroadcast\(\s*[^)\s]/);
+  });
+
+  it("the timer's target, which keeps its name, says it calls sendRREQ", () => {
+    expect(cc).toContain("// put it on the air through sendRREQ below.\nvoid EbWsn::sendRreqBroadcast() {");
+    expect(cc).not.toContain("through the overload below.\nvoid EbWsn::sendRreqBroadcast()");
   });
 
   it("is the AODV module with AODV's names and citations undone, and the context renamed", () => {
@@ -67,7 +72,6 @@ describe("structure 4, DSR: its own context and the Final Report's name", () => 
       .replace(/\bstartRouteDiscovery\b/g, "sendRreqBroadcast")
       .replace(/\bhandleRREQ\b/g, "onReceiveRreqPkt")
       .replace(/\bcreateRREQ\(/g, "create_rreqPkt(")
-      .replace("put it on the air through sendRREQ below.", "put it on the air through the overload below.")
       .replace("C2_aodv", "C2_dsr");
     const undoDsr = (text: string) =>
       text.replace(/^\/\/ The Final Report's name for it \(printed p\.\d+, the text above Fig 6\.9\)\.\n/gm,
@@ -86,17 +90,23 @@ describe("the survival check after a lone transmit rename", () => {
   // A crafted module: just the anchors DSR's rename needs, and the timer's
   // no-argument target, which DSR keeps.
   const h = "    virtual void sendRreqBroadcast();\n    virtual void sendRreqBroadcast(Node x, PktId pkt);\n";
-  const cc = "void EbWsn::sendRreqBroadcast() {\n}\nvoid EbWsn::sendRreqBroadcast(Node x, PktId pkt) {\n}\n"
+  const cc = "// put it on the air through the overload below.\nvoid EbWsn::sendRreqBroadcast() {\n}\n"
+    + "void EbWsn::sendRreqBroadcast(Node x, PktId pkt) {\n}\n"
     + "        case PktType::RREQ: sendRreqBroadcast(x, pkt); break;\n";
 
   it("passes when only the timer's target keeps the old name", () => {
     const out = installLeafNames({ h, cc, ned: "" }, "EbWsn", ["RREQ"], DSR_NAMES);
     expect(out.cc).toContain("void EbWsn::sendRREQ(Node x, PktId pkt) {");
-    expect(out.cc).toContain("void EbWsn::sendRreqBroadcast() {");
+    expect(out.cc).toContain("// put it on the air through sendRREQ below.\nvoid EbWsn::sendRreqBroadcast() {");
   });
 
   it("refuses when a call to the renamed overload survives", () => {
     expect(() => installLeafNames({ h, cc: cc + "    sendRreqBroadcast(x, pkt);\n", ned: "" }, "EbWsn", ["RREQ"], DSR_NAMES))
+      .toThrow(/sendRreqBroadcast\(Node, PktId\) survives/);
+  });
+
+  it("refuses a surviving use under other argument names", () => {
+    expect(() => installLeafNames({ h, cc: cc + "    sendRreqBroadcast(nb, pkt);\n", ned: "" }, "EbWsn", ["RREQ"], DSR_NAMES))
       .toThrow(/sendRreqBroadcast\(Node, PktId\) survives/);
   });
 });

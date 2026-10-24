@@ -34,7 +34,7 @@ import { resolve } from "node:path";
 import { generate, generateMerged, machineNames, leafMachine, MODULE_NAME } from "../src/engine/pipeline";
 import { loadProject, resolveInput } from "./projects";
 import { carriesPattern, type EmitVersion } from "../src/engine/codeEmitter";
-import { ROUTINGS, type RoutingStyle } from "../src/engine/routing";
+import { ROUTINGS, routingProfile, checkRoutingStructure, type RoutingStyle } from "../src/engine/routing";
 
 const argv = process.argv.slice(2);
 const flag = argv.find((a) => /^--v[1234]$/.test(a));
@@ -50,8 +50,8 @@ const noDrain = argv.includes("--no-drain");
 const drain = !noDrain;
 const mIdx = argv.indexOf("--machine");
 const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
-// Which of the pattern's two control splits structure 3 applies: flooding
-// (MintRoute's ROUTE/BEACON) or aodv (RTMCS's RREQ/RREP/RRER). Without it the
+// Which of the pattern's control splits structures 3 and 4 apply: flooding
+// (MintRoute's ROUTE/BEACON), aodv (RTMCS's RREQ/RREP/RRER) or dsr. Without it the
 // tool reads the project's shape, and a project that names no sink floods. The
 // input is never edited to choose (user, 2026-09-27) -- the choice is made here.
 const rIdx = argv.indexOf("--routing");
@@ -74,11 +74,17 @@ const valueAt = new Set([mIdx, rIdx].filter((i) => i >= 0).map((i) => i + 1));
 // a module the flag never touched, which is the "flag that does nothing"
 // failure this project has paid for before.
 const drainFlag = argv.find((a) => a === "--drain" || a === "--no-drain");
-// Same reason: only structure 3 carries the pattern whose split it chooses.
-if (routing && !carriesPattern(version)) {
-  console.error("\n--routing applies to structures 3 and 4 (--v3, --v4), which carry the "
-    + "pattern extension. Re-run with --v3 or --v4, or drop --routing.\n");
-  process.exit(2);
+// Same reason: a routing chooses the pattern's split, which only structures 3
+// and 4 carry, and its profile may narrow that (dsr: structure 4 only). The
+// rule is the profile's (routing.ts); the advice names what it allows.
+if (routing) {
+  try {
+    checkRoutingStructure(routing, version);
+  } catch (e) {
+    const allowed = routingProfile(routing).structures.map((v) => `--v${v}`).join(" or ");
+    console.error(`\n${(e as Error).message} Re-run with ${allowed}, or drop --routing.\n`);
+    process.exit(2);
+  }
 }
 if (drainFlag && !carriesPattern(version)) {
   console.error(`\n${drainFlag} applies to structures 3 and 4 (--v3, --v4); it is not wired `
