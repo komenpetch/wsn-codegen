@@ -48,6 +48,14 @@ class MintRoute : public eb_ebwsn::EbWsn, public MintRouteTable
     long parentChanges = 0, addEntryCalls = 0, addEntryRefused = 0;
     long routeFieldsRead = 0, routeFieldsMissing = 0;
 
+    // The tree, drawn (user, 2026-10-17, Q1 c): an arrow from this node to its
+    // parent on the Qtenv network view, moved whenever the parent changes; and,
+    // from the sink's finish(), the whole tree as an SVG beside the results.
+    // Drawing only: neither creates an event nor draws a random number.
+    cLineFigure *parentArrow = nullptr;
+    void drawParentArrow();
+    void writeTreeSvg();
+
   public:
     void initialize(int stage) override;
     void finish() override;

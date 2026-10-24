@@ -209,3 +209,71 @@ So V4's incomplete flood was the frame size: at 10 bytes every packet reaches
 the sink and no queue overflows. MintRoute's tree does not depend on it. Loop,
 `invariants.sh`, `type_check.sh` and `leak_check.sh` GREEN (0 of 6208 deliveries
 waiting); the six ported functions' similarity is unchanged (65.6 % / 68.7 %).
+
+## The baseline with DATA (2026-10-17)
+
+Without DATA the baseline builds no tree (only the sink beacons, and a ROUTE
+packet is not counted in the link estimates). To compare trees, the baseline
+runs with SensorApp as MyWSN sets it (every sensor, 1 s, 10 B; the sink
+listening). User, 2026-10-17: restore MiXiM's receive order in a harness
+subclass, libINET untouched; v4 stays without DATA.
+
+- **`BaselineMintRoute.{h,cc,ned}`** — `inet::MintRoute` with one change
+  (`restoreMiximOrder = true`): a received DATA frame updates the link counters
+  before the duplicate check, as MiXiM's MintRoute does. The port checks first
+  and returns, and its duplicate key is (originator, data, type) with data
+  always 0.0, so every DATA packet after a sensor's first never reached the
+  counters. `finish()` records `bl:*`, with the meanings of MintRoute's `mrt:*`.
+- **`[Config BaselineData]`** — that class + SensorApp. **`[Config
+  BaselineDataAsIs]`** — the same with `restoreMiximOrder = false`, the port as
+  it is.
+- **`baseline_tree.mjs <sca>`** — the baseline's tree and DATA counters (a
+  report, not a gate). **`draw_trees.mjs`** — draws v4's (`mrt`) or the
+  baseline's (`bl`) trees from `.sca` files.
+
+Controls after the rebuild, scalar for scalar: V4 #36346 (682), Parent and
+ParentPlain #78440 (901 / 680), Baseline #5434 (589).
+
+| | v4 (`[Config Parent]`, no DATA) | Baseline as is + DATA | Baseline, MiXiM order + DATA |
+|---|---|---|---|
+| 360 s, seed 0: sensors with a parent | 8 of 8 | 1 of 8 (event #236701) | 1 of 8 (event #212072) |
+| 360 s, seeds 0–4 | the same tree in all five | — | seeds 0–3: 1 of 8; seed 4: 7, with a loop |
+| 1200 s, seed 0: sensors with a parent | 8 of 8, 0 switches | — | 1 of 8 (event #699159) |
+| DATA reaching the sink | (none sent) | 8 of 2874 | 8 of 9594 (1200 s) |
+| queue overflow | 0 | 827 (360 s) | 4623 (1200 s) |
+
+With MiXiM's order, parents do form (sensor6 at 45 s, the others by 105–205 s)
+and are then lost. In the parent-change log of all five seeds every forced
+change is the node's receive estimate of its parent falling below 25 while the
+send estimate stays high; the other changes are switches to a cheaper parent. A
+parent that has a parent sends its DATA unicast to it, so its children stop
+hearing it; only the sink beacons, so only sensor6 keeps its parent. Drawings and
+result files: `../../scratch/v4_tests_2026-10-17/`.
+
+## The tree, drawn by the run (2026-10-17)
+
+User: Q1 c, Q2 a, Q3 yes. The MintRoute class draws its own tree:
+
+- **In Qtenv:** each sensor's `drawParentArrow()` keeps one blue arrow from the
+  node to its parent on the network view (INET's canvas projection of the
+  mobility positions), moved whenever `chooseParent()` changes the parent and
+  hidden while there is none. Skipped when there is no GUI.
+- **At the end of every run:** the sink's `writeTreeSvg()` writes
+  `<result-dir>/<config>-#<run>-tree.svg`: each node at its position, the links
+  it heard, an arrow to each parent (red where the chain never reaches the
+  sink), the hop count inside the node.
+- **`[Config Parent360]`:** `[Config Parent]` to 360 s with `repeat = 5`, so the
+  IDE's run dialog offers runs #0–#4 (seed sets 0–4).
+
+INET's own `RoutingTableVisualizer` cannot draw this: it reads IPv4 routing
+tables only (`RoutingTableVisualizerBase.cc:119`), and v4 publishes into a
+`NextHopRoutingTable`.
+
+Drawing only, checked: Parent 300 s #78440 (901 scalars), Baseline #5434 (589),
+BaselineData 360 s seed 0 #212072 (829), and Parent360's five runs equal the
+morning's `--repeat=5` runs scalar for scalar (#94147, #94925, #94365, #94521,
+#94646); `check_copy.mjs .` passes. The arrow code was also run once with the
+GUI check removed (a scratch copy): all eight arrows ran from each sensor to the
+parent its `mrt:*` scalars name, and the run was unchanged. `../../copy-sim/`
+carries the same files and config; built from scratch, its V4, Baseline and
+Parent360 runs and pictures are identical to the harness's.

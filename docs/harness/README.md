@@ -79,6 +79,43 @@ transmit, or of PPkt's fields, has drifted; `loop.sh` runs `V4`, the control
 `invariants.sh`; `type_check.sh`, `leak_check.sh` and their probes default to
 `Parent`. The measured tree and every check are in its own `README.md`.
 
+**The baseline with DATA (2026-10-17), `[Config BaselineData]` /
+`[Config BaselineDataAsIs]`:** `BaselineMintRoute.{h,cc,ned}` subclasses INET's
+MintRoute (libINET untouched) and, with `restoreMiximOrder = true`, counts a
+received DATA frame before the duplicate check, as MiXiM does; SensorApp runs as
+MyWSN sets it. `baseline_tree.mjs` reports the baseline's tree from its `bl:*`
+scalars, and `draw_trees.mjs` draws v4's or the baseline's trees. Results in its
+own `README.md`.
+
+## v4_aodv — structure 4 with the AODV split (2026-10-18/19)
+
+`design/V4_AODV_Plan.md`: `--v4 --routing aodv` from `C0_project`, on the old
+field at 250 kbps, with INET AODV's route discovery and repair pasted into the
+generated files as measurement-test code (`[AODV test code]`, behind `aodv`).
+The staged `EbWsn.{h,cc,ned}` are those edited files, made by
+`scratch/v4_aodv_2026-10-19/paste_aodv/tools/make_paste_aodv.mjs`, so they are not
+kept here. `BaselineAodv.{h,cc,ned}` subclasses INET's AODV to record its routes
+(`[Config Baseline]`); `derive_baseline_net.mjs` writes
+`SensorScopeAodvNetwork.ned` at staging. `route.mjs`, `fail.mjs`,
+`baseline_route.mjs`, `compare_aodv.mjs` and `tree_svg.mjs` read the results;
+`invariants.sh`, `type_check.sh` and `leak_check.sh` are restated for the test
+code. Results in its own `README.md`.
+
+## v4_dsr — structure 4 with the DSR split (2026-10-24)
+
+`design/V4_DSR_Plan.md`: `--v4 --routing dsr` from `C0_project`, on the same old
+field and settings as `v4_aodv`, with DSR's route discovery pasted into the
+generated files as measurement-test code (`[DSR test code]`, behind `dsr`),
+written from the thesis and the Final Report. The staged `EbWsn.{h,cc,ned}` are
+those edited files, made by
+`scratch/v4_dsr_2026-10-24/paste_dsr/tools/make_paste_dsr.mjs`, so they are not
+kept here. No baseline config: no DSR implementation exists. `route.mjs` checks
+every cached path against the field's links and shortest hops, computed from the
+`.ned` positions and the `.sca`'s radio parameters, and refuses a failure run
+unless exactly the named node failed; `tree_svg.mjs` checks a route picture
+against its run; `invariants.sh`, `type_check.sh` and `leak_check.sh` are
+`v4_aodv`'s, restated for the DSR counters. Results in its own `README.md`.
+
 ## v3_aodv and v3_flood — one folder per routing (2026-09-27)
 
 Both folders generate from **`Update_wsn/C0_project` as it is** — read in place,
