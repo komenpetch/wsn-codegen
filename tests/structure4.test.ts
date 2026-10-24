@@ -9,7 +9,7 @@ import { patternExtensionFor } from "../src/engine/patternExtension";
 import { networkRules, withRules } from "../src/engine/netPipeline";
 import { translateEvent } from "../src/engine/ruleEngine";
 import { carrierSetsOf } from "../src/engine/text";
-import { MINTROUTE_LEAVES } from "../src/engine/baselineShell";
+import { MINTROUTE_LEAVES, AODV_LEAVES, AODV_EVENTS } from "../src/engine/baselineShell";
 
 // Structure 4 = structure 3 plus the next-hop design (design/NextHop_Extension_Draft.md,
 // user 2026-10-09: "name it v4"). Structures 1-3 stay frozen; everything the
@@ -28,6 +28,26 @@ import { MINTROUTE_LEAVES } from "../src/engine/baselineShell";
 const files = () => loadProject("AppLayer");
 const byPath = (tree: { path: string; content: string }[]) =>
   Object.fromEntries(tree.map((f) => [f.path, f.content]));
+
+// The v4 AODV plan's names table (Q19, 2026-10-18) gives structure 4's RREQ
+// path INET AODV's names; aodvNames.test.ts pins them. The tests here compare
+// structure 4 with structure 3 method by method under the regular names, so the
+// table is undone first: a rename that moved anything else still fails here.
+const regularNames = (files: Record<string, string>): Record<string, string> => {
+  const undo = (text: string) => {
+    let t = text;
+    for (const [tag, names] of Object.entries(AODV_LEAVES)) {
+      const leaf = tag[0] + tag.slice(1).toLowerCase();
+      for (const n of [names.timer, names.send])
+        if (n) t = t.replace(new RegExp(`\\b${n.name}\\b`, "g"), `send${leaf}Broadcast`);
+      if (names.receive) t = t.replace(new RegExp(`\\b${names.receive.name}\\b`, "g"), `onReceive${leaf}Pkt`);
+    }
+    for (const [label, ev] of Object.entries(AODV_EVENTS))
+      t = t.replace(new RegExp(`\\b${ev.name}\\(`, "g"), `${label}(`);
+    return t;
+  };
+  return Object.fromEntries(Object.entries(files).map(([p, c]) => [p, undo(c)]));
+};
 
 // Each EbWsn method's body, overloads joined, keyed by name. A method ends at
 // the first `}` in column 0, the emitter's own layout. ⚠ The destructor is left
@@ -57,7 +77,7 @@ describe("structure 4", () => {
   for (const routing of [undefined, "aodv"] as const) {
     describe(`routing: ${routing ?? "default (flooding)"}`, () => {
       const v3 = byPath(generateMerged(files(), undefined, 3, undefined, true, routing));
-      const v4 = byPath(generateMerged(files(), undefined, 4, undefined, true, routing));
+      const v4 = regularNames(byPath(generateMerged(files(), undefined, 4, undefined, true, routing)));
       const m3 = methods(v3["EbWsn.cc"]), m4 = methods(v4["EbWsn.cc"]);
       // The control creating events, named by this routing's leaves.
       const controlCreating = [...m4.keys()].filter((n) => /^create_\w+Pkt$/.test(n) && n !== "create_dataPkt");
@@ -459,5 +479,13 @@ describe("structure 4", () => {
   it("still refuses a routing outside the structures that carry the pattern", () => {
     expect(() => generateMerged(files(), undefined, 2, undefined, true, "aodv"))
       .toThrow(/structure 3 or 4/);
+  });
+
+  // The route tables are read once, off the packet source (pipeline.ts). An
+  // explicit source with no route table (MintRoute's: one node relation with
+  // counters, no next hop) has nothing to carry `addEntry` from or publish.
+  it("refuses a packet source with no route tables, by name", () => {
+    expect(() => generateMerged(files(), undefined, 4, { files: loadProject("MintRoute"), machine: "" }))
+      .toThrow(/does not have exactly one of each/);
   });
 });

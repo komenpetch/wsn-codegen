@@ -13,7 +13,8 @@ import { carryPacketOps, carryEvents, transmitEventsOf, receiveEventsOf, enablin
 import { installAppTransmit, installAppReceive } from "./appTransmit";
 import { routeTableOf, bindRoutingTable, routeTablesOf, bindRouteEntries, installUnicast, routeTableOperationsOf, routeTableMembersOf, installRouteTableClasses } from "./routingTable";
 import { patternExtensionFor, controlSetOf, dataTypeOf } from "./patternExtension";
-import type { RoutingStyle } from "./patternExtension";
+import { routingProfile, checkRoutingStructure, type RoutingStyle } from "./routing";
+import { structureProfile } from "./structure";
 import { packetIdentityOf } from "./mediumBinding";
 import { methodForLabel, implText, splitParams } from "./emitted";
 import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
@@ -88,13 +89,13 @@ export function leafMachine(files: EbFiles): string {
 
 // Generate one class for a single target machine, flattened over its refines
 // chain (base first). `outputName` is the emitted class/file name.
-// `routing` (structure 3 only) picks which of the tool's bundled control splits
+// `routing` (structures 3 and 4; see routing.ts) picks which of the tool's bundled control splits
 // to apply instead of reading it off the project's shape — see patternExtensionFor.
 export function generate(files: EbFiles, target: string, outputName: string,
   version: EmitVersion = 2, packetSource?: PacketSource, drain = true,
   routing?: RoutingStyle): GeneratedTree {
   return emitOne(parsedMachines(files), target, outputName, version,
-    packetSourceFor(files, target, version, packetSource, routing), drain);
+    packetSourceFor(files, target, version, packetSource, routing), drain, routing);
 }
 
 // The one place the two halves of the generator meet.
@@ -133,27 +134,26 @@ export interface PacketSource { files: EbFiles; machine: string; }
 function packetSourceFor(files: EbFiles, base: string, version: EmitVersion,
   override?: PacketSource, routing?: RoutingStyle): PacketSource | undefined {
   // ⚠ Refused rather than ignored: a routing is a choice between the bundled
-  // pattern's splits, which only structure 3 carries, and an override brings its
-  // own packet source instead of the bundle.
-  if (routing !== undefined && !carriesPattern(version))
-    throw new Error(`A routing (${routing}) applies to structure 3 or 4, which carry the pattern `
-      + "extension; this is structure " + version + ".");
+  // pattern's splits, which only structures 3 and 4 carry (and its profile may
+  // narrow that: dsr is structure 4 only), and an override brings its own
+  // packet source instead of the bundle.
+  if (routing !== undefined) checkRoutingStructure(routing, version);
   if (routing !== undefined && override)
     throw new Error("A routing chooses the bundled pattern's control split; an explicit packet "
       + "source replaces the bundle, so the two cannot be combined.");
   if (!carriesPattern(version)) return override;
   // Structure 4 takes the bundle with the next-hop design (uM6 and D9); 3 keeps
   // the bundle it was measured with.
-  return override ?? patternExtensionFor(files, base, routing, version === 4);
+  return override ?? patternExtensionFor(files, base, routing, structureProfile(version).nextHop);
 }
 
 function emitOne(raw: RawModel, target: string, outputName: string, version: EmitVersion,
-  packetSource?: PacketSource, drain = true): GeneratedTree {
+  packetSource?: PacketSource, drain = true, routing?: RoutingStyle): GeneratedTree {
   // Every node takes its id out of the shared node sets when its module is
   // destroyed (releaseNodeIdentity). Here, after every pass that shapes the
   // destructor; a no-op for an output that puts no id in a shared set.
   const tree = releaseNodeIdentity(
-    emitBody(raw, target, outputName, version, packetSource, drain), outputName);
+    emitBody(raw, target, outputName, version, packetSource, drain, routing), outputName);
   // ONE exit point for the namespace, so a future structure cannot be added
   // without it. A module emitted without the wrap compiles perfectly on its own
   // and fails only when linked beside a second generated module, with
@@ -164,7 +164,7 @@ function emitOne(raw: RawModel, target: string, outputName: string, version: Emi
 }
 
 function emitBody(raw: RawModel, target: string, outputName: string, version: EmitVersion,
-  packetSource?: PacketSource, drain = true): GeneratedTree {
+  packetSource?: PacketSource, drain = true, routing?: RoutingStyle): GeneratedTree {
   // Structures 3 and 4: structure 2's shell, carrying PPkt. codeEmitter treats
   // them as 2, and the packet classes are spliced on top from `packetSource`,
   // which is why structure 2 itself does not move: it stays the frozen
@@ -175,6 +175,8 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
   // The packet source is a SEPARATE project on purpose: PPkt is a pattern, and a
   // pattern is not owned by the protocol it was read off.
   if (carriesPattern(version)) {
+    // What structure 4 adds over 3, one named field per decision (structure.ts).
+    const structure = structureProfile(version);
     if (!packetSource)
       throw new Error("Structure 3 needs a packet source: which project's packet-type partition PPkt comes from.");
     const pRaw = parseModel(packetSource.files);
@@ -257,16 +259,25 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       .filter((l) => !baseLabels.has(l));
     const drainLabels = drainEventsOf(model, pModel, carriedWithEnabling);
     model = carryEvents(model, pModel, drainLabels);
+    // Structure 4's two tables, the neighbours and the route entries (D5, step
+    // 3d), read ONCE, off the packet source: the bundle that declares PRouteTable
+    // (D2). Both uses below take this one answer. ⚠ Refused here rather than
+    // skipped: this used to be read twice, and a null here carried no `addEntry`
+    // without a word, so the module was built in full and refused only at the
+    // second read. Null exactly when structure 4 is not asked for.
+    const nodeSets = nodeSetsOf([...raw.contexts, ...pRaw.contexts]);
+    const tables = structure.nextHop ? routeTablesOf(pModel, nodeSets) : null;
+    if (structure.nextHop && !tables)
+      throw new Error("Structure 4 publishes its route entries and its neighbour routes, and this "
+        + "model does not have exactly one of each: a node relation whose entries carry a next hop "
+        + "(the route table) and one whose entries carry counters (the neighbour table).");
     // Structure 4's route-table operations (D2, step 3e): the events whose every
     // variable is a PRouteTable member -- `addEntry` alone since D15. No role
     // above carries them, since a Specific class calls them, not the timer or an
-    // arrival; without this the module has no `addEntry` to call.
-    const routeOps: string[] = [];
-    if (version === 4) {
-      const tables = routeTablesOf(pModel, nodeSetsOf([...raw.contexts, ...pRaw.contexts]));
-      if (tables) routeOps.push(...routeTableOperationsOf(pModel, tables));
-      model = carryEvents(model, pModel, routeOps);
-    }
+    // arrival; without this the module has no `addEntry` to call. Read off the
+    // packet source, which is where those events are.
+    const routeOps = tables ? routeTableOperationsOf(pModel, tables) : [];
+    if (tables) model = carryEvents(model, pModel, routeOps);
     const mergedRaw = { ...raw, contexts: mergeContexts(raw.contexts, pRaw.contexts) };
     // The same two encoding fixes the network branch applies, and for the same
     // reason: encodingResolver's infer() silently defaults an unrecognised type
@@ -322,19 +333,22 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // from send_down's own sender parameter rather than reading it back off
     // the shared local chunk. See senderFieldOf.
     const fwdr = senderFieldOf(pModel, pm, transmitEventsOf(base, pModel));
-    tree = installAppTransmit(tree, outputName, pm,
+    tree = installAppTransmit(tree, outputName, pm, {
       // This model's send_down is a pure OBSERVATION and nothing clears the
       // pair it observes on the SENDER, so the module records which
       // transmissions it has already realised. A model that keeps that record
       // itself gets nothing. See transmitRecordsItsOwnFiring.
-      !transmitRecordsItsOwnFiring(base), fwdr,
+      once: !transmitRecordsItsOwnFiring(base),
+      senderField: fwdr,
       // And having taken that record on, it must also put back the pair the
       // model's own delivery event would have removed -- which in a per-node
       // module it removes on the RECEIVER, never on the sender.
-      senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""), "network",
+      senderSideDrain: senderSideDrainOf(model, (v) => model.encodings.get(v) ?? ""),
+      shell: "network",
       // Structure 4 applies the frame length in bits, the unit the shell
       // declares; structures 1-3 keep the baseline's bytes (O1).
-      version === 4);
+      lengthInBits: structure.frameLengthInBits,
+    });
     // The carried state is node-keyed (`floodSeqNo ≔ ND × {0}`), so without this
     // every such map is empty, create_bconPkt declines on its first guard, and
     // the scheduler fires nothing at all.
@@ -515,42 +529,41 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
     // this call site needs the advisor's models and cannot be run on CI.
     const hoisted = hoistedReceiveEvents(model, recv, inBatch);
     const delivery = [...hoisted, ...inBatch.filter((l) => !hoisted.includes(l))];
-    const scheduled = installScheduler(tree, model, outputName, pm.fields, superseded, true,
-      carrierSetsOf(raw, pRaw), delivery,
-      "the model's own\n    //  transmit event is the transmit path now", neverRuns,
+    const scheduled = installScheduler(tree, model, outputName, pm.fields, {
+      notScheduled: superseded,
+      modelDrivesTransmit: true,
+      carrierSets: carrierSetsOf(raw, pRaw),
+      deliveryLabels: delivery,
+      transmitOwner: "the model's own\n    //  transmit event is the transmit path now",
+      neverRuns,
       // ⚠ The drain events run ON THE ARRIVAL, not on the timer. They undo what
       // a reception does, so a reception is the only thing that enables them --
       // and the hand-written MintRoute is built exactly this way: its
       // updateNbrCounters() is called at the top of onReceiveBeaconPkt, never
       // from a timer. Scheduling them instead would give the module a second,
       // timer-driven account of one reception.
-      drainLabels,
+      arrivalEvents: drainLabels,
       // The forwarder is a property of the DELIVERY, so a receive event binds
       // it from what the arrival recorded rather than off the shared chunk.
-      fwdr,
+      senderField: fwdr,
       // Drain the non-creating events to a bounded fixpoint. ON by default since
       // 2026-09-27; `--no-drain` reproduces the per-pass backlog it fixes.
       drain,
       // Structure 4 counts a reception before the rebroadcast re-stamps the
       // packet (drainSlotOf: a neighbour's first frame was never counted).
       // Structure 3 keeps its round as measured (O1).
-      version === 4);
+      countOnArrival: structure.countOnArrival,
+    });
     // PRouteTable published to INET, when the model has a route table to
     // publish. Null is a legitimate answer -- a model with no node-relation
     // carrying per-entry data has no table, and one with TWO (RTMCS M5's
     // forward and backward routes) needs a modelling decision this pass must
     // not make for it.
-    const nodeSets = nodeSetsOf([...raw.contexts, ...pRaw.contexts]);
-    if (version === 4) {
-      // Structure 4 has two tables, the neighbours and the route entries, and
-      // publishes both (D5, step 3d). ⚠ Refused rather than skipped: with two
-      // candidates routeTableOf returns null, and structure 4 then published
-      // nothing at all without a word (found in step 3b).
-      const tables = routeTablesOf(model, nodeSets);
-      if (!tables)
-        throw new Error("Structure 4 publishes its route entries and its neighbour routes, and this "
-          + "model does not have exactly one of each: a node relation whose entries carry a next hop "
-          + "(the route table) and one whose entries carry counters (the neighbour table).");
+    if (tables) {
+      // Structure 4 publishes both tables (D5, step 3d), read once above.
+      // ⚠ Their MEMBERS, though, come off the merged model below
+      // (routeTableMembersOf(model, …)): that is the order PRouteTable declares
+      // them in, and the packet source's model lists them in another.
       const ctl = controlSetOf(raw);
       const data = ctl ? dataTypeOf(raw, ctl) : null;
       if (!data)
@@ -563,7 +576,13 @@ function emitBody(raw: RawModel, target: string, outputName: string, version: Em
       // Structure 4 matches its shell to the case study's baseline, the way
       // structure 2's was matched to SensorApp (D16). After every pass that
       // shapes the methods it edits.
-      const shell = installBaselineShell(published, outputName, pm);
+      // The routing's profile gives the shell its baseline names (a DSR module
+      // takes DSR's, the v4 DSR plan Q4); with no routing given, the names
+      // keyed by leaf tag that flooding and AODV share.
+      const shell = structure.baselineShell
+        ? installBaselineShell(published, outputName, pm,
+          routing === undefined ? undefined : routingProfile(routing).names)
+        : published;
       // Then the Route Table column's own classes (D2, step 3e), last: they only
       // move declarations and definitions the passes above have finished.
       return installRouteTableClasses(shell, outputName, routeTableMembersOf(model, tables), routeOps);
@@ -594,5 +613,5 @@ export function generateMerged(files: EbFiles, outputName?: string,
   const raw = parsedMachines(files);
   const leaf = leafOf(raw);
   return emitOne(raw, leaf, outputName ?? MODULE_NAME, version,
-    packetSourceFor(files, leaf, version, packetSource, routing), drain);
+    packetSourceFor(files, leaf, version, packetSource, routing), drain, routing);
 }

@@ -8,8 +8,7 @@ import { packetTypeLattice } from "./packetTypes";
 import uM4 from "../assets/pattern-extension/uM4.bum?raw";
 import pM5 from "../assets/pattern-extension/pM5.bum?raw";
 import uM6 from "../assets/pattern-extension/uM6.bum?raw";
-import C2ctl from "../assets/pattern-extension/C2_ctl.buc?raw";
-import C2aodv from "../assets/pattern-extension/C2_aodv.buc?raw";
+import { routingProfile, type RoutingStyle } from "./routing";
 import { NODE_ROOT, nodeSetsOf } from "./nodeIdentity";
 import { lowerTag } from "./text";
 
@@ -28,9 +27,11 @@ import { lowerTag } from "./text";
 //                `partition(CONTROL, {ROUTE}, {BEACON})`
 //   C2_aodv.buc  Tier A — the AODV control split, RTMCS C4's
 //                `partition(CONTROL, {RREQ}, {RREP}, {RRER})`
-//                At most ONE of the two is bundled, only when the project has no
-//                split of its own, and which one is read off the project's shape
-//                (routingStyleOf, below).
+//   C2_dsr.buc   Tier A — the same partition under DSR's own context
+//                At most ONE split is bundled, only when the project has no
+//                split of its own: the one `--routing` names, else the one the
+//                project's shape reads as (routingStyleOf, below). The three are
+//                loaded by routing.ts, each in its routing's profile.
 //   uM4.bum      Tier A — the per-packet sequence number, plus the per-leaf
 //                creating events DERIVED into it (see deriveControlEvents)
 //   pM5.bum      Tier B — the neighbour table and its pair-keyed metrics
@@ -82,31 +83,6 @@ export const NEXT_HOP_LEAF = "uM6";
 // The context uM4 sees when no bundled split is in play: the pattern's own,
 // which both bundled splits extend.
 const SEES_WITHOUT_SPLIT = "C1";
-
-/** Which routing a structure-3 module is generated for. */
-export type RoutingStyle = "flooding" | "aodv";
-
-interface BundledSplit { file: string; ctx: string; xml: string; splits: string }
-
-// WHICH set each bundled split partitions, read off the bundled file rather than
-// written here twice. It is `CONTROL` in both, and that MATTERS: a split may only
-// be applied to a project whose own control set is that same set. A project
-// whose control set is named otherwise — the advisor's flooding case study
-// calls it FLOOD — would otherwise receive a partition of a set it never
-// declares, and a project with no control set at all would receive one of a
-// set that does not exist.
-function bundledSplit(file: string, xml: string): BundledSplit {
-  const m = /partition\(\s*(\w+)\s*,/.exec(xml);
-  if (!m)
-    throw new Error(`patternExtension: the bundled ${file} declares no partition, so there is `
-      + "no way to tell which control set it splits.");
-  return { file, ctx: file.replace(/\.buc$/, ""), xml, splits: m[1] };
-}
-
-const SPLITS: Record<RoutingStyle, BundledSplit> = {
-  flooding: bundledSplit("C2_ctl.buc", C2ctl),
-  aodv: bundledSplit("C2_aodv.buc", C2aodv),
-};
 
 /**
  * Which routing the project's own shape points to, read off its contexts.
@@ -754,6 +730,8 @@ function instantiateB(xml: string, raw: RawModel): string {
  */
 export function patternExtensionFor(files: EbFiles, base: string,
   routing?: RoutingStyle, nextHop = false): { files: EbFiles; machine: string } {
+  // Checked before the project is read: an unknown routing is refused by name.
+  if (routing !== undefined) routingProfile(routing);
   const project = parseModel(files);
 
   const declared = new Set(project.machines.flatMap((m) => m.variables));
@@ -790,7 +768,7 @@ export function patternExtensionFor(files: EbFiles, base: string,
   // that declares its own, or whose control set is not the one they split, is
   // REFUSED rather than silently left as it is — a flag that does nothing is the
   // failure this project has paid for before.
-  const split = SPLITS[routing ?? routingStyleOf(project.contexts)];
+  const split = routingProfile(routing ?? routingStyleOf(project.contexts)).split;
   const ctlSet = controlSetOf(project);
   const ownLeaves = controlLeavesOf(project);
   if (routing !== undefined && ownLeaves.length > 0)

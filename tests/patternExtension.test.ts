@@ -103,10 +103,10 @@ describe("the bundled control split", () => {
     expect(uM4).toContain('org.eventb.core.target="C2_aodv"');
   });
 
-  it("never bundles both — the two partition CONTROL differently and would contradict", () => {
+  it("never bundles two — they partition CONTROL each in its own context and would contradict", () => {
     for (const c0 of [C0_SINK, C0_DESTS, C0_SINK_IN_DESTS]) {
       const names = patternExtensionFor([withCtlSet("CONTROL"), c0, C1_PATTERN], "pM3").files.map((f) => f.name);
-      expect(names.filter((n) => n === "C2_ctl.buc" || n === "C2_aodv.buc")).toHaveLength(1);
+      expect(names.filter((n) => /^C2_(ctl|aodv|dsr)\.buc$/.test(n))).toHaveLength(1);
     }
   });
 

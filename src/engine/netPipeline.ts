@@ -225,7 +225,8 @@ export function tryNetworkLayer(raw: RawModel, machine: string, name: string): N
   // has always carried.
   const notScheduled = new Map([...(plan?.realisedByMedium ?? [])].map((l) =>
     [l, "the simulator's medium realises it"] as const));
-  tree = installScheduler(tree, model, name, pm.fields, notScheduled, plan !== null, carriers);
+  tree = installScheduler(tree, model, name, pm.fields,
+    { notScheduled, modelDrivesTransmit: plan !== null, carrierSets: carriers });
   return { model, tree };
 }
 

@@ -241,26 +241,49 @@ function rewriteSendDown(cc: string, once: boolean, drain: readonly string[],
   ].join("\n") + cc.slice(end);
 }
 
+/**
+ * What a caller tells the transmit pass beyond the module, the class and the
+ * packet model. Named, not positional, for the reason SchedulerOptions is.
+ * Every field is optional and defaults to the application shell's plain case.
+ */
+export interface TransmitOptions {
+  /**
+   * True when the model's transmit event does NOT record its own firing, so the
+   * module must. See transmitRecordsItsOwnFiring.
+   */
+  once?: boolean;
+  /**
+   * The field that carries the sender, from senderFieldOf. The FIELD, not one
+   * of its spellings: this used to take a pre-derived setter name while the
+   * arrival took a pre-derived getter and the scheduler took the Event-B name,
+   * three primitive shapes of one concept crossing three boundaries.
+   * Null when the model stamps no such field, in which case the wire copy is
+   * left exactly as the model made it.
+   */
+  senderField?: PacketField | null;
+  /**
+   * Pair-sets the sender must put back once the transmission is realised,
+   * from senderSideDrainOf. Empty when the model limits itself. (Not the
+   * scheduler's `drain`, which is a boolean about its own passes.)
+   */
+  senderSideDrain?: readonly string[];
+  /**
+   * Which shell this transmit is being installed into. The three steps are the
+   * same; where the frame goes is not. See `send` in defs().
+   */
+  shell?: ShellKind;
+  /**
+   * Structure 4 only: the network shell's frame length in the unit its
+   * parameter declares (bits). See `length` in defs().
+   */
+  lengthInBits?: boolean;
+}
+
 export function installAppTransmit(tree: GeneratedTree, cls: string, pm: PacketModel,
-  // True when the model's transmit event does NOT record its own firing, so the
-  // module must. See transmitRecordsItsOwnFiring.
-  once = false,
-  // The field that carries the sender, from senderFieldOf. The FIELD, not one
-  // of its spellings: this used to take a pre-derived setter name while the
-  // arrival took a pre-derived getter and the scheduler took the Event-B name,
-  // three primitive shapes of one concept crossing three boundaries.
-  // Null when the model stamps no such field, in which case the wire copy is
-  // left exactly as the model made it.
-  senderField: PacketField | null = null,
-  // Pair-sets the sender must put back once the transmission is realised,
-  // from senderSideDrainOf. Empty when the model limits itself.
-  drain: readonly string[] = [],
-  // Which shell this transmit is being installed into. The three steps are the
-  // same; where the frame goes is not. See `send` in defs().
-  shell: ShellKind = "application",
-  // Structure 4 only: the network shell's frame length in the unit its
-  // parameter declares (bits). See `length` in defs().
-  lengthInBits = false): GeneratedTree {
+  {
+    once = false, senderField = null, senderSideDrain: drain = [], shell = "application",
+    lengthInBits = false,
+  }: TransmitOptions = {}): GeneratedTree {
   // Ordered by tag value, the same order the PktType enum is emitted in.
   const tags = [...pm.lattice.tagOf.entries()].sort((a, b) => a[1] - b[1]).map(([t]) => t);
   if (tags.length === 0) return tree;

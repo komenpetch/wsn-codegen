@@ -35,7 +35,7 @@ const project = [
   ctx("C1", ["partition(TYPE, CONTROL, {DATA})"], ["DATA", "CONTROL", "type"]),
 ];
 const bundled = (files: { name: string }[]) =>
-  files.map((f) => f.name).filter((n) => n === "C2_ctl.buc" || n === "C2_aodv.buc");
+  files.map((f) => f.name).filter((n) => /^C2_(ctl|aodv|dsr)\.buc$/.test(n));
 
 describe("routing: choosing the bundled split without editing the input", () => {
   it("defaults to flooding for a project that names no sink", () => {
@@ -64,6 +64,15 @@ describe("routing: choosing the bundled split without editing the input", () => 
   it("refuses a project that declares its own split, rather than ignoring the choice", () => {
     const ownSplit = [...project, ctx("C2", ["partition(CONTROL, {ROUTE}, {BEACON})"], ["ROUTE", "BEACON"])];
     expect(() => patternExtensionFor(ownSplit, "pM3", "aodv")).toThrow(/declares its own \(ROUTE, BEACON\)/);
+  });
+
+  // The CLI refuses an unknown value itself; an API caller reached the lookup
+  // of the bundled splits and crashed on `undefined` instead of being told what
+  // is allowed. Refused now by routingProfile (routing.ts).
+  it("refuses an unknown routing by name, before reading the project", () => {
+    for (const bad of ["dymo", "toString"])
+      expect(() => patternExtensionFor(project, "pM3", bad as never))
+        .toThrow(new RegExp(`routing "${bad}" is not one of flooding, aodv, dsr`));
   });
 
   it("refuses a project whose control set the bundled splits do not partition", () => {

@@ -789,32 +789,66 @@ function planFor(label: string, params: Param[], guards: string[], ctx: PlanCont
     : { label, params, lines, rollback, ok: false, why: `no binding for ${missing.join(", ")}` };
 }
 
+/**
+ * What a caller tells the scheduler beyond the module, the model, the class and
+ * the packet fields. Named, not positional: the pattern branch passes nine of
+ * these, two of them booleans and one a sentence, and in order they could only
+ * be told apart by counting. Every field is optional and defaults to what the
+ * network branch (structure 2's M4Wsn / M6Wsn) has always had.
+ */
+export interface SchedulerOptions {
+  /**
+   * Events NOT scheduled spontaneously, each with the reason, which is emitted
+   * beside the declaration. Two reasons exist so far and they are different
+   * claims: "the simulator realises this" (the medium binding) and "a carried
+   * event supersedes this" (the packet-pattern merge).
+   */
+  notScheduled?: ReadonlyMap<string, string>;
+  /** The model's transmit event, not the shell's demo traffic, is the transmit path. */
+  modelDrivesTransmit?: boolean;
+  /**
+   * Why the shell's own demo traffic is suppressed, in the shell's own terms.
+   * The network module's transmit path is the medium binding; the application's
+   * is the model's transmit event calling transmitPacket(). Same decision, two
+   * reasons, and the emitted comment should say which one applies.
+   */
+  transmitOwner?: string;
+  carrierSets?: ReadonlySet<string>;
+  /** Events an ARRIVAL may run. Empty means no separate delivery entry point. */
+  deliveryLabels?: readonly string[];
+  /**
+   * Events that genuinely never execute -- NOT the same as `notScheduled`,
+   * which also holds send_up, an event the arrival calls on every reception and
+   * which fills ctlNeighbours: masking it would make receive_controlPkt look
+   * unreachable.
+   */
+  neverRuns?: ReadonlySet<string>;
+  /** Events the ARRIVAL runs inline instead of the timer scheduling them. */
+  arrivalEvents?: readonly string[];
+  /** See planFor. */
+  senderField?: PacketField | null;
+  /**
+   * Drain the non-creating events to a bounded fixpoint each pass. False by
+   * default because the network branch (structure 2's MintRoute M4 / RTMCS M6
+   * modules) never had it; structure 3's pipeline passes true by default since
+   * 2026-09-27.
+   */
+  drain?: boolean;
+  /**
+   * Place the inline drains right after what fills them (drainSlotOf), so a
+   * reception is counted before the rebroadcast re-stamps the packet. Structure
+   * 4 only (O1): structure 3 keeps its round as measured.
+   */
+  countOnArrival?: boolean;
+}
+
 function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: PacketField[],
-  // Events NOT scheduled spontaneously, each with the reason, which is emitted
-  // beside the declaration. Two reasons exist so far and they are different
-  // claims: "the simulator realises this" (the medium binding) and "a carried
-  // event supersedes this" (the packet-pattern merge).
-  notScheduled: ReadonlyMap<string, string> = new Map(),
-  carrierSets: ReadonlySet<string> = new Set(),
-  deliveryLabels: readonly string[] = [],
-  // Events that genuinely never execute -- NOT the same as `notScheduled`,
-  // which also holds send_up, an event the arrival calls on every reception.
-  neverRuns: ReadonlySet<string> = new Set(),
-  // Events the ARRIVAL runs inline instead of the timer scheduling them.
-  arrivalEvents: readonly string[] = [],
   // Leaves of the emitted packet-type lattice, read off the header -- see typeOf.
-  leaves: ReadonlySet<string> = new Set(),
-  // See planFor.
-  senderField: PacketField | null = null,
-  // Drain the non-creating events to a bounded fixpoint each pass. False HERE
-  // because the network branch (structure 2's MintRoute M4 / RTMCS M6 modules) calls this without
-  // it and never had it; structure 3's pipeline passes true by default since
-  // 2026-09-27.
-  drain = false,
-  // Place the inline drains right after what fills them (drainSlotOf), so a
-  // reception is counted before the rebroadcast re-stamps the packet. Structure
-  // 4 only (O1): structure 3 keeps its round as measured.
-  countOnArrival = false): { decls: string; defs: string } {
+  leaves: ReadonlySet<string>,
+  {
+    notScheduled = new Map(), carrierSets = new Set(), deliveryLabels = [], neverRuns = new Set(),
+    arrivalEvents = [], senderField = null, drain = false, countOnArrival = false,
+  }: SchedulerOptions): { decls: string; defs: string } {
   // The accessor SUFFIX, from the one place that defines accessor names.
   const pktField = new Map(fields.map((f) => [f.ebName, getterOf(f).slice("get".length)]));
   // Two-level tables, from nestedMap.ts's own detector rather than a second
@@ -1075,35 +1109,18 @@ function emitScheduler(model: EncodedMachine, cls: string, cc: string, fields: P
 
 // Splice the scheduler in, and call it from the sensing timer.
 export function installScheduler(tree: GeneratedTree, model: EncodedMachine, cls: string, fields: PacketField[],
-  notScheduled: ReadonlyMap<string, string> = new Map(), modelDrivesTransmit = false,
-  carrierSets: ReadonlySet<string> = new Set(),
-  // Events an ARRIVAL may run. Empty means no separate delivery entry point.
-  deliveryLabels: readonly string[] = [],
-  // Why the shell's own demo traffic is suppressed, in the shell's own terms.
-  // The network module's transmit path is the medium binding; the application's
-  // is the model's transmit event calling transmitPacket(). Same decision, two
-  // reasons, and the emitted comment should say which one applies.
-  transmitOwner = "the medium\n    //  binding makes the model's transmit event the transmit path",
-  // Events that genuinely never execute. `notScheduled` is NOT this set: it also
-  // holds send_up, which the arrival calls on every reception and which fills
-  // ctlNeighbours -- masking it would make receive_controlPkt look unreachable.
-  neverRuns: ReadonlySet<string> = new Set(),
-  // Events the ARRIVAL runs inline -- see emitScheduler.
-  arrivalEvents: readonly string[] = [],
-  // See planFor.
-  senderField: PacketField | null = null,
-  // See emitScheduler.
-  drain = false,
-  // See emitScheduler.
-  countOnArrival = false): GeneratedTree {
+  opts: SchedulerOptions = {}): GeneratedTree {
+  const {
+    modelDrivesTransmit = false,
+    transmitOwner = "the medium\n    //  binding makes the model's transmit event the transmit path",
+  } = opts;
   const ccFile = implOf(tree);
   if (!ccFile)
     throw new Error("installScheduler: the generated tree has no .cc to install a scheduler into.");
   // The packet-type leaves come from the emitted HEADER, where the enum is.
   const hdr = headerOf(tree);
-  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields, notScheduled, carrierSets,
-    deliveryLabels, neverRuns, arrivalEvents, packetTypeLeaves(hdr?.content ?? ""), senderField,
-    drain, countOnArrival);
+  const { decls, defs } = emitScheduler(model, cls, ccFile.content, fields,
+    packetTypeLeaves(hdr?.content ?? ""), opts);
 
   return tree.map((f) => {
     if (f.path.endsWith(".h")) {

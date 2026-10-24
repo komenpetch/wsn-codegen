@@ -64,6 +64,80 @@ export const MINTROUTE_EVENTS: Readonly<Record<string, { name: string; line: num
   update_nbr: { name: "updateNbrCounters", line: 373 },
 };
 
+// The AODV split's own baseline is INET's AODV, src/inet/routing/aodv/Aodv.cc
+// (the v4 AODV plan, design/V4_AODV_Plan.md, Q17 and Q19, user 2026-10-18). Only
+// the RREQ path is named after it, the part the generated module runs: the AODV
+// test code sends and handles RREPs and RRERs itself, so their generated
+// methods keep the regular names. INET's AODV records no statistics and has no
+// RREQ timer, so the table has no counters, hooks or first fires.
+export interface LeafNames {
+  /** The timer's no-argument target, `send<Leaf>Broadcast()` by default. */
+  timer?: { name: string; line: number };
+  /** The `(Node, PktId)` transmit, `send<Leaf>Broadcast` by default. */
+  send?: { name: string; line: number };
+  /** The arrival's handler, `onReceive<Leaf>Pkt` by default. */
+  receive?: { name: string; line: number };
+}
+export const AODV_LEAVES: Readonly<Record<string, LeafNames>> = {
+  RREQ: {
+    timer: { name: "startRouteDiscovery", line: 249 },
+    send: { name: "sendRREQ", line: 271 },
+    receive: { name: "handleRREQ", line: 772 },
+  },
+};
+// create_rreqPkt makes the RREQ, as createRREQ does (D16's rule: a model event
+// doing a baseline function's job takes its name).
+export const AODV_EVENTS: Readonly<Record<string, { name: string; line: number; binder?: string }>> = {
+  create_rreqPkt: { name: "createRREQ", line: 374 },
+};
+
+// The DSR split's baseline is the Final Report's MiXiM DSRRoute, printed only
+// in part (Fig 6.9-6.11, printed p.48-50; the v4 DSR plan Q4). It names
+// sendRREQ() as what sends an RREQ (the text above Fig 6.9, p.48); it prints no
+// name for the timer's job, the per-type reception (inline in handleLowerMsg's
+// switch) or the RREQ's creation, so those keep their regular names. `line` is
+// the printed page here. The RREP and RRER are the DSR test code's.
+export const DSR_LEAVES: Readonly<Record<string, LeafNames>> = {
+  RREQ: { send: { name: "sendRREQ", line: 48 } },
+};
+
+export type EventTable = { events: Readonly<Record<string, { name: string; line: number; binder?: string }>>;
+  who: string; file: string };
+const MINTROUTE_TABLE: EventTable = { events: MINTROUTE_EVENTS, who: "MintRoute", file: "MintRoute.cc" };
+const AODV_TABLE: EventTable = { events: AODV_EVENTS, who: "INET AODV", file: "Aodv.cc" };
+
+/**
+ * The baseline names a shell gives: which leaf methods take a baseline's name,
+ * how a renamed method cites it, and which event tables apply (their `who` and
+ * `file` go into the provenance comment). A routing's profile (routing.ts)
+ * chooses one; this module never reads the routing itself.
+ */
+export interface BaselineNames {
+  leaves: Readonly<Record<string, LeafNames>>;
+  cite: (line: number) => string;
+  events: readonly EventTable[];
+}
+
+// Names keyed by leaf tag or event label: INET AODV's for RREQ's methods and
+// create_rreqPkt, MintRoute's for the shared neighbour-table events. A split
+// whose tags are not in a table (ROUTE and BEACON have no LeafNames entry)
+// keeps its regular names, so the flooding and AODV routings share this, and so
+// does a module whose routing was read off its shape.
+export const TAG_NAMES: BaselineNames = {
+  leaves: AODV_LEAVES,
+  cite: (line: number) => `// INET AODV's name for it (Aodv.cc:${line}).\n`,
+  events: [MINTROUTE_TABLE, AODV_TABLE],
+};
+
+// DSR's split has AODV's tags, so it needs its own: the Final Report's names
+// for the RREQ, MintRoute's for the shared neighbour-table events (as AODV's
+// does, the AODV plan Q23) and none of INET AODV's: `create_rreqPkt` stays.
+export const DSR_NAMES: BaselineNames = {
+  leaves: DSR_LEAVES,
+  cite: (page: number) => `// The Final Report's name for it (printed p.${page}, the text above Fig 6.9).\n`,
+  events: [MINTROUTE_TABLE],
+};
+
 const PASS = "installBaselineShell";
 
 // The names one leaf's timer derives, as MintRoute names its own
@@ -223,14 +297,14 @@ const onReceiveOf = (tag: string) => `onReceive${capTag(tag)}Pkt`;
  *    events (where the model counts and floods it) and deletes the packet, and
  *    anything else as before. The table's `received` counter is incremented there.
  */
-function installReceive(t: Texts, cls: string, tags: string[]): Texts {
+function installReceive(t: Texts, cls: string, tags: string[], tables: readonly EventTable[]): Texts {
   let { h, cc } = t;
 
   // ── 1. the events' baseline names ──
-  for (const [label, ev] of Object.entries(MINTROUTE_EVENTS)) {
+  for (const { events, who, file } of tables) for (const [label, ev] of Object.entries(events)) {
     if (!cc.includes(`bool ${cls}::${label}(`)) continue;
     cc = cc.replace(`bool ${cls}::${label}(`,
-      `// Event-B: ${label} — emitted under MintRoute's name for it (MintRoute.cc:${ev.line}).\n`
+      `// Event-B: ${label} — emitted under ${who}'s name for it (${file}:${ev.line}).\n`
       + `bool ${cls}::${ev.name}(`);
     h = mustReplace(h, new RegExp(`^( *)bool ${label}\\(([^)]*)\\);$`, "m"),
       `$1bool ${ev.name}($2);   // Event-B: ${label}`, `${PASS} (.h ${label})`);
@@ -250,7 +324,7 @@ function installReceive(t: Texts, cls: string, tags: string[]): Texts {
       .map((l) => l.replace(/^ {8}/, "")).join("\n");
     cc = cc.slice(0, at) + `        // ${label} -- run by the reception, not by the timer.\n`
       + `        if (${ev.binder}()) _any = true;\n` + cc.slice(end + close.length);
-    const def = `// Event-B: ${label} — emitted under MintRoute's name for it`;
+    const def = `// Event-B: ${label} — emitted under ${who}'s name for it`;
     cc = cc.replace(def,
       `// The binding of ${label}: each pending neighbour pair, and ${ev.name} for the one\n`
       + `// not yet in the table. MintRoute's own ${ev.binder} finds an entry or creates it\n`
@@ -258,7 +332,7 @@ function installReceive(t: Texts, cls: string, tags: string[]): Texts {
     h = mustReplace(h, new RegExp(`^( *)bool ${ev.name}\\(`, "m"),
       `$1bool ${ev.binder}();\n$1bool ${ev.name}(`, `${PASS} (.h ${ev.binder})`);
   }
-  for (const label of Object.keys(MINTROUTE_EVENTS))
+  for (const label of tables.flatMap((t) => Object.keys(t.events)))
     if (new RegExp(`(?<!["\\w])${label}\\(`).test(cc))
       throw new Error(`${PASS}: ${label} is still called under its Event-B name after the rename.`);
 
@@ -338,11 +412,77 @@ function installCounters(t: Texts, cls: string, tags: string[]): Texts {
 }
 
 /**
+ * The packet types' methods under the baseline's names where the table gives
+ * them (`names.leaves`: AODV_LEAVES in TAG_NAMES, the v4 AODV plan Q19;
+ * DSR_LEAVES in DSR_NAMES, the v4 DSR plan Q4). Last, so every pass above has written what it renames:
+ * the declarations, the definitions (each with a provenance line), the timer's
+ * call, the transmit dispatch's case and the arrival's case. Loud if an anchor
+ * is missing or an old name survives.
+ */
+// Exported for its own test: no generated module leaves an old name behind, so
+// only a crafted one can show the survival check works.
+export function installLeafNames(t: Texts, cls: string, tags: string[],
+  names: BaselineNames = TAG_NAMES): Texts {
+  let { h, cc } = t;
+  const { leaves, cite } = names;
+  for (const tag of tags) {
+    const names = leaves[tag];
+    if (!names) continue;
+    const send = broadcastMethodOf(tag), rec = onReceiveOf(tag);
+    const where = (what: string) => `${PASS} (${tag} ${what})`;
+    if (names.timer) {
+      const n = names.timer.name;
+      h = mustReplace(h, `    virtual void ${send}();\n`, `    virtual void ${n}();\n`, where("timer, .h"));
+      cc = mustReplace(cc,
+        `// put it on the air through the overload below.\nvoid ${cls}::${send}() {`,
+        `// put it on the air through ${names.send?.name ?? "the overload"} below.\n`
+        + `${cite(names.timer.line)}void ${cls}::${n}() {`, where("timer, definition"));
+      cc = mustReplace(cc, `        ${send}();\n`, `        ${n}();\n`, where("timer, call"));
+    }
+    if (names.send) {
+      const n = names.send.name;
+      h = mustReplace(h, `    virtual void ${send}(Node x, PktId pkt);\n`,
+        `    virtual void ${n}(Node x, PktId pkt);\n`, where("send, .h"));
+      cc = mustReplace(cc, `void ${cls}::${send}(Node x, PktId pkt) {`,
+        `${cite(names.send.line)}void ${cls}::${n}(Node x, PktId pkt) {`, where("send, definition"));
+      cc = mustReplace(cc, `case PktType::${tag}: ${send}(x, pkt); break;`,
+        `case PktType::${tag}: ${n}(x, pkt); break;`, where("send, dispatch"));
+    }
+    if (names.receive) {
+      const n = names.receive.name;
+      h = mustReplace(h, `    virtual void ${rec}(Packet *packet, const Ptr<const PPkt>& header);\n`,
+        `    virtual void ${n}(Packet *packet, const Ptr<const PPkt>& header);\n`, where("receive, .h"));
+      cc = mustReplace(cc, `void ${cls}::${rec}(Packet *packet, const Ptr<const PPkt>& header) {`,
+        `${cite(names.receive.line)}void ${cls}::${n}(Packet *packet, const Ptr<const PPkt>& header) {`,
+        where("receive, definition"));
+      cc = mustReplace(cc, `            ${rec}(packet, _wire);\n`, `            ${n}(packet, _wire);\n`,
+        where("receive, dispatch"));
+    }
+    // The timer's target and the transmit share one name, `send<Leaf>Broadcast`,
+    // as two overloads. Renamed together (AODV), no use of the name may survive;
+    // renamed alone (DSR renames only the transmit), only that overload's.
+    const gone: { what: string; re: RegExp }[] = [];
+    if (names.timer && names.send) gone.push({ what: send, re: new RegExp(`\\b${send}\\b`) });
+    else {
+      if (names.timer) gone.push({ what: `${send}()`, re: new RegExp(`\\b${send}\\(\\)`) });
+      if (names.send)
+        gone.push({ what: `${send}(Node, PktId)`, re: new RegExp(`\\b${send}\\((?:Node x, PktId pkt|x, pkt)\\)`) });
+    }
+    if (names.receive) gone.push({ what: rec, re: new RegExp(`\\b${rec}\\b`) });
+    for (const { what, re } of gone)
+      if (re.test(h + cc))
+        throw new Error(`${PASS}: ${what} survives after ${tag}'s methods took the baseline's names.`);
+  }
+  return { ...t, h, cc };
+}
+
+/**
  * Structure 4's shell, matched to the baseline (D16). The leaves timed are the
  * ones whose creating event the scheduler can fire, the table's first in its
  * order (MintRoute's), then any others as the model lists them.
  */
-export function installBaselineShell(tree: GeneratedTree, cls: string, pm: PacketModel): GeneratedTree {
+export function installBaselineShell(tree: GeneratedTree, cls: string, pm: PacketModel,
+  names: BaselineNames = TAG_NAMES): GeneratedTree {
   const h = headerOf(tree), cc = implOf(tree), ned = nedOf(tree);
   if (!h || !cc || !ned) throw new Error(`${PASS}: the module is missing a .h, .cc or .ned.`);
   const scheduled = pm.leaves.filter((l) => cc.content.includes(`bool ${cls}::try_${l.event}()`))
@@ -354,9 +494,11 @@ export function installBaselineShell(tree: GeneratedTree, cls: string, pm: Packe
   const tags = [...inTable, ...scheduled.filter((tag) => !inTable.includes(tag))];
 
   // Timers, then the receive side, then the counters, which declare, reset and
-  // record what the two before them increment.
+  // record what the two before them increment; then the baseline's names for
+  // the methods those passes wrote.
   const timed = installTimers({ h: h.content, cc: cc.content, ned: ned.content }, cls, tags);
-  const out = installCounters(installReceive(timed, cls, tags), cls, tags);
+  const out = installLeafNames(
+    installCounters(installReceive(timed, cls, tags, names.events), cls, tags), cls, tags, names);
   return tree.map((f) =>
     f === h ? { ...f, content: out.h } : f === cc ? { ...f, content: out.cc }
       : f === ned ? { ...f, content: out.ned } : f);

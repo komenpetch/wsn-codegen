@@ -14,6 +14,7 @@
 //   npm run generate -- AppLayer out-v3 --v3          # + the bundled pattern extension
 //   npm run generate -- AppLayer out-v3 --v3 --routing aodv   # choose the bundled split
 //   npm run generate -- AppLayer out-v4 --v4          # structure 3 + the next-hop design
+//   npm run generate -- AppLayer out-dsr --v4 --routing dsr   # DSR's split and names (structure 4)
 //   npm run generate -- <dir|project> <outDir> --v1     # emitted-structure version
 //
 // <dir|project> is a path, or one of the labels in scripts/projects.ts
@@ -33,7 +34,7 @@ import { resolve } from "node:path";
 import { generate, generateMerged, machineNames, leafMachine, MODULE_NAME } from "../src/engine/pipeline";
 import { loadProject, resolveInput } from "./projects";
 import { carriesPattern, type EmitVersion } from "../src/engine/codeEmitter";
-import type { RoutingStyle } from "../src/engine/patternExtension";
+import { ROUTINGS, type RoutingStyle } from "../src/engine/routing";
 
 const argv = process.argv.slice(2);
 const flag = argv.find((a) => /^--v[1234]$/.test(a));
@@ -55,8 +56,11 @@ const machine = mIdx >= 0 ? argv[mIdx + 1] : undefined;
 // input is never edited to choose (user, 2026-09-27) -- the choice is made here.
 const rIdx = argv.indexOf("--routing");
 const routingArg = rIdx >= 0 ? argv[rIdx + 1] : undefined;
-if (rIdx >= 0 && routingArg !== "flooding" && routingArg !== "aodv") {
-  console.error(`\n--routing takes flooding or aodv, got ${routingArg ?? "nothing"}.\n`);
+// `dsr` (structure 4 only) is the AODV split under DSR's own context and DSR's
+// baseline names (design/V4_DSR_Plan.md). The list is the profiles' (routing.ts).
+if (rIdx >= 0 && !(ROUTINGS as readonly string[]).includes(routingArg ?? "")) {
+  const list = `${ROUTINGS.slice(0, -1).join(", ")} or ${ROUTINGS[ROUTINGS.length - 1]}`;
+  console.error(`\n--routing takes ${list}, got ${routingArg ?? "nothing"}.\n`);
   process.exit(2);
 }
 const routing = routingArg as RoutingStyle | undefined;
