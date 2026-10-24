@@ -24,6 +24,14 @@ npm run generate -- RTMCS out-m6 --machine M6  >/dev/null 2>&1 || { echo "FAIL: 
 # all nine files above stayed byte-identical.
 npm run generate -- AppLayer out-v3 --v3 \
   >/dev/null 2>&1 || { echo "FAIL: structure 3 did not generate"; exit 1; }
+# ⚠ And structure 4, one per routing. It was missing as well, and it is what the
+# v4 harnesses run: only line assertions in tests that need the advisor's
+# project (so never on CI) covered it. The default routing gives the same bytes
+# as --routing flooding, so flooding stands for both.
+for r in flooding aodv dsr; do
+  npm run generate -- AppLayer "out-v4-$r" --v4 --routing "$r" \
+    >/dev/null 2>&1 || { echo "FAIL: structure 4 ($r) did not generate"; exit 1; }
+done
 
 rc=0
 for f in EbWsn.h EbWsn.cc EbWsn.ned; do
@@ -37,9 +45,15 @@ for f in EbWsn.h EbWsn.cc EbWsn.ned; do
 done
 # Every module is EbWsn (pipeline.ts MODULE_NAME), so each output's three files
 # live under their own reference subdirectory: app layer at the top, then m4/,
-# m6/ and v3/.
+# m6/, v3/, and structure 4's v4/ (flooding), v4-aodv/ and v4-dsr/.
 for f in EbWsn.h EbWsn.cc EbWsn.ned; do
   diff -q "$REF/v3/$f" "out-v3/$f" >/dev/null 2>&1 || { echo "CHANGED  v3/$f"; rc=1; }
 done
-[ $rc -eq 0 ] && echo "all 12 generated files byte-identical to the reference"
+for d in v4 v4-aodv v4-dsr; do
+  src="out-$d"; [ "$d" = v4 ] && src="out-v4-flooding"
+  for f in EbWsn.h EbWsn.cc EbWsn.ned; do
+    diff -q "$REF/$d/$f" "$src/$f" >/dev/null 2>&1 || { echo "CHANGED  $d/$f"; rc=1; }
+  done
+done
+[ $rc -eq 0 ] && echo "all 21 generated files byte-identical to the reference"
 exit $rc
