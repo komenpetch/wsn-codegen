@@ -99,7 +99,9 @@ kept here. `BaselineAodv.{h,cc,ned}` subclasses INET's AODV to record its routes
 `SensorScopeAodvNetwork.ned` at staging. `route.mjs`, `fail.mjs`,
 `baseline_route.mjs`, `compare_aodv.mjs` and `tree_svg.mjs` read the results;
 `invariants.sh`, `type_check.sh` and `leak_check.sh` are restated for the test
-code. Results in its own `README.md`.
+code. `similarity_aodv.mjs` (2026-10-27) scores the ported functions against
+INET's `Aodv.cc` by name (`--self` is the positive control). Results in its own
+`README.md`.
 
 ## v4_dsr — structure 4 with the DSR split (2026-10-24)
 
@@ -109,7 +111,13 @@ generated files as measurement-test code (`[DSR test code]`, behind `dsr`),
 written from the thesis and the Final Report. The staged `EbWsn.{h,cc,ned}` are
 those edited files, made by
 `scratch/v4_dsr_2026-10-24/paste_dsr/tools/make_paste_dsr.mjs`, so they are not
-kept here. No baseline config: no DSR implementation exists. `route.mjs` checks
+kept here. No DSR implementation exists, so the baseline (2026-10-27,
+`design/V4_DSR_Plan.md` §13) is written here: `DSRRoute.{h,cc,ned}` + `CTL6.{h,cc}`
++ `DSRPkt.msg`, an INET network protocol shaped on the Final Report's printed MiXiM
+`DSRRoute` (⚠ not independent of the test code: same sources), run by
+`[Config Baseline]` and read by `baseline_dsr.mjs`; `similarity_dsr.mjs` scores the
+v4 module against it on the printed functions and `compare_dsr.mjs` sets the two
+runs side by side. `route.mjs` checks
 every cached path against the field's links and shortest hops, computed from the
 `.ned` positions and the `.sca`'s radio parameters, and refuses a failure run
 unless exactly the named node failed; `tree_svg.mjs` checks a route picture

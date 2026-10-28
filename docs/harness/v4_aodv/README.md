@@ -34,6 +34,7 @@ kbps). The 19.2 kbps runs and logs are in `results_19k2/`; `omnetpp.ini`'s
 | `invariants.sh` | `../v4_mintroute`'s battery, restated for the test code (RREPs bypass `send_down`; I9a only where `aodv` is false; I9b's cap includes the RREQ retries); `SCA=<file>` checks an existing run |
 | `type_check.sh`, `type_probe.mjs`, `type_analyse.mjs` | the per-type laws (only RREQ is a model type here); instruments, builds, runs, restores |
 | `leak_check.sh`, `leak_probe.mjs` | deliveries left waiting; instruments, builds, runs, restores |
+| `similarity_aodv.mjs` | the ported test code against INET's `Aodv.cc`, function by function (plan §7); `--self` is the positive control |
 
 ## Run
 
@@ -152,6 +153,53 @@ hidden: no route; a failed node's icon red), and at the end of every run with
   sensor2 (4 hops); FailSensor5 sensor1 → sensor4 → sensor7 → sensor8 →
   sensor6 → sink; FailSensor6 every route grey, still pointing where INET's
   table points.
+
+### Similarity of the ported code (2026-10-27)
+
+`node similarity_aodv.mjs` scores the staged module's ported functions against
+INET's `Aodv.cc`, by name, with `scratch/similarity_mintroute.mjs`'s method
+(normalised statements, LCS). The plan's 21 functions (§6) are in scope; the
+other 30 methods of `Aodv.cc` are classified as not ported, and the script
+refuses to run if any method is unclassified. On the staged module (md5
+d3fdb709):
+
+- 20 of 21 defined; `forwardRREQ` is not (the model's flood rebroadcasts the
+  RREQ through `sendRREQ`, Q19). None statement-identical.
+- All 21: **sym 19.9 %, recall 18.4 %** (module 339, baseline 403, LCS 74).
+  Test code only (16 functions): sym 23.6 %, recall 20.9 %. Test code pasted
+  into a generated method (`startRouteDiscovery`, `createRREQ`, `sendRREQ`,
+  `handleRREQ`): sym 12.9 %, recall 13.0 %.
+- Of the 322 baseline statements not reproduced: 44 are INET's route storage
+  (`IRoute`, `AodvRouteData`, `routingTable`), which the test code replaces by
+  decision (Q8, D15); 16 are `L3Address`/`addressType` and 20 are signatures (node
+  ids, not addresses); 28 are log lines and 9 `ASSERT`s; 12 are RREP-ACK,
+  jitter and expiry; the rest include the data path, IPv6, gratuitous-RREP and
+  rate-limit lines inside the in-scope functions, and local names that differ.
+- Checks: `--self` gives 21 of 21 identical; removing `handleRREP` from a copy
+  reports it not defined; giving `createRERR` INET's own body scores it 100 %.
+
+**After the rename round (2026-10-27): sym 27.0 %, recall 25.6 %** (module 360,
+LCS 103); test code only 33.3 % / 30.7 %; pasted into generated methods
+14.4 % / 14.6 %. Staged files now `EbWsn.cc` a6f5d5b2, `EbWsn.h` ddc6548e (`.ned`
+c0d7e1d7 unchanged). The round changed only the AODV test code (paste blocks
+c9, c10, h2, and one include), by four rules: INET's parameter names
+(`hasOngoingRouteDiscovery(target)`); INET's spelling of the same computation
+(`containsKey`, `*periodicJitter`, `lastBroadcastTime == 0`, the field-by-field
+`UnreachableNode` copy, `helloMessage`/`newRERR` as named values); INET's log
+lines word for word where they log the same event; INET's `ASSERT`s where the
+condition holds by construction (`hasOngoingRouteDiscovery` in
+complete/cancelRouteDiscovery, `containsKey(addressToRreqRetries, destAddr)`,
+`useHelloMessages`). No new function (`getSelfIPAddress` is not added), no change
+to route storage, control flow or generated code. **Behaviour unchanged, shown
+twice:** a scratch build ran Control, Route360 ×5, Hello360 ×5, FailSensor5 and
+FailSensor6 at the recorded events with every scalar equal and all 12 pictures
+byte-identical; a second scratch build without `-DNDEBUG` (assertions on, their
+text checked present in `EbWsn.o`) ran all 13 runs to `finish()` with no
+assertion failing and the same scalars and pictures. ⚠ That build crashes while
+deleting the network after a run (one run per process was used); the pre-rename
+files crash the same way, so it comes from compiling the module without
+`-DNDEBUG` against the release `libINET`, not from the round. The harness was
+rebuilt and its Control run reproduced (649 of 649 scalars).
 
 ### At 19.2 kbps (2026-10-18/19; `results_19k2/`)
 

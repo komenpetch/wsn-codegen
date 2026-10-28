@@ -11,6 +11,10 @@ WBAN/DSR case study (HCMS) of the v4 DSR plan, `design/V4_DSR_Plan.md`.
 | `SensorScopeNetwork.ned` | the old field, copied from `../v4_aodv` (the sink's only neighbour is sensor6) |
 | `omnetpp.ini` | `[General]` = `../v4_aodv`'s verbatim (-85 dBm, 250 kbps); `[Config Control]`, `Route360`, `Route360Plain`, each with its prediction and result |
 | `build.sh`, `run.sh` | as `../v4_aodv`'s; the executable is named after the folder |
+| `DSRRoute.{h,cc,ned}`, `CTL6.{h,cc}`, `DSRPkt.msg` | the DSR baseline (2026-10-27): an INET network protocol shaped on the Final Report's printed MiXiM `DSRRoute`, with its wrapper `DSRRouteNetworkLayer`; see "The DSR baseline" below |
+| `similarity_dsr.mjs [module.cc] [--self]` | the v4 DSR module scored against `DSRRoute.cc` on the printed functions; see "Score and run comparison" below |
+| `compare_dsr.mjs <Route360-#r.sca> <Baseline-#r.sca>` | v4 DSR beside the baseline, sensor by sensor: paths, hop counts, first-route times |
+| `baseline_dsr.mjs <Baseline-#r.sca>` | the baseline's report: each sensor's path against the field, deliveries by path and by flood, RREQ/RREP counts; FAIL, REFUSE or GREEN |
 
 ## Build and run
 
@@ -98,12 +102,79 @@ these three files with the same field, the same settings and each config's
 expected result, ready to import into the IDE as a project of its own; built
 from scratch, every run there equals the run recorded here.
 
+## The DSR baseline (2026-10-27)
+
+`design/V4_DSR_Plan.md` section 13 settles it (Q1-Q16). `DSRRoute` is an INET
+4.5 network protocol in the style of this project's MintRoute port, carrying
+the Final Report's printed function names (Fig 6.8-6.12): `handleUpperMsg`
+(Fig 6.9, statement by statement), `handleLowerMsg` (Fig 6.10), `reverseRoute`
+(Fig 6.11; the printed loop runs past entry 0 and returns nothing, so here it
+stops at entry 0), `sendRREQ`, `sendRREP`, `updateRouteCacheTable`,
+`selectRoute`. It holds the controller `CTL6` as `ctl6`, whose methods are the
+Fig 6.8 events, each written from the RTMCS M6 event of the same name with the
+route tables replaced by the path and the route cache, and from Q16's choices
+(first path kept; an RREP known by the sink and its own number; one control
+counter for RREQ and RREP, one for data; the hop limit at `MAX_PATHLEN`; next
+hop = the entry after the node's own). On demand: a datagram with no cached
+path is broadcast and flooded and starts an RREQ; only the sink answers;
+only the originator caches. Every frame carries a 116 B header. No RRER.
+⚠ Not independent of the v4 DSR test code: both come from the same sources.
+
+Its protocol is `dsrroute` (ethertype 0x86FA), looked up in the current
+network's group on every call as the generated `ebProtocol()` is; SensorApp
+finds it by that name. GlobalArp runs on module-path addresses.
+
+`[Config Baseline]`: SensorApp on every sensor every 10 s from
+`exponential(1s)`, 10 B, to the sink; 360 s, five runs (seed sets 0-4).
+Scalars `bl:*` on each node: its path to the sink (node indices, sink = 0),
+first-route time, RREQ/RREP counts, data sent by path and by flood, received
+at the sink by path and by flood and per originator, duplicates, hop-limit
+drops and packets off their path.
+
+Measured (prediction written into the ini first; it held): events #112862
+#107330 #119202 #121314 #109261, `baseline_dsr.mjs` GREEN on all five. Every
+sensor: one RREQ, its first datagram flooded and the other 35 by path, its
+path cached at 1.1-8.1 s. The sink: 288 of 288 received in every run (280 by
+path, 8 by flood). Paths longer than the shortest: 1/0/1/2/0 of 8. No
+hop-limit drop, nothing off its path, no queue overflow. `baseline_dsr.mjs`
+caught 10 of 10 doctored copies. Control and Route360 #0 are identical on the
+rebuilt executable.
+
+## Score and run comparison (2026-10-28)
+
+`similarity_dsr.mjs`: the v4 module (staged `EbWsn.cc`, b08e2331) against
+`DSRRoute.cc`, on the Final Report's printed functions only. Pairing: by name for
+`sendRREQ`, `sendRREP`, `reverseRoute`, `updateRouteCacheTable`, `selectRoute`;
+`handleLowerMsg` against v4's `onReceiveRreqPkt` followed by its arrival
+`handleLowerPacket(Packet *)` (which takes the RREP before the model);
+`handleUpperMsg` not ported (no DATA). The INET helpers and `CTL6` are not scored.
+`--self` is the positive control (7 of 7 identical).
+
+Measured: 6 of 7 defined, 0 identical, **sym 3.7 %, recall 4.3 %** (module 180,
+baseline 141, 6 statements in common, all in `handleLowerMsg`). The two readings
+share function names and behaviour and almost no statements, for reasons decided
+in the plan: node ids against `L3Address` (Q6) in every signature; state changes
+through `ctl6.` in the baseline (Q8), inline in v4; and Q16's fresh choices gave
+the baseline the printed signatures (`selectRoute(myNetwAddr, path)`,
+`updateRouteCacheTable(origin, path, hopCount)`, `sendRREP(initialSrcAddr, path)`)
+where the v4 test code has its own (`selectRoute(src, dest)`,
+`updateRouteCacheTable(reversePath)`, `sendRREP(…, rreqSeqNum)`).
+
+`compare_dsr.mjs` on the five recorded pairs (paired by seed set only; the two
+modules draw from the RNG differently): every sensor routed on both sides in all
+five; same path 29 of 40, same hop count 34 of 40, same first hop 31 of 40.
+Paths longer than the shortest: v4 6 of 40, baseline 4 of 40. The baseline routes
+earlier (1.1-8.1 s, its first datagram at about 1 s) than v4 (5.1-12.0 s, its
+first RREQ tick at 5.1-5.9 s). RREQs 8 on both sides in four runs; v4 #4 sends
+10 (its 5 s tick retries), the baseline 8.
+
 ## The mirror (step 7, 2026-10-24)
 
 `wsn-codegen/docs/harness/v4_dsr/` holds a copy of this folder's source files:
 this README, `omnetpp.ini`, `SensorScopeNetwork.ned`, `build.sh`, `run.sh`,
-`route.mjs`, `tree_svg.mjs`, and the invariant, type and leak checks with their
-probes. Not copied: the staged `EbWsn.{h,cc,ned}` (the generated files with the
+`route.mjs`, `tree_svg.mjs`, the invariant, type and leak checks with their
+probes, and the DSR baseline (`DSRRoute.{h,cc,ned}`, `CTL6.{h,cc}`,
+`DSRPkt.msg`, `baseline_dsr.mjs`, `similarity_dsr.mjs`, `compare_dsr.mjs`). Not copied: the staged `EbWsn.{h,cc,ned}` (the generated files with the
 DSR test code pasted in; they are `scratch/v4_dsr_2026-10-24/paste_dsr/edited/`,
 made by `tools/make_paste_dsr.mjs` from `original/`), the Makefile, `out/`,
 `results/`, the logs and the executable. Change a file here, then copy it back.
