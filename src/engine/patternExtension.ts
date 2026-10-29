@@ -745,7 +745,8 @@ export function patternExtensionFor(files: EbFiles, base: string,
   // Checked before the project is read: an unknown routing is refused by name,
   // and one the structure cannot carry (dsr is structure 4 only, which is what
   // `nextHop` builds) by its profile's rule, as the pipeline does.
-  if (routing !== undefined) checkRoutingStructure(routing, nextHop ? 4 : 3);
+  const structure = nextHop ? 4 : 3;
+  if (routing !== undefined) checkRoutingStructure(routing, structure);
   const project = parseModel(files);
 
   const declared = new Set(project.machines.flatMap((m) => m.variables));
@@ -753,7 +754,7 @@ export function patternExtensionFor(files: EbFiles, base: string,
   if (missing.length > 0)
     throw new Error(
       `The pattern extension (PPkt + PRouteTable) refines the CommPattern, and this project does `
-      + `not declare ${missing.join(", ")}. Structure 3 carries that extension, so it only applies `
+      + `not declare ${missing.join(", ")}. Structure ${structure} carries that extension, so it only applies `
       + `to a project built on the pattern. For a model that is not, use structure 2 from the `
       + `command line (npm run generate -- <project> <out> --v2).`);
 

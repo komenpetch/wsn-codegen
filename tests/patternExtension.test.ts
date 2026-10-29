@@ -198,6 +198,16 @@ describe("patternExtensionFor", () => {
     expect(() => patternExtensionFor(base, "mA")).not.toThrow(/\bndBuff\b/);
   });
 
+  it("names the structure that was asked for when it refuses", () => {
+    // Structures 3 and 4 share this check (structure 4 is `nextHop`). The
+    // message said "Structure 3" for both, so a `--v4` run was told about a
+    // structure it had not asked for.
+    const base: EbFiles = [machine("mA", null, ["pktFwdr", "ndBuff"])];
+    expect(() => patternExtensionFor(base, "mA")).toThrow(/Structure 3 carries/);
+    expect(() => patternExtensionFor(base, "mA", undefined, true)).toThrow(/Structure 4 carries/);
+    expect(() => patternExtensionFor(base, "mA", undefined, true)).not.toThrow(/Structure 3/);
+  });
+
   it("does not mutate the caller's file list", () => {
     const base: EbFiles = [machine("pM3", null, COMM)];
     const before = base.length;
