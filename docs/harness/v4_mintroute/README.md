@@ -277,3 +277,18 @@ GUI check removed (a scratch copy): all eight arrows ran from each sensor to the
 parent its `mrt:*` scalars name, and the run was unchanged. `../../copy-sim/`
 carries the same files and config; built from scratch, its V4, Baseline and
 Parent360 runs and pictures are identical to the harness's.
+
+## Regenerated 2026-10-29
+
+`loop.sh` restaged the module from wsn-codegen `65f4c8c`. Two changes from the module
+staged on 2026-10-14: the destructor takes the node out of the shared node sets
+(`3f68fb5`), and a reception is counted before the rebroadcast re-stamps the packet
+(`17b9643`). Predictions were written first and held:
+
+- V4 (60 s): event #36346; `fired:update_nbr` 3441 -> 3472, now equal to `send_up`;
+  the other 673 scalars identical.
+- Parent and ParentPlain (300 s): event #78440; `update_nbr` 6176 -> 6208, equal to
+  `send_up`; all 64 link estimates 254 -> 255 (the first frame from each neighbour is
+  now counted); the same tree, hops, costs and first-parent times.
+- `loop.sh` (tree gates and invariants), `type_check.sh`, `leak_check.sh` GREEN;
+  `check_copy.mjs` passes (MintRoute's copied transmit unchanged).

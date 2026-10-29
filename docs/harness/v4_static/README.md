@@ -133,3 +133,14 @@ bytes. Predictions were written into `omnetpp.ini` first, and all held:
 Plain equals `../v4_mintroute [Config V4]` scalar for scalar at both frame sizes.
 `loop.sh`, `invariants.sh` (both configs), `type_check.sh` and `leak_check.sh`
 GREEN; 0 of 3472 deliveries left waiting.
+
+## Regenerated 2026-10-29
+
+`loop.sh` restaged the module from wsn-codegen `65f4c8c` (the node-set release,
+`3f68fb5`, and the reception counted before the rebroadcast, `17b9643`). Predictions
+were written first and held: Plain and Static both end at event #36346;
+`fired:update_nbr` 3441 -> 3472 (now equal to `send_up`) is the only scalar that
+moved; `addEntry` 20 calls / 9 accepted / 11 refused / 0 disagreeing; the log shows
+31 one-hop routes, 7 through another node, 2 updated in place; Plain and Static
+differ in no scalar outside `static:*`. `loop.sh`, `invariants.sh` (Plain, Static),
+`type_check.sh`, `leak_check.sh` GREEN.

@@ -24,3 +24,12 @@ The AODV twin is `../v3_aodv`: identical except for its `ROUTING` file.
 
 Measured 2026-09-27, nine-node field, `[Config Sink]`, 60 s: see the CLAUDE.md
 entry "ONE SIMULATOR FOLDER PER ROUTING — THE INPUT IS NEVER EDITED".
+
+## Regenerated 2026-10-29
+
+`loop.sh` restaged the module from wsn-codegen `65f4c8c`. The only change from the
+module staged on 2026-10-14 is the destructor, which now takes the node out of the
+shared node sets (`3f68fb5`), so a second run in one process starts clean. Measured
+against the 2026-10-14 run: event #38364, all 655 scalars identical. `loop.sh` GREEN
+(31 routes), `invariants.sh` GREEN on `Sink` and `SinkBeacon`, `type_check.sh` and
+`leak_check.sh` GREEN.
