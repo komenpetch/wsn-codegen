@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="360" viewBox="0 0 780 360" font-family="Segoe UI, Arial, sans-serif">
+<rect width="780" height="360" fill="#fcfcfb"/>
+<text x="20" y="28" font-size="17" font-weight="600" fill="#0b0b0b">The 4 × 4 class matrix: what is generated and what is hand-written</text>
+
+<g font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="middle">
+<text x="285" y="64">PComm</text><text x="285" y="80" font-size="11" font-weight="400" fill="#3b4856">operations</text>
+<text x="415" y="64">PPkt</text><text x="415" y="80" font-size="11" font-weight="400" fill="#3b4856">packets</text>
+<text x="545" y="64">PRouteTable</text><text x="545" y="80" font-size="11" font-weight="400" fill="#3b4856">route table</text>
+<text x="675" y="64">PEnv</text><text x="675" y="80" font-size="11" font-weight="400" fill="#3b4856">environment</text>
+</g>
+
+<g font-size="13" font-weight="600" fill="#0b0b0b">
+<text x="20" y="122">Interface</text>
+<text x="20" y="172">Base</text>
+<text x="20" y="222">PClass</text>
+<text x="20" y="272">Specific</text>
+</g>
+
+<g stroke="#ffffff" stroke-width="3">
+<rect x="220" y="95"  width="125" height="40" fill="#cfe8cf"/><rect x="350" y="95"  width="125" height="40" fill="#cfe8cf"/><rect x="480" y="95"  width="125" height="40" fill="#cfe8cf"/><rect x="610" y="95"  width="125" height="40" fill="#cfe8cf"/>
+<rect x="220" y="145" width="125" height="40" fill="#cfe8cf"/><rect x="350" y="145" width="125" height="40" fill="#cfe8cf"/><rect x="480" y="145" width="125" height="40" fill="#cfe8cf"/><rect x="610" y="145" width="125" height="40" fill="#cfe8cf"/>
+<rect x="220" y="195" width="125" height="40" fill="#f8dd9a"/><rect x="350" y="195" width="125" height="40" fill="#f8dd9a"/><rect x="480" y="195" width="125" height="40" fill="#f8dd9a"/><rect x="610" y="195" width="125" height="40" fill="#e3e1db"/>
+<rect x="220" y="245" width="125" height="40" fill="#bcd5f2"/><rect x="350" y="245" width="125" height="40" fill="#bcd5f2"/><rect x="480" y="245" width="125" height="40" fill="#bcd5f2"/><rect x="610" y="245" width="125" height="40" fill="#e3e1db"/>
+</g>
+
+<g font-size="11" fill="#0b0b0b" text-anchor="middle">
+<text x="672" y="219" fill="#3b4856">simulator side</text>
+<text x="672" y="269" fill="#3b4856">simulator side</text>
+<text x="282" y="219">generated</text><text x="412" y="219">generated</text><text x="542" y="219">generated</text>
+<text x="282" y="269">hand-written</text><text x="412" y="269">hand-written</text><text x="542" y="269">hand-written</text>
+</g>
+
+<g font-size="12" fill="#0b0b0b">
+<rect x="20" y="312" width="14" height="14" fill="#cfe8cf"/><text x="40" y="324">Interface and Base</text>
+<rect x="190" y="312" width="14" height="14" fill="#f8dd9a"/><text x="210" y="324">PClass: generated</text>
+<rect x="360" y="312" width="14" height="14" fill="#bcd5f2"/><text x="380" y="324">Specific: hand-written test code</text>
+<rect x="590" y="312" width="14" height="14" fill="#e3e1db"/><text x="610" y="324">realised by the simulator</text>
+</g>
+</svg>

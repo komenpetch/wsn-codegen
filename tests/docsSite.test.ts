@@ -8,7 +8,8 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve, posix } from "node:path";
-import { buildDocs, PUBLISHED } from "../scripts/build-docs";
+import JSZip from "jszip";
+import { buildDocs, PUBLISHED, DOWNLOADS } from "../scripts/build-docs";
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -25,9 +26,9 @@ describe("documentation site, built from the real docs/", () => {
   let out = "";
   let problems: string[] = [];
 
-  beforeAll(() => {
+  beforeAll(async () => {
     out = mkdtempSync(join(tmpdir(), "docsite-"));
-    problems = buildDocs({ outDir: out }).problems;
+    problems = (await buildDocs({ outDir: out })).problems;
   });
 
   it("builds without a single problem", () => {
@@ -117,6 +118,46 @@ describe("documentation site, built from the real docs/", () => {
     expect(html).toMatch(/<title>WSN-CodeGen<\/title>/);
   });
 
+  it("shows every figure it refers to, and the figure files exist", () => {
+    let seen = 0;
+    for (const f of walk(out).filter((x) => x.endsWith(".html"))) {
+      for (const m of readFileSync(f, "utf8").matchAll(/<img[^>]*src="([^"]+)"/g)) {
+        seen++;
+        expect(existsSync(resolve(dirname(f), m[1])), `${f} -> ${m[1]}`).toBe(true);
+      }
+    }
+    expect(seen).toBeGreaterThanOrEqual(6); // home pipeline + matrix, documentation, three case studies
+  });
+
+  it("builds the downloads from the fixture, so they match the current generator", async () => {
+    for (const d of DOWNLOADS) expect(existsSync(join(out, d)), d).toBe(true);
+    const names = async (d: string) =>
+      Object.entries((await JSZip.loadAsync(readFileSync(join(out, d)))).files)
+        .filter(([, f]) => !f.dir).map(([n]) => n).sort();
+    expect(await names("downloads/shdecom-project.zip")).toEqual(
+      ["shdecom/cM2.buc", "shdecom/pM1.bum", "shdecom/pM3.bum", "shdecom/uM2.bum"]);
+    for (const d of DOWNLOADS.slice(1))
+      expect(await names(d), d).toEqual(["EbWsn.cc", "EbWsn.h", "EbWsn.ned"]);
+  });
+
+  it("links the example project from the home page and from the tool", () => {
+    const home = readFileSync(join(out, "index.html"), "utf8");
+    expect(home).toContain('href="downloads/shdecom-project.zip"');
+    expect(home).not.toContain("Four emitted structures");
+    const app = readFileSync(join(__dirname, "..", "src", "App.tsx"), "utf8");
+    expect(app).toContain("docs/downloads/shdecom-project.zip");
+  });
+
+  it("gives the four case-study pages the same sections in the same order", () => {
+    const want = ["Input", "Generated and pasted", "Run it", "Expected result", "What it does not show"];
+    for (const p of ["sensorapp", "mintroute", "aodv", "dsr"]) {
+      const html = readFileSync(join(out, "case-studies", `${p}.html`), "utf8");
+      const heads = [...html.matchAll(/<h2[^>]*>([^<]*)<\/h2>/g)].map((m) => m[1].trim());
+      const picked = heads.filter((h) => want.includes(h));
+      expect(picked, p).toEqual(want);
+    }
+  });
+
   it("names the page in its title", () => {
     const html = readFileSync(join(out, "case-studies", "dsr.html"), "utf8");
     expect(html).toMatch(/<title>Case study: DSR/);
@@ -134,38 +175,38 @@ describe("documentation site, on a tree with a broken link", () => {
     return root;
   };
 
-  it("reports a link to a page that does not exist", () => {
+  it("reports a link to a page that does not exist", async () => {
     const docsDir = make({ "index.md": "# Home\n\nSee [nothing](missing.md).\n" });
-    const r = buildDocs({ docsDir, outDir: mkdtempSync(join(tmpdir(), "o-")), pages: ["index.md"] });
+    const r = await buildDocs({ docsDir, outDir: mkdtempSync(join(tmpdir(), "o-")), pages: ["index.md"], downloads: false });
     expect(r.problems.join("\n")).toMatch(/index\.md.*missing\.md/);
   });
 
-  it("reports a link that leaves the repository", () => {
+  it("reports a link that leaves the repository", async () => {
     const docsDir = make({ "index.md": "# Home\n\n[x](../../../outside.md)\n" });
-    const r = buildDocs({ docsDir, outDir: mkdtempSync(join(tmpdir(), "o-")), pages: ["index.md"] });
+    const r = await buildDocs({ docsDir, outDir: mkdtempSync(join(tmpdir(), "o-")), pages: ["index.md"], downloads: false });
     expect(r.problems.join("\n")).toMatch(/outside\.md/);
   });
 
-  it("reports a published page that is missing", () => {
+  it("reports a published page that is missing", async () => {
     const docsDir = make({ "index.md": "# Home\n" });
-    const r = buildDocs({ docsDir, outDir: mkdtempSync(join(tmpdir(), "o-")), pages: ["index.md", "gone.md"] });
+    const r = await buildDocs({ docsDir, outDir: mkdtempSync(join(tmpdir(), "o-")), pages: ["index.md", "gone.md"], downloads: false });
     expect(r.problems.join("\n")).toMatch(/gone\.md/);
   });
 
-  it("rewrites a link between published pages and keeps its anchor", () => {
+  it("rewrites a link between published pages and keeps its anchor", async () => {
     const docsDir = make({ "index.md": "# Home\n\n[d](a/b.md#sec)\n", "a/b.md": "# B\n\n## Sec\n" });
     const o = mkdtempSync(join(tmpdir(), "o-"));
-    const r = buildDocs({ docsDir, outDir: o, pages: ["index.md", "a/b.md"] });
+    const r = await buildDocs({ docsDir, outDir: o, pages: ["index.md", "a/b.md"], downloads: false });
     expect(r.problems).toEqual([]);
     expect(readFileSync(join(o, "index.html"), "utf8")).toContain('href="a/b.html#sec"');
     expect(existsSync(join(o, "a", "b.html"))).toBe(true);
     expect(posix.basename("a/b.html")).toBe("b.html");
   });
 
-  it("leaves external links alone", () => {
+  it("leaves external links alone", async () => {
     const docsDir = make({ "index.md": "# Home\n\n[x](https://example.org/a.md)\n" });
     const o = mkdtempSync(join(tmpdir(), "o-"));
-    buildDocs({ docsDir, outDir: o, pages: ["index.md"] });
+    await buildDocs({ docsDir, outDir: o, pages: ["index.md"], downloads: false });
     expect(readFileSync(join(o, "index.html"), "utf8")).toContain('href="https://example.org/a.md"');
   });
 });

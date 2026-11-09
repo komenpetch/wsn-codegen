@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="582.457" viewBox="0 0 840 582.457" font-family="Segoe UI, Arial, sans-serif">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2a78d6"/></marker></defs>
+<defs><marker id="arrowLoop" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#e34948"/></marker></defs>
+<rect width="840" height="582.457" fill="#fcfcfb"/>
+<text x="70" y="30" font-size="18" font-weight="600" fill="#0b0b0b">Route tree at t = 360 s: Parent360 run #0 (seed set 0)</text>
+<text x="70" y="50" font-size="13" fill="#52514e">sensors with a parent: 8 of 8 · the number in a node is its hop count</text>
+<line x1="770" y1="281.565" x2="568.435" y2="199.405" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="70" y1="95.3365" x2="256.228" y2="184.069" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="70" y1="95.3365" x2="144.491" y2="333.052" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="256.228" y1="184.069" x2="442.457" y2="80" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="256.228" y1="184.069" x2="144.491" y2="333.052" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="256.228" y1="184.069" x2="352.629" y2="288.138" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="256.228" y1="184.069" x2="278.138" y2="452.457" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="442.457" y1="80" x2="352.629" y2="288.138" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="442.457" y1="80" x2="568.435" y2="199.405" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="144.491" y1="333.052" x2="352.629" y2="288.138" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="144.491" y1="333.052" x2="278.138" y2="452.457" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="352.629" y1="288.138" x2="568.435" y2="199.405" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="352.629" y1="288.138" x2="278.138" y2="452.457" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="352.629" y1="288.138" x2="501.612" y2="415.211" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="568.435" y1="199.405" x2="501.612" y2="415.211" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="278.138" y1="452.457" x2="501.612" y2="415.211" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="80.8331" y1="100.498" x2="242.687" y2="177.617" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="266.704" y1="178.215" x2="429.363" y2="87.3173" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="451.166" y1="88.255" x2="557.548" y2="189.087" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="156.221" y1="330.52" x2="337.967" y2="291.302" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="363.728" y1="283.574" x2="554.562" y2="205.109" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="579.547" y1="203.935" x2="756.11" y2="275.903" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="283.092" y1="441.528" x2="346.436" y2="301.799" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="505.161" y1="403.748" x2="563.998" y2="213.734" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="758" y="269.565" width="24" height="24" rx="3" fill="#0b0b0b"/>
+<text x="770" y="285.565" font-size="12" font-weight="600" text-anchor="middle" fill="#ffffff">0</text>
+<text x="770" y="262.565" font-size="13" font-weight="600" text-anchor="middle" fill="#0b0b0b">sink</text>
+<circle cx="70" cy="95.3365" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="70" y="99.3365" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">4</text>
+<text x="52" y="100.336" font-size="13" font-weight="600" text-anchor="end" fill="#0b0b0b">sensor1</text>
+<circle cx="256.228" cy="184.069" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="256.228" y="188.069" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">3</text>
+<text x="238.228" y="189.069" font-size="13" font-weight="600" text-anchor="end" fill="#0b0b0b">sensor2</text>
+<circle cx="442.457" cy="80" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="442.457" y="84" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">2</text>
+<text x="424.457" y="85" font-size="13" font-weight="600" text-anchor="end" fill="#0b0b0b">sensor3</text>
+<circle cx="144.491" cy="333.052" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="144.491" y="337.052" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">3</text>
+<text x="126.491" y="338.052" font-size="13" font-weight="600" text-anchor="end" fill="#0b0b0b">sensor4</text>
+<circle cx="352.629" cy="288.138" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="352.629" y="292.138" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">2</text>
+<text x="334.629" y="293.138" font-size="13" font-weight="600" text-anchor="end" fill="#0b0b0b">sensor5</text>
+<circle cx="568.435" cy="199.405" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="568.435" y="203.405" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">1</text>
+<text x="550.435" y="204.405" font-size="13" font-weight="600" text-anchor="end" fill="#0b0b0b">sensor6</text>
+<circle cx="278.138" cy="452.457" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="278.138" y="456.457" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">3</text>
+<text x="278.138" y="481.457" font-size="13" font-weight="600" text-anchor="middle" fill="#0b0b0b">sensor7</text>
+<circle cx="501.612" cy="415.211" r="12" fill="#ffffff" stroke="#0b0b0b" stroke-width="2"/>
+<text x="501.612" y="419.211" font-size="12" font-weight="600" text-anchor="middle" fill="#0b0b0b">2</text>
+<text x="501.612" y="444.211" font-size="13" font-weight="600" text-anchor="middle" fill="#0b0b0b">sensor8</text>
+<line x1="70" y1="560.457" x2="110" y2="560.457" stroke="#2a78d6" stroke-width="3" marker-end="url(#arrow)"/><text x="120" y="564.457" font-size="12" fill="#52514e">child to parent</text>
+<line x1="240" y1="560.457" x2="280" y2="560.457" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="4 4"/><text x="290" y="564.457" font-size="12" fill="#52514e">radio link heard</text>
+<line x1="420" y1="560.457" x2="460" y2="560.457" stroke="#e34948" stroke-width="3" marker-end="url(#arrowLoop)"/><text x="470" y="564.457" font-size="12" fill="#52514e">a chain of parents that never reaches the sink</text>
+</svg>

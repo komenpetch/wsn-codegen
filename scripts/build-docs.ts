@@ -22,11 +22,14 @@
 // A link to anything that is not rendered becomes a GitHub link; a link to something
 // that does not exist, or that leaves the repository, is a BUILD ERROR. A page that
 // builds and points nowhere is the failure this guards against.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, copyFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep, posix as pp } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { Marked, type Tokens } from "marked";
+import JSZip from "jszip";
+import { generateMerged } from "../src/engine/pipeline";
+import { loadProject } from "./projects";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
@@ -50,6 +53,44 @@ export const PUBLISHED: readonly string[] = [
   "rule-map.md",
 ];
 
+/**
+ * Files the build MAKES instead of copying, so they cannot go stale: the repository's own
+ * application-layer fixture as a project zip, and what the generator emits from it. A page
+ * links to them as `downloads/<name>`. They derive only from tests/fixtures/shdecom, which is
+ * public; nothing derived from the advisor's models is built here.
+ */
+export const DOWNLOADS: readonly string[] = [
+  "downloads/shdecom-project.zip",
+  "downloads/shdecom-generated-structure2.zip",
+  "downloads/shdecom-generated-structure3.zip",
+];
+
+const FIXED_DATE = new Date("2026-01-01T00:00:00Z");
+
+async function zipOf(files: { path: string; content: string }[]): Promise<Buffer> {
+  const z = new JSZip();
+  for (const f of files) z.file(f.path, f.content, { date: FIXED_DATE });
+  return z.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+/** Write the downloads; returns what was written. Skips quietly when the fixture is absent. */
+async function makeDownloads(repoRoot: string, out: string): Promise<string[]> {
+  const fixture = join(repoRoot, "tests", "fixtures", "shdecom");
+  if (!existsSync(fixture)) return [];
+  const project = loadProject(fixture);
+  const dest = (name: string) => join(out, name);
+  mkdirSync(join(out, "downloads"), { recursive: true });
+  const written: string[] = [];
+  const put = async (name: string, files: { path: string; content: string }[]) => {
+    writeFileSync(dest(name), await zipOf(files));
+    written.push(dest(name));
+  };
+  await put(DOWNLOADS[0], project.map((f) => ({ path: `shdecom/${f.name}`, content: f.xml })));
+  await put(DOWNLOADS[1], generateMerged(project, undefined, 2));
+  await put(DOWNLOADS[2], generateMerged(project, undefined, 3));
+  return written;
+}
+
 const NAV: readonly { label: string; page: string }[] = [
   { label: "Home", page: "index.md" },
   { label: "Documentation", page: "documentation.md" },
@@ -65,6 +106,8 @@ export interface BuildOptions {
   outDir: string;
   /** What to render. Default: PUBLISHED. */
   pages?: readonly string[];
+  /** Make the downloads from the repository's fixture. Default: true. */
+  downloads?: boolean;
 }
 
 export interface BuildResult {
@@ -106,7 +149,7 @@ function commitOf(root: string): string | null {
   }
 }
 
-export function buildDocs(opts: BuildOptions): BuildResult {
+export async function buildDocs(opts: BuildOptions): Promise<BuildResult> {
   const docsDir = resolve(opts.docsDir ?? join(REPO, "docs"));
   const repoRoot = resolve(docsDir, "..");
   const docsInRepo = toPosix(relative(repoRoot, docsDir));
@@ -123,6 +166,10 @@ export function buildDocs(opts: BuildOptions): BuildResult {
     const [pathPart, ...hashParts] = href.split("#");
     const hash = hashParts.length > 0 ? `#${hashParts.join("#")}` : "";
     const abs = pp.normalize(pp.join(pp.dirname(src), decodeURI(pathPart)));
+    // Made by this build, or copied from docs/assets: both land beside the pages.
+    if ((opts.downloads !== false && DOWNLOADS.includes(abs)) ||
+        (abs.startsWith("assets/") && existsSync(join(docsDir, abs))))
+      return relFrom(pp.dirname(src), abs) + hash;
     if (published.has(abs)) {
       const html = abs.replace(/\.md$/, ".html");
       return relFrom(pp.dirname(src), html) + hash;
@@ -217,6 +264,17 @@ ${body}
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, "docs.css"), CSS);
   written.push(join(out, "docs.css"));
+
+  // Figures: every file under docs/assets, copied as it is.
+  const assets = join(docsDir, "assets");
+  if (existsSync(assets)) {
+    mkdirSync(join(out, "assets"), { recursive: true });
+    for (const name of readdirSync(assets)) {
+      copyFileSync(join(assets, name), join(out, "assets", name));
+      written.push(join(out, "assets", name));
+    }
+  }
+  if (opts.downloads !== false) written.push(...(await makeDownloads(repoRoot, out)));
   return { written, problems };
 }
 
@@ -247,6 +305,9 @@ table{border-collapse:collapse;margin:1rem 0;display:block;overflow-x:auto;max-w
 th,td{border:1px solid var(--line);padding:.4rem .65rem;text-align:left;vertical-align:top}
 th{background:var(--code)}
 blockquote{margin:1rem 0;padding:.2rem 1rem;border-left:4px solid var(--accent);background:var(--code)}
+img{max-width:100%;height:auto}
+figure{margin:1.2rem 0}
+figcaption{color:var(--muted);font-size:.9rem;margin-top:.3rem}
 hr{border:0;border-top:1px solid var(--line);margin:2rem 0}
 footer.site{max-width:60rem;margin:0 auto;padding:1rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--line)}
 @media (max-width:40rem){h1{font-size:1.6rem}main{padding-inline:.75rem}}

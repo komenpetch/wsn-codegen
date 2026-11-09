@@ -3,16 +3,21 @@
 The first case study and the one the paper describes in full. It asks one question: can a
 module generated from an Event-B model do what INET's hand-written `SensorApp` does?
 
-## The model
+## Input
 
 **WSN-App**, the application-layer chain of the pattern: three machines (`pM1`, `uM2`,
 `pM3`), 14 events, 101 clauses, 36.2 kB of Rodin XML. It holds the CommPattern: sensing,
 packet creation, the neighbour and destination buffers, and the `send_down` / `send_up` pair.
 
 The repository ships an earlier copy of this chain, `tests/fixtures/shdecom`, which generates
-structures 1 to 3 (not 4).
+structures 1 to 3 (not 4). It is available here as a download:
+[shdecom-project.zip](../downloads/shdecom-project.zip). Its output is
+[structure 2](../downloads/shdecom-generated-structure2.zip) (this case study) and
+[structure 3](../downloads/shdecom-generated-structure3.zip). The figures below were measured on the
+advisor's working copy (`C0_project`, 36.2 kB); the shipped fixture is an earlier copy and
+generates 597 lines at structure 2, with no untranslated clause.
 
-## What is generated
+## Generated and pasted
 
 Everything. The module is `ApplicationBase` shaped like `SensorApp`: a sensing timer, a socket,
 `sendSensorPacket()` and `socketDataArrived()`, `openSocket()` with its IPv4, IPv6 and
@@ -42,7 +47,7 @@ radio, SMAC and WiseRoute, for 60 simulated seconds. The node wiring is `MyWSN`'
 only the application's type name changed. That keeps the comparison to the module and nothing
 else.
 
-## Measured
+## Expected result
 
 **Packets over 60 s** (one sink and three sensors; "sent" lists the three sensors, "received" is
 the run's total):

@@ -10,7 +10,9 @@ Both use the same engine and produce the same three files.
 <https://komenpetch.github.io/wsn-codegen/>
 
 Nothing to install. Parsing and generation execute locally in the browser, so the model is
-never uploaded.
+never uploaded. No project to hand? Use the example,
+[shdecom-project.zip](downloads/shdecom-project.zip), and compare your result with
+[the generated files](downloads/shdecom-generated-structure3.zip).
 
 1. **Load the project.** Choose a Rodin project *folder*, or a *zip* archive of one. It
    needs the `.bum` machines and the `.buc` contexts they see.
@@ -77,7 +79,7 @@ the fixture's contexts declare no control split.
 ### Other commands
 
 ```bash
-npm test                              # 629 tests (365 on a checkout without the advisor's models)
+npm test                              # the test suite
 npm run dev                           # run the web app locally
 npm run build                         # production build
 npm run check:output -- <reference>   # byte-compare every output with a saved reference
@@ -148,3 +150,13 @@ configurations, the field and the expected results.
 | a multi-hop run looks like a single hop | open the `.sca` and read the `attr configname` line and the **per-module** `sensitivity` line, not the `config` lines. A network and a radio setting that do not move together can turn a multi-hop field into a full mesh, and every node then reports the same counts |
 | the pasted test code is not running | a forgotten paste is silent: the module runs, no result scalars appear and the event count differs from the case study's. Check that the switch (`mintRoute`, `aodv` or `dsr`) is set and that the paste steps were all applied |
 | a second run in the same Qtenv window behaves differently | fixed in the generator on 2026-10-14 (protocol registration) and 2026-10-18 (node sets); regenerate the module if it predates those |
+
+---
+
+## Reporting a problem
+
+Open an issue in the [repository](https://github.com/komenpetch/wsn-codegen/issues). Name the
+structure you generated (`--v1` to `--v4`), say whether the three files compile, and, for a run
+that behaves unexpectedly, give the `attr configname` line and the event number the run ended
+at. A run is identified by its configuration and that number, and a different number is a
+different run.

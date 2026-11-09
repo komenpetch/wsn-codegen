@@ -224,6 +224,13 @@ export default function App() {
       </div>
 
       <p className="mt-2 text-xs text-gray-500">…or drag a .zip anywhere onto this page.</p>
+      <p className="mt-1 text-xs text-gray-500">
+        No Rodin project handy?{" "}
+        <a className="text-blue-700 underline" href={`${import.meta.env.BASE_URL}docs/downloads/shdecom-project.zip`}>
+          Download the example project
+        </a>
+        {" "}and load it as a .zip.
+      </p>
 
       {machines.length > 0 && (
         <div className="mt-5 flex max-w-2xl flex-wrap items-end gap-4 rounded border border-gray-200 bg-white p-4">
@@ -259,7 +266,7 @@ export default function App() {
       <pre className="mt-3 h-64 overflow-auto rounded bg-black p-3 text-green-400">
         {log.length
           ? log.join("\n")
-          : "Log output appears here. No Rodin export handy? Load the bundled tests/fixtures/shdecom folder."}
+          : "Log output appears here."}
       </pre>
     </div>
   );
