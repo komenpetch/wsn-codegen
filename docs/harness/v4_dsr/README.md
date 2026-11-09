@@ -162,7 +162,7 @@ where the v4 test code has its own (`selectRoute(src, dest)`,
 
 `compare_dsr.mjs` on the five recorded pairs (paired by seed set only; the two
 modules draw from the RNG differently): every sensor routed on both sides in all
-five; same path 29 of 40, same hop count 34 of 40, same first hop 31 of 40.
+five; same path 29 of 40, same hop count 35 of 40, same first hop 31 of 40.
 Paths longer than the shortest: v4 6 of 40, baseline 4 of 40. The baseline routes
 earlier (1.1-8.1 s, its first datagram at about 1 s) than v4 (5.1-12.0 s, its
 first RREQ tick at 5.1-5.9 s). RREQs 8 on both sides in four runs; v4 #4 sends
