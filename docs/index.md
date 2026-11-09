@@ -30,20 +30,6 @@ OMNeT++/INET 4.5 simulation:
 The default module name is `EbWsn`. The generated `.cc` compiles against real INET 4.5
 headers with only those three files present.
 
-## Four emitted structures
-
-The same engine can emit four module structures. The first two are the ones the paper
-compares as V1 and V2; the other two add the network layer.
-
-| Flag | Structure | What it is |
-|---|---|---|
-| `--v1` | 1 | an application module shaped like INET's `SensorApp`, with the transmit call left behind an extension point (the paper's V1) |
-| `--v2` | 2 | the same module with the transmit bound and the context inlined, so it matches `SensorApp` (the paper's V2). This is the CLI default |
-| `--v3` | 3 | a network protocol module (`NetworkProtocolBase`) that carries the packet classes and the neighbour table from the bundled pattern extension. The web app emits this one |
-| `--v4` | 4 | structure 3 plus the next-hop design: a route-table operation, unicast data send, routes published into INET's routing table, and one timer per packet type |
-
-[Documentation](documentation.md) describes each one.
-
 ## Highlights
 
 - **Set-theoretic guards are translated, not simplified by hand.** Relational image,
@@ -77,7 +63,7 @@ the line falls for each protocol.
 
 | Page | For |
 |---|---|
-| [Documentation](documentation.md) | how the framework works: the pipeline, the input format, the four structures, the output contract |
+| [Documentation](documentation.md) | how the framework works in full: the pipeline and its network-layer passes, the input format, encoding and translation, the output contract, the four emitted structures |
 | [Case studies](case-studies/index.md) | SensorApp, MintRoute, AODV and DSR: what is generated, what is pasted, how to run it, what was measured |
 | [Translation rules](TRANSLATION_RULES.md) | the complete 38-rule catalog, with the Event-B shape and the C++ each rule produces |
 | [Rule map](rule-map.md) | which source rule implements which catalog rule |
