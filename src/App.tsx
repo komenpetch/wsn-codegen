@@ -171,6 +171,19 @@ export default function App() {
       <p className="mt-1 text-sm text-gray-600">
         Generate compilable OMNeT++/INET&nbsp;4.5 C++ from a pattern-based WSN Event-B model.
       </p>
+      <p className="mt-1 text-sm">
+        <a className="text-blue-700 underline" href={`${import.meta.env.BASE_URL}docs/index.html`}>
+          Documentation
+        </a>
+        {" · "}
+        <a className="text-blue-700 underline" href={`${import.meta.env.BASE_URL}docs/case-studies/index.html`}>
+          Case studies
+        </a>
+        {" · "}
+        <a className="text-blue-700 underline" href="https://github.com/komenpetch/wsn-codegen">
+          Source
+        </a>
+      </p>
 
       <div className="mt-4 max-w-2xl space-y-2 text-sm text-gray-700">
         <p>
