@@ -18,7 +18,9 @@ protocol case studies see [Case studies](case-studies/index.md).
 
 ## 1. The pipeline
 
-![The pipeline: three steps, then the network-layer passes of structures 3 and 4](assets/pipeline.svg)
+![Figure 1 of the paper: the three steps of the framework](assets/paper-overview.png)
+
+*Figure 1 of the paper. Structures 3 and 4 add the passes in the table below, after step 3.*
 
 ### Three steps, as in the paper
 

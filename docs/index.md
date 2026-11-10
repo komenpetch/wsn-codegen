@@ -15,7 +15,9 @@ The paper describes the application layer in detail. These pages hold what the p
 room for: the network layer, the three protocol case studies, the run configurations and the
 measured results.
 
-![The pipeline: a Rodin project goes through three steps and comes out as three files; structures 3 and 4 add network-layer passes after step 3](assets/pipeline.svg)
+![Figure 1 of the paper: an Event-B model goes through three steps, Parsing and Flattening, Rule Mapping and Code Generation, and comes out as three files that are compiled and executed in OMNeT++/INET and compared with a baseline](assets/paper-overview.png)
+
+*An overview of the framework (Figure 1 of the paper). Structures 3 and 4 add network-layer passes after step 3; [Documentation](documentation.md) lists them.*
 
 ---
 
@@ -48,9 +50,9 @@ neighbour table (`PRouteTable`). The protocol-specific part is hand-written. Min
 selection, AODV's route discovery and DSR's path handling are test code, pasted into the
 generated module and marked line by line.
 
-![The 4 by 4 class matrix: interface and base rows are green, the PClass row is generated, the Specific row is hand-written](assets/class-matrix.svg)
+![Figure 11 of the paper: the four hierarchies of the class architecture, class names only. Each of Operation/Method, Packet, Route Table and Environment has an interface, a base class and a pattern class](assets/paper-class-architecture.png)
 
-The [case studies](case-studies/index.md) say exactly where the line falls for each protocol.
+*The class architecture (Figure 11 of the paper): four groups, each with an interface, a base class and a pattern class. The paper does not draw the fourth level, where a particular protocol fills in its own classes by hand, because the paper reports one case study. The [case studies](case-studies/index.md) here are that level, and each says exactly where the line falls for its protocol.*
 
 ## Try it
 
