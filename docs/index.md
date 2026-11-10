@@ -17,7 +17,7 @@ measured results.
 
 ![Figure 1 of the paper: an Event-B model goes through three steps, Parsing and Flattening, Rule Mapping and Code Generation, and comes out as three files that are compiled and executed in OMNeT++/INET and compared with a baseline](assets/paper-overview.png)
 
-*An overview of the framework (Figure 1 of the paper). Structures 3 and 4 add network-layer passes after step 3; [Documentation](documentation.md) lists them.*
+*An overview of the framework (Figure 1 of the paper).*
 
 ---
 
@@ -50,9 +50,9 @@ neighbour table (`PRouteTable`). The protocol-specific part is hand-written. Min
 selection, AODV's route discovery and DSR's path handling are test code, pasted into the
 generated module and marked line by line.
 
-![Figure 11 of the paper: the four hierarchies of the class architecture, class names only. Each of Operation/Method, Packet, Route Table and Environment has an interface, a base class and a pattern class](assets/paper-class-architecture.png)
+![The class architecture: four groups, each with an interface, a base class, a pattern class and a specific class](assets/class-architecture.png)
 
-*The class architecture (Figure 11 of the paper): four groups, each with an interface, a base class and a pattern class. The paper does not draw the fourth level, where a particular protocol fills in its own classes by hand, because the paper reports one case study. The [case studies](case-studies/index.md) here are that level, and each says exactly where the line falls for its protocol.*
+*The class architecture (Figure 11 of the paper, with its fourth level added). Each group has an interface and a base class, which are INET's or common to all protocols (green), a pattern class, which is generated (amber), and a specific class, which a particular protocol fills in by hand (blue). The paper leaves the fourth level undrawn because it reports one case study. The [case studies](case-studies/index.md) here are that level: MintRoute, AODV and DSR, each with its own packet fields and route data, and the network file and `omnetpp.ini` of the harness. Each says exactly where the line falls for its protocol.*
 
 ## Try it
 
@@ -74,7 +74,7 @@ default of the command line) and
 
 | Page | For |
 |---|---|
-| [Documentation](documentation.md) | how the framework works in full: the pipeline and its network-layer passes, the input format, encoding and translation, the output contract, the four emitted structures |
+| [Documentation](documentation.md) | how the framework works in full: the pipeline, the input format, encoding and translation, the output contract, the four emitted structures |
 | [Case studies](case-studies/index.md) | SensorApp, MintRoute, AODV and DSR: what is generated, what is pasted, how to run it, what was measured |
 | [Usage](usage.md) | running the tool in the browser and from the command line, and putting the module into OMNeT++ |
 | [Translation rules](TRANSLATION_RULES.md) | the complete 38-rule catalog, with the Event-B shape and the C++ each rule produces |

@@ -12,7 +12,7 @@ protocol case studies see [Case studies](case-studies/index.md).
 | 2.2 Step 1, Parsing and Flattening | section 2 |
 | 2.3 Step 2, Rule Mapping (encoding, translation rules) | sections 3 and 4 |
 | 2.4 Step 3, Code Generation (INET model, emission) | section 5 |
-| not in the paper: the network layer | sections 1 (passes), 6, 7 and 8 |
+| not in the paper: the network layer | sections 6, 7 and 8 |
 
 ---
 
@@ -20,9 +20,7 @@ protocol case studies see [Case studies](case-studies/index.md).
 
 ![Figure 1 of the paper: the three steps of the framework](assets/paper-overview.png)
 
-*Figure 1 of the paper. Structures 3 and 4 add the passes in the table below, after step 3.*
-
-### Three steps, as in the paper
+*Figure 1 of the paper.*
 
 | # | Step | Engine modules | Responsibility |
 |---|---|---|---|
@@ -39,40 +37,6 @@ already subsumes the state and events of every abstraction level. Generating fro
 single compilable class, which is what the simulator wants: an INET module is one C++ class,
 not a chain of them. The flattener is name-agnostic. Any `pM1 → uM2 → pM3` style chain works,
 and the entry point is discovered from the files, not configured.
-
-### Then the network-layer passes
-
-Structures 1 and 2 stop after step 3. Structures 3 and 4 run further passes over the module
-step 3 produced, in the order below. **The order is part of the design:** each pass attaches to
-the methods the one before it left behind, and a pass that cannot find its anchor in the
-emitted code stops with an error instead of skipping itself. A module that compiles and does
-nothing is the failure this guards against. Each pass derives its result from the model's own
-guards and actions; none matches a protocol name.
-
-| # | Pass | Module | What it does | Structures |
-|---|---|---|---|---|
-| 1 | Pattern extension | `patternExtension.ts` | adds the bundled Event-B extension (`PPkt` packet types, the `PRouteTable` neighbour table) and one creating event per control packet type | 3, 4 |
-| 2 | Carry events | `packetOps.ts` | brings across the events that create, transmit, receive, enable and drain packets, each chosen by what its guards and actions touch | 3, 4 |
-| 3 | Emit with packet classes | `netPipeline.ts`, `packetModel.ts`, `packetEmitter.ts`, `packetRules.ts` | runs step 3 under the network rule sets, splices in the `PPkt` chunk and one leaf class per packet type, then repairs the text (reserved names, dead maps, packet-type constants, pair-keyed and nested declarations) | 3, 4 |
-| 4 | Network shell | `netProtocolShell.ts` | replaces the application shell with `NetworkProtocolBase` + `INetworkProtocol` and adds the `<Name>NetworkLayer` wrapper to the `.ned` | 3, 4 |
-| 5 | Pair rename | `netProtocolShell.ts` | the model's `send_down` becomes a `sendDown` overload and `send_up` a `handleLowerPacket` overload | 3, 4 |
-| 6 | Transmit | `appTransmit.ts` | one send method per packet type; the frame is built from the model's chunk, with its sender pinned from the event's own parameter | 3, 4 |
-| 7 | Node identity | `nodeIdentity.ts` | maps the model's node set to simulation nodes; the sink is recognised by address; node-keyed initialisation is specialised to this node | 3, 4 |
-| 8 | Arrival | `appTransmit.ts`, `mediumBinding.ts` | when a frame arrives, restores the packet, stages what the model's `send_up` needs, runs it, and runs the events a delivery enables | 3, 4 |
-| 9 | Scheduler | `scheduler.ts`, `phaseFlags.ts` | one `try_` method per event that can fire; drops events nothing can enable; runs the non-creating events to a bounded fixpoint | 3, 4 |
-| 10 | Route publication | `routingTable.ts` | publishes the neighbour table into INET's routing table as one-hop routes | 3, 4 |
-| 11 | Route entries and unicast | `routingTable.ts` | publishes route entries, and sends the data packet as a MAC unicast to its next hop when one is set | 4 |
-| 12 | Baseline shell | `baselineShell.ts` | gives events the baseline's method names, one timer per packet type, and the receive dispatch | 4 |
-| 13 | Route-table classes | `routingTable.ts` | moves the table's members and operations into `PRouteTable` and `RouteTableBase` | 4 |
-| 14 | Finish | `nodeIdentity.ts`, `moduleNamespace.ts` | the destructor removes the node from the shared node sets; the code is wrapped in a namespace | 2, 3, 4 |
-
-The pair-keyed and two-level table encodings (`pairKeyed.ts`, `nestedMap.ts`) and the
-relational-image, scalar and packet-field rule files belong to step 2: they are rule sets that
-pass 3 installs, not passes of their own.
-
-A model that carries its own medium (MintRoute M4 or RTMCS M6, generated with `--v2`) takes the
-same shell, node identity and scheduler, and binds the radio with `mediumBinding.ts` instead of
-carrying the extension.
 
 ---
 
@@ -257,7 +221,7 @@ What the model decides and what the simulator decides:
 
 The generated module has one class per node, where the Event-B model describes the whole
 network as one state space. That difference is the reason for the node identity and arrival
-passes (7 and 8 above), and it is why a few model variables (the medium itself, the topology
+bindings, and it is why a few model variables (the medium itself, the topology
 relation) are realised by the simulator and not stored.
 
 ---
@@ -324,9 +288,6 @@ handled, by the member initialiser.
 | `clang -fsyntax-only` against INET 4.5 | the three files compile with nothing else present |
 | the test suite | runs on every push; the part that reads the advisor's models is skipped on a checkout that lacks them, and the rest still runs |
 | `npm run check:output` | regenerates every output and compares it byte for byte with a saved reference, so a refactor that moves a generated byte is caught |
-| the harness batteries | conservation laws over a real run (`invariants.sh`, `type_check.sh`, `leak_check.sh`); each is shown to go red on a deliberately broken copy |
-
-The harnesses are described in [Harness](harness/README.md).
 
 ---
 
@@ -348,5 +309,4 @@ built, so they match the current generator.
 | [Translation rules](TRANSLATION_RULES.md) | all 38 rules: the Event-B shape, the C++ produced, the storage form assumed, the evidence |
 | [Rule map](rule-map.md) | which source rule implements which catalog rule |
 | [Interface mapping](INTERFACE_MAPPING.md) | the per-interface Event-B to C++ mapping the catalog was induced from |
-| [Harness](harness/README.md) | the simulation harnesses and checkers behind every measured number |
 | [Findings](findings/netlayer/README.md) | the dated studies and defect reports behind the network-layer work |
