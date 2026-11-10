@@ -10,7 +10,7 @@ compares with its baseline**, and **what it does not show**.
 | SensorApp (application layer) | 2 | INET's `SensorApp` | [SensorApp](sensorapp.md) |
 | MintRoute (tree collection) | 4, flooding split | INET's MintRoute port | [MintRoute](mintroute.md) |
 | AODV (on-demand routing) | 4, AODV split | INET's `Aodv` | [AODV](aodv.md) |
-| DSR (source routing) | 4, DSR split | a protocol written from the Final Report's printed code | [DSR](dsr.md) |
+| DSR (source routing) | 4, DSR split | `DSRRoute` and `CTL6`, written for this project from the Final Report | [DSR](dsr.md) |
 
 ## Results at a glance
 
@@ -27,7 +27,7 @@ baseline:
 | SensorApp V2 | INET `SensorApp` | 15 of 15 | 100 % | 100 % | 100 % |
 | MintRoute | INET's MintRoute port | 18 | 37.23 % | 43.21 % | 40.00 % |
 | AODV | INET's `Aodv` | 21 | 31.89 % | 25.56 % | 28.37 % |
-| DSR | the Final Report's printed `DSRRoute` | 22 | 3.55 % | 3.47 % | 3.51 % |
+| DSR | `DSRRoute` and `CTL6`, written for this project | 22 | 3.55 % | 3.47 % | 3.51 % |
 
 **Behaviour**, one line per case study:
 
@@ -45,11 +45,11 @@ How to read the similarity table:
   was checked to be unchanged by that removal: the same event counts and the same routes.
 - **The function sets are the functions the structure needs**, not every function the baseline
   has. MintRoute's 18 are its 25 functions minus the 7 that only the data path uses; AODV's 21
-  are the functions the structure needs out of 51; DSR's 22 are 6 printed `DSRRoute` functions
+  are the functions the structure needs out of 51; DSR's 22 are 6 `DSRRoute` functions
   plus 16 of the controller's `CTL6` functions. Each page lists them.
 - **The figures are not a ranking across rows.** The baselines differ in kind: a module that
   shares `SensorApp`'s structure, a module that shares MintRoute's shell, a routing daemon over
-  UDP and IP (AODV), and a fragment printed in a report (DSR).
+  UDP and IP (AODV), and a protocol written for this project from a fragment printed in a report (DSR).
 - **DSR's figures carry little weight.** Of its six matching statements, all are `else {` or
   `break;`. Its baseline is written from the same sources as the test code, so it is not an
   independent check. The route tests, not the similarity score, are the DSR evidence.

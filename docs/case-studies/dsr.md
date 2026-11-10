@@ -117,7 +117,7 @@ discovery at about 1 s and the generated module waits for its 5 s tick.
 
 | Scope | Precision | Recall | F |
 |---|---|---|---|
-| 22 functions: the 6 printed `DSRRoute` functions and 16 of `CTL6`'s (its 7 data events left out) | 3.55 % | 3.47 % | 3.51 % |
+| 22 functions: the 6 `DSRRoute` functions and 16 of `CTL6`'s (its 7 data events left out) | 3.55 % | 3.47 % | 3.51 % |
 | all three files (`DSRRoute.h`, `CTL6.h`, `.cc` and `.ned` against the generated three) | 5.76 % | 19.53 % | 8.90 % |
 
 6 of the 22 functions exist in the generated module under the baseline's name and none is
