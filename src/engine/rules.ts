@@ -24,6 +24,18 @@ export const RULES: Rule[] = [
       const val = v === "∅" ? "{}" : v;
       return `for (int _n : ${A}) if (${B}.count(_n) == 0) ${f}[_n] = ${val};`;
     } },
+  // ── CMP2, the plain form: f ≔ D × {const}  (PActivate, 2026-11-17) ──
+  // The pattern's actuation component initialises `emergencyAlert ≔ ND × {FALSE}`
+  // (pM3 MPActivate_activate_int_1; RTMCS M2 writes `Actuators × {FALSE}`). It was
+  // never in the induction corpus: PActivate is the one component shipped with no
+  // interface machine. Where the node-identity binding exists (structures 3-4 and
+  // the network modules) a network rule refuses this shape first, so node-keyed
+  // products stay realised per node at INITSTAGE_LAST, as before; see miscRules.
+  { id: "CMP2-D", match: re(/^(?<f>\w+)\s*≔\s*(?<D>\w+)\s*×\s*\{\s*(?<v>∅|\w+)\s*\}$/),
+    emit: (m) => {
+      const { f, D, v } = c(m);
+      return `for (int _n : ${D}) ${f}[_n] = ${v === "∅" ? "{}" : v};`;
+    } },
 
   // ── reset to empty: X ≔ ∅  (FN5/SET5/PS7/MS8) ──
   { id: "CLEAR", match: re(/^(?<X>\w+)\s*≔\s*∅$/),
@@ -163,6 +175,18 @@ export const RULES: Rule[] = [
   // ── bare membership: x ∈ S / ∉  (SET1) ──
   { id: "SET1", match: re(/^(?<x>\w+)\s*(?<op>∈|∉)\s*(?<S>\w+)$/),
     emit: (m) => { const { x, op, S } = c(m); return `${S}.count(${x}) ${op === "∈" ? "> 0" : "== 0"}`; } },
+
+  // ── CMP3 ordering: a scalar against a declared name  (PActivate, 2026-11-17) ──
+  // `data ≥ safetyThreshold` (pM3 MPActivate_activate_g3; RTMCS M2 `actuating` g4,
+  // and `data < safetyThreshold` in `no_actuating` g4). Both sides are single
+  // names, so the comparison is the C++ one. The name must be declared for the
+  // output to compile; the pattern project uses `safetyThreshold` without
+  // declaring it, which is why the tool bundles its declaration (bundledConstants).
+  { id: "CMP3", match: re(/^(?<a>\w+)\s*(?<op>≥|≤|>|<)\s*(?<b>\w+)$/),
+    emit: (m) => {
+      const { a, op, b } = c(m);
+      return `${a} ${op === "≥" ? ">=" : op === "≤" ? "<=" : op} ${b}`;
+    } },
 
   // ── scalar equality guard: a = b  (e.g. data = CTL_VAL) ──
   { id: "EQ", match: re(/^(?<a>\w+)\s*=\s*(?<b>\w+)$/),

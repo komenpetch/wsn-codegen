@@ -35,7 +35,7 @@ University, Phuket Campus. To reach the project, open an issue in the
   pattern extension, the tests, one application-layer example project and the harness sources
 - **Example project and its generated files:** on the [home page](index.md#try-it), built from
   the repository's own fixture each time the site is built
-- **Rule catalog:** [Translation rules](TRANSLATION_RULES.md), all 38 rules, with the Event-B
+- **Rule catalog:** [Translation rules](TRANSLATION_RULES.md), all 39 rules, with the Event-B
   shape, the C++ produced, the storage form assumed, and the pattern events that evidence each
   one; [Rule map](rule-map.md) says which source rule implements which, and is generated from
   the rule source so it cannot drift

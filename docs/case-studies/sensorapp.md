@@ -83,7 +83,12 @@ On three files, the V2 row of the paper's accuracy table is precision 37.26 %, r
 F 53.36 %. Precision is low because the generated files hold the whole Event-B model in
 addition to `SensorApp`'s shell, and `SensorApp` has no counterpart for the model's events.
 
-**Rule coverage.** 2 of 101 clauses are unmatched, both in `PActivate`.
+**Rule coverage.** In the paper, 2 of 101 clauses are unmatched (98.0 %), both in `PActivate`, the
+actuation component: `emergencyAlert ≔ ND × {FALSE}` and `data ≥ safetyThreshold`. Since
+2026-11-17 both translate (CMP2's `D × {c}` form and CMP3), and the tool supplies the declaration
+of `safetyThreshold` that the model lacks, so today's output leaves none of the 101 unmatched. The
+shell and its similarity to `SensorApp` did not change. `activate` is still never called in a run,
+so no packet count moves.
 
 ## What it does not show
 

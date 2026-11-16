@@ -21,6 +21,7 @@ import { fixAliasedEncodings, fixBooleanEncodings } from "./aliasEncoding";
 import { carrierSetsOf } from "./text";
 import { wrapInNamespace } from "./moduleNamespace";
 import { installBaselineShell } from "./baselineShell";
+import { withBundledConstants, installBundledParameters } from "./bundledConstants";
 
 export type EbFiles = { name: string; xml: string }[];
 
@@ -41,7 +42,9 @@ function parsedMachines(files: EbFiles): RawModel {
   const raw = parseModel(files);
   if (raw.machines.length === 0)
     throw new Error("No Event-B machine (.bum) found in the selection.");
-  return raw;
+  // A constant the model uses and declares nowhere, which the tool bundles
+  // (PActivate's safetyThreshold; see bundledConstants.ts). Every structure reads it.
+  return withBundledConstants(raw);
 }
 
 // Refinement depth of each machine (1 = base). Shared by leaf detection and
@@ -152,8 +155,13 @@ function emitOne(raw: RawModel, target: string, outputName: string, version: Emi
   // Every node takes its id out of the shared node sets when its module is
   // destroyed (releaseNodeIdentity). Here, after every pass that shapes the
   // destructor; a no-op for an output that puts no id in a shared set.
+  const body = emitBody(raw, target, outputName, version, packetSource, drain, routing);
+  // Structures 3-4 take a bundled constant's value from the simulation (a NED
+  // parameter); structures 1-2 hold it fixed, to keep V2's initialize() identical
+  // to SensorApp's. See bundledConstants.ts.
   const tree = releaseNodeIdentity(
-    emitBody(raw, target, outputName, version, packetSource, drain, routing), outputName);
+    carriesPattern(version) ? installBundledParameters(body, raw.contexts, outputName) : body,
+    outputName);
   // ONE exit point for the namespace, so a future structure cannot be added
   // without it. A module emitted without the wrap compiles perfectly on its own
   // and fails only when linked beside a second generated module, with

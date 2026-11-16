@@ -673,7 +673,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     expect(h).toContain("class RoutePkt : public PPkt");
     expect(h).toContain("class BeaconPkt : public PPkt");
     expect(h).not.toContain("class RreqPkt");
-    expect(h).toContain("(derived from C0, C1, C2_ctl)");
+    expect(h).toContain("(derived from C0, C1, CActivate, C2_ctl)");
   });
 
   // The other branch, on the same project plus ONE context naming a sink AMONG
@@ -696,7 +696,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     expect(h).toContain("class RrepPkt : public PPkt");
     expect(h).toContain("class RrerPkt : public PPkt");
     expect(h).not.toContain("class BeaconPkt");
-    expect(h).toContain("(derived from C0, C1, C2_dest, C2_aodv)");
+    expect(h).toContain("(derived from C0, C1, C2_dest, CActivate, C2_aodv)");
   });
 
   // And the way the harness gets AODV: the UNEDITED project, with the routing
@@ -708,7 +708,7 @@ describe("structure 3 = network-protocol shell + PPkt from another project", () 
     expect(h).toContain("class RreqPkt : public PPkt");
     expect(h).toContain("class RrerPkt : public PPkt");
     expect(h).not.toContain("class BeaconPkt");
-    expect(h).toContain("(derived from C0, C1, C2_aodv)");
+    expect(h).toContain("(derived from C0, C1, CActivate, C2_aodv)");
   });
 
   it("refuses a routing outside structure 3 rather than ignoring it", () => {
@@ -1296,11 +1296,18 @@ describe("the untranslated recount agrees with the emitted output", () => {
   const emitted = (project: string, machine: string) =>
     (gen(project, machine).map((f) => f.content).join("\n").match(/UNTRANSLATED/g) ?? []).length;
 
-  for (const [project, machine] of [["MintRoute", "M4"], ["RTMCS", "M6"], ["AppLayer", "pM3"]])
+  for (const [project, machine] of [["MintRoute", "M4"], ["RTMCS", "M6"]])
     it(`${project} ${machine}`, () => {
       expect(emitted(project, machine)).toBeGreaterThan(0);   // or agreement proves nothing
       expect(recount(project, machine)).toBe(emitted(project, machine));
     });
+  // The pattern project's last two untranslated clauses were PActivate's, and
+  // translate since 2026-11-17 (tests/pactivate.test.ts). Both counts are zero;
+  // the two case studies above remain the positive control.
+  it("AppLayer pM3: nothing left untranslated, and the recount agrees", () => {
+    expect(emitted("AppLayer", "pM3")).toBe(0);
+    expect(recount("AppLayer", "pM3")).toBe(0);
+  });
 });
 
 // ── 2026-09-27 bug hunt, the fixes that have no suite of their own ──────────
@@ -1313,8 +1320,10 @@ describe("what the emitted modules claim is true", () => {
   // Defect 3. The AODV module reported 8 untranslated where 1 was genuine.
   it("reports as untranslated only what nothing realises", () => {
     const cc = text(v3, ".cc");
-    expect(cc.match(/UNTRANSLATED/g) ?? []).toEqual(["UNTRANSLATED"]);
-    expect(cc).toContain("// UNTRANSLATED GUARD: data ≥ safetyThreshold");
+    // PActivate's guard was the one genuine marker until 2026-11-17, when its
+    // rule and the bundled declaration of safetyThreshold landed (pactivate.test.ts).
+    expect(cc.match(/UNTRANSLATED/g) ?? []).toEqual([]);
+    expect(cc).toContain("data >= safetyThreshold");
     // and every marker it stopped emitting is realised where the note says
     expect(cc).toContain("// realised per node at INITSTAGE_LAST (node identity binding): routeSeqNo ≔ ND × {0}");
     expect(cc).toContain("routeSeqNo[myNodeId] = 0;");

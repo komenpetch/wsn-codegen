@@ -101,7 +101,21 @@ chosen here. **Decide by type *and* observed usage, not by the variable's name.*
 | ID | Event-B | C++ | Why | Evidence |
 |---|---|---|---|---|
 | **CMP1** | `x ∈ A ∖ B` (set-difference membership) | `A.count(x) > 0 && B.count(x) == 0` | in `A` and not in `B` | INDBuffer/ISensingUnit/IPacket (`x ∈ ND∖Dests`) |
-| **CMP2** | total-function init `f := D × {c}` (incl. `c = ∅`) | `for (auto d : D) f[d] = c;` (or `f[d] = {};`) | `D×{c}` pairs every `d∈D` with constant `c` | ISensingUnit init (`ctlSensedFlg`, `senseBuff`) |
+| **CMP2** | total-function init `f := D × {c}` (incl. `c = ∅`) | `for (auto d : D) f[d] = c;` (or `f[d] = {};`) | `D×{c}` pairs every `d∈D` with constant `c` | ISensingUnit init (`ctlSensedFlg`, `senseBuff`); PActivate init (`emergencyAlert := ND × {FALSE}`) |
+| **CMP3** | ordering `a ≥ b`, `a ≤ b`, `a > b`, `a < b` (two names) | `a >= b` etc. | an order between two scalars is the C++ one | PActivate `activate` (`data ≥ safetyThreshold`); RTMCS M2 `actuating`, `no_actuating` |
+
+**PActivate (added 2026-11-17).** The pattern's actuation component is the one of the seven
+shipped with no interface machine, so the catalog induced from the interfaces had no rule for
+its clauses. Its source is the pattern project's own `activate` event (pM3, labels
+`MPActivate_activate_*`), with RTMCS M2's actuation events as a second instance. Two things
+were needed: CMP3 for its guard, and CMP2 for the plain `D × {c}` form, which the catalog
+already stated but the engine implemented only as `(A ∖ B) × {c}` until then. In the network
+modules and structures 3–4 a node-keyed `D × {c}` is still realised per node by the
+node-identity binding, not by CMP2. The guard's constant, `safetyThreshold`, is declared in no
+context of the pattern project; the tool bundles its declaration
+(`src/assets/pattern-extension/CActivate.buc`, `safetyThreshold ∈ ℤ`), and the value is
+RTMCS's (1001): a fixed constant in structures 1–2, a NED parameter with that default in
+structures 3–4.
 
 ---
 
@@ -120,10 +134,13 @@ source pattern (except the two completeness rows **SET3**, **FN4**, marked ○).
 | ST (structural) | ● | ● | ● | ● | ● | ● |
 | CMP (composite) | | | ● | | ● | ● |
 
-**Rule count:** 38 rules total — ENC 6, SET 5, FN 5, PS 7, MS 8, ST 5, CMP 2. Of these, **36
-are directly evidenced** by the six interfaces; **SET3** and **FN4** are included for
-form-completeness (their operator does not occur in these machines but belongs to the form's
-operation set).
+CMP2's `D × {c}` form and CMP3 are also evidenced by PActivate, which has no interface machine (see above).
+
+**Rule count:** 39 rules total — ENC 6, SET 5, FN 5, PS 7, MS 8, ST 5, CMP 3. Of these, **36
+are directly evidenced** by the six interfaces; **CMP3** by PActivate's own event; **SET3** and
+**FN4** are included for form-completeness (their operator does not occur in these machines but
+belongs to the form's operation set). The paper's figures were measured with the 38 rules before
+CMP3 was added (generator commit `7ca40c2`).
 
 ---
 
@@ -133,7 +150,7 @@ For a machine variable `v` with Event-B type `τ` and event body `B`:
 
 1. **Encode** `v`: run ENC1–ENC6 on `τ` *and* its usage in `B` → fixes `v`'s C++ container.
 2. **Translate** each guard/action in `B` with the Part II rule family matching `v`'s
-   container (SET / FN / PS / MS), plus CMP1–CMP2 for derived constructs.
+   container (SET / FN / PS / MS), plus CMP1–CMP3 for derived constructs.
 3. **Assemble** the event with ST1–ST5: guards → early-return preconditions (ST3), actions
    → ordered statements (ST5), action-less events → `bool` predicates (ST2), typing guards
    dropped (ST4).

@@ -29,7 +29,7 @@ measured results.
   simulation. The generated `.cc` compiles against real INET 4.5 headers with only those three
   files present.
 - **Set-theoretic guards are translated, not simplified by hand.** Relational image, domain
-  restriction and membership over relations are covered by a [38-rule catalog](TRANSLATION_RULES.md)
+  restriction and membership over relations are covered by a [39-rule catalog](TRANSLATION_RULES.md)
   induced from the WSN event component patterns themselves, not enumerated from the Event-B
   language.
 - **The whole refinement chain becomes one module.** The most-refined machine, flattened over
@@ -77,7 +77,7 @@ default of the command line) and
 | [Documentation](documentation.md) | how the framework works in full: the pipeline, the input format, encoding and translation, the output contract, the four emitted structures |
 | [Case studies](case-studies/index.md) | SensorApp, MintRoute, AODV and DSR: what is generated, what is pasted, how to run it, what was measured |
 | [Usage](usage.md) | running the tool in the browser and from the command line, and putting the module into OMNeT++ |
-| [Translation rules](TRANSLATION_RULES.md) | the complete 38-rule catalog, with the Event-B shape and the C++ each rule produces |
+| [Translation rules](TRANSLATION_RULES.md) | the complete 39-rule catalog, with the Event-B shape and the C++ each rule produces |
 | [Rule map](rule-map.md) | which source rule implements which catalog rule |
 | [Interface mapping](INTERFACE_MAPPING.md) | the per-interface Event-B to C++ mapping the catalog was induced from |
 | [About](about.md) | the project, the people, availability, and how to cite it |

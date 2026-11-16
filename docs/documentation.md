@@ -146,10 +146,10 @@ order, and takes the first that matches.
 > DSR reverse-path guard; the [DSR page](case-studies/dsr.md) records what supporting it would
 > need.
 
-See [Translation rules](TRANSLATION_RULES.md) for all 38, and [Rule map](rule-map.md) for which
+See [Translation rules](TRANSLATION_RULES.md) for all 39, and [Rule map](rule-map.md) for which
 source rule implements which.
 
-> **The two numberings differ.** The catalog has 38 rules; `src/engine/rules.ts` has **25**
+> **The two numberings differ.** The catalog has 39 rules; `src/engine/rules.ts` has **27**
 > matcher entries, and their ids are not the catalog's names. One matcher can realise several
 > catalog rules (`UNION-pair` matches `R ≔ R ∪ {a ↦ b}` and dispatches on the container, so it
 > is `PS2` for a pair-set, `FN3` for a function, `MS2` for a map-of-sets), and one catalog rule

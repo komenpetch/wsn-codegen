@@ -191,7 +191,7 @@ and headless-run notes) see **[docs/OMNETPP_INTEGRATION.md](docs/OMNETPP_INTEGRA
 |---|---|
 | [index.md](docs/index.md) | what the tool is, what it produces, and its scope |
 | [documentation.md](docs/documentation.md) | the pipeline, the Rodin input format, encoding selection, the output contract |
-| [TRANSLATION_RULES.md](docs/TRANSLATION_RULES.md) | the complete 38-rule catalog |
+| [TRANSLATION_RULES.md](docs/TRANSLATION_RULES.md) | the complete 39-rule catalog |
 | [rule-map.md](docs/rule-map.md) | which rule in `src/engine/rules.ts` implements which catalog rule — **generated**, run `node scripts/gen-rule-map.mjs` after changing the rules |
 | [usage.md](docs/usage.md) | running the tool, and placing the module in an OMNeT++ project |
 | [about.md](docs/about.md) | the project, the measured results, and what the tool does not do |

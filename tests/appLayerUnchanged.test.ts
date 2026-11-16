@@ -60,6 +60,19 @@ const BASELINE = resolve(HERE, "__baseline__/applayer-v4.json");
 // 94.5 %, both unchanged -- the restored guard lives in an Event-B event method
 // that has no SensorApp counterpart, so it cannot enter the LCS.
 //
+// DELIBERATE BASELINE CHANGE, 2026-11-17 -- the sixth: PActivate translates
+// (user: "can we add PActivate since it also one of interface", rules for every
+// structure; tests/pactivate.test.ts). Compared with the output of the last commit
+// before re-recording, exactly these moved and nothing else: the header's context
+// line names CActivate; it declares `inline int safetyThreshold = 1001;` (the
+// bundled declaration, value from RTMCS C2); the constructor's
+// `emergencyAlert ≔ ND × {FALSE}` marker became CMP2-D's loop; and `activate`
+// gained its guard `data >= safetyThreshold` and its action in place of the
+// refusal. The .ned is byte-identical. Similarity to SensorApp is unchanged
+// (156/165 = 94.5 %, every shell function statement-identical): `activate` has
+// no SensorApp counterpart, and the value is a fixed constant rather than a
+// parameter so that `initialize()` stays identical.
+//
 // DELIBERATE BASELINE CHANGE, 2026-10-09 -- the fifth, and a rename only, like
 // the second. Every generated module is now `EbWsn` (pipeline.ts MODULE_NAME),
 // not a name derived from the target machine (`Pm3Wsn` here, `M4Wsn`/`M6Wsn` on

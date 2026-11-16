@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<org.eventb.core.contextFile org.eventb.core.configuration="org.eventb.core.fwd" version="3">
+   <org.eventb.core.extendsContext name="ext1" org.eventb.core.target="C1"/>
+   <org.eventb.core.constant name="cst0" org.eventb.core.identifier="safetyThreshold"/>
+   <org.eventb.core.axiom name="axm01" org.eventb.core.label="axm_act_1" org.eventb.core.predicate="safetyThreshold ∈ ℤ" org.eventb.core.comment="PActivate's alarm threshold. The pattern's activate event guards data ≥ safetyThreshold (pM3 MPActivate_activate_g3) and no context of the pattern project declares it; RTMCS declares it in C2 (axm2_4 safetyThreshold ∈ ℤ, axm2_5 safetyThreshold = 1001). Type only: the value belongs to the application, so the simulation sets it" org.eventb.core.theorem="false"/>
+</org.eventb.core.contextFile>

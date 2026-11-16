@@ -76,6 +76,21 @@ export function miscRules(): NetRule[] {
       match: re(/^estNbrs\s*(?:=|≠)\s*neighbourTbl$/),
       emit: () => "",
     },
+    // ⚠ Refuses on purpose (intercept-and-refuse, as above). The base catalog's
+    // plain CMP2 form (`f ≔ D × {c}`, added for PActivate 2026-11-17) would turn a
+    // node-keyed INITIALISATION product into a constructor loop over ND, which is
+    // empty when the constructor runs; in these modules the node-identity binding
+    // realises those per node at INITSTAGE_LAST, and the packet-field ones
+    // (`netSeqNo ≔ PKT × {0}`) are the chunk's own initialiser. Both read the
+    // UNTRANSLATED marker to say so (markRealised), so the shape must stay
+    // untranslated here, exactly as it was before the base rule existed.
+    {
+      id: "MISC-PLAIN-PRODUCT-REALISED-ELSEWHERE",
+      tier: 1,
+      evidence: ["MintRoute.INITIALISATION", "RTMCS.INITIALISATION"],
+      match: re(/^\w+\s*≔\s*\w+\s*×\s*\{\s*(?:∅|\w+)\s*\}$/),
+      emit: () => "",
+    },
     {
       id: "MISC-PS1-ENCODING-AWARE",
       tier: 1,

@@ -19,7 +19,7 @@ describe("structure 4, DSR: its own context and the Final Report's name", () => 
   const h = dsr["EbWsn.h"], cc = dsr["EbWsn.cc"];
 
   it("the context is C2_dsr, not C2_aodv", () => {
-    expect(h).toContain("(derived from C0, C1, C2_dsr)");
+    expect(h).toContain("(derived from C0, C1, CActivate, C2_dsr)");
     expect(h + cc).not.toContain("C2_aodv");
   });
 

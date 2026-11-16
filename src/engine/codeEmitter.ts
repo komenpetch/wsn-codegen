@@ -1,6 +1,7 @@
 import { INITIALISATION } from "./types";
 import type { EncodedMachine, EncodingForm, GeneratedTree, RawContext } from "./types";
 import { translateEvent } from "./ruleEngine";
+import { bundledConstantsIn, bundledDeclaration } from "./bundledConstants";
 
 // Map an Event-B carrier token to its C++ alias (defined in eb_context.h).
 const ALIAS: Record<string, string> = { ND: "Node", PKT: "PktId", Dests: "Node", "ℤ": "Data", BOOL: "bool" };
@@ -292,6 +293,13 @@ function contextBlock(contexts: RawContext[]): string {
     // else overrides it. Emitted among the declared-only constants because that
     // is exactly what it is: the axiom gives a property, not a value.
     const sc = /^\s*(\w+)\s*∈\s*(ℕ1|ℕ|ℤ)\s*$/.exec(a.text);
+    // A constant the tool bundled (PActivate's safetyThreshold) carries the value
+    // its source gives, cited, rather than the smallest the type permits.
+    const bundled = sc ? bundledConstantsIn(contexts).find((b) => b.name === sc[1]) : undefined;
+    if (sc && bundled && !fixed.has(sc[1]) && !opaque.has(sc[1])) {
+      opaque.set(sc[1], bundledDeclaration(bundled));
+      continue;
+    }
     if (sc && constants.has(sc[1]) && !fixed.has(sc[1]) && !opaque.has(sc[1])) {
       opaque.set(sc[1], `inline int ${sc[1]} = ${sc[2] === "ℕ1" ? 1 : 0};`
         + `${note(a)} — a property, not a value; harness may override`);
@@ -581,7 +589,7 @@ ${parity ? `#include "inet/common/lifecycle/NodeStatus.h"\n` : ""}#include "inet
 #include "inet/networklayer/contract/INetworkSocket.h"
 
 using namespace inet;
-${parity ? `\n${contextBlock(contexts)}\n` : ""}
+${parity ? `\n${contextBlock(contexts)}\n` : bundledConstantsIn(contexts).map((b) => `\n${bundledDeclaration(b)}\n`).join("")}
 // Module shell modelled on INET's SensorApp (inet/applications/sensorapp).
 // The model's CommPattern pair is emitted under SensorApp's names (thesis
 // S4/S5): Event-B send_down → sendSensorPacket(...) carrying the transmit
