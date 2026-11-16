@@ -55,9 +55,12 @@ read; the three items above are what is needed to repeat a protocol run from the
 
 ## How to cite
 
-Cite the paper that describes the tool. Until it is published, cite the repository URL together
-with the commit hash of the version used. The footer of every page names the commit the site was
-built from.
+Cite the paper that describes the tool: K. Nitchaphon, *WSN-CodeGen: An Automatic Code
+Generation Framework from Event-B Models for Wireless Sensor Networks* (in preparation). Until
+it is published, cite the repository URL together with the commit hash of the version used. The
+footer of every page names the commit the site was built from. The paper's accuracy figures were
+measured with the generator at commit `7ca40c2`; the
+[SensorApp page](case-studies/sensorapp.md) says what has changed since.
 
 ## Acknowledgements
 

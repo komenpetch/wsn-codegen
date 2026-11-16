@@ -74,6 +74,11 @@ Today's V2 output measures 156 of 165 statements, 94.5 %. The paper's 93.9 % was
 the generated code was wrapped in a C++ namespace. The extra match is the namespace's closing
 brace, which strips to the same text as `SensorApp.cc`'s own; no behaviour changed.
 
+**Which version the paper measured.** The paper's accuracy figures and runs were taken with the
+generator at commit `7ca40c2` (2026-07-21). The module was then named `Pm3App`, which is the
+name the paper prints; the generator has since named every module `EbWsn`. The runs used
+OMNeT++ 6.3.0, INET 4.5.4 and OMNeT++'s own compiler, clang 20.1.5.
+
 On three files, the V2 row of the paper's accuracy table is precision 37.26 %, recall 93.94 %,
 F 53.36 %. Precision is low because the generated files hold the whole Event-B model in
 addition to `SensorApp`'s shell, and `SensorApp` has no counterpart for the model's events.

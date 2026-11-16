@@ -91,6 +91,11 @@ node scripts/gen-rule-map.mjs --check # fail if that file is stale
 
 ## Putting the module into OMNeT++
 
+Every result on these pages was produced with OMNeT++ 6.3.0 and INET 4.5.4 on Windows 11,
+building with the compiler OMNeT++ ships for Windows, clang 20.1.5 (its CLANG64 toolchain).
+INET's prebuilt libraries are built against that compiler's C++ library, so a module must be
+built with it too; a separately installed GCC cannot link against them.
+
 ### Structures 1 and 2: an application
 
 The output plugs in where a node's application goes.
