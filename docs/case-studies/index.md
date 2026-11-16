@@ -25,9 +25,14 @@ baseline:
 | Case study | Baseline | Functions scored | Precision | Recall | F-measure |
 |---|---|---|---|---|---|
 | SensorApp V2 | INET `SensorApp` | 15 of 15 | 100 % | 100 % | 100 % |
-| MintRoute | INET's MintRoute port | 18 | 37.23 % | 43.21 % | 40.00 % |
+| MintRoute | INET's MintRoute port | 18 | 37.12 % | 43.21 % | 39.93 % |
 | AODV | INET's `Aodv` | 21 | 31.89 % | 25.56 % | 28.37 % |
 | DSR | `DSRRoute` and `CTL6`, written for this project | 22 | 28.22 % | 39.31 % | 32.85 % |
+
+SensorApp V2 is the paper's figure, measured at commit `7ca40c2`. The three protocol rows were
+measured on 2026-11-17 with the generator at `b162770`, which translates PActivate (the actuation
+component); that change matched no new statement and lowered MintRoute's precision by one
+generated statement in `initialize`.
 
 **Behaviour**, one line per case study:
 

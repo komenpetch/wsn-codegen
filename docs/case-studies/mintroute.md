@@ -132,9 +132,9 @@ checked unchanged by that removal.
 
 | Scope | Precision | Recall | F |
 |---|---|---|---|
-| the 14 methods the structure covers, generated code only | 25.10 % | 28.70 % | 26.78 % |
-| 18 functions: those 14 plus the 4 of the parent choice (`chooseParent`, `evaluateCost`, `updateEst`, `updateNeighborTable`) | 37.23 % | 43.21 % | 40.00 % |
-| all three files (`.h`, `.cc`, `.ned` against `MintRoute.h`, `.cc`, `.ned`) | 11.02 % | 31.84 % | 16.38 % |
+| the 14 methods the structure covers, generated code only | 25.00 % | 28.70 % | 26.72 % |
+| 18 functions: those 14 plus the 4 of the parent choice (`chooseParent`, `evaluateCost`, `updateEst`, `updateNeighborTable`) | 37.12 % | 43.21 % | 39.93 % |
+| all three files (`.h`, `.cc`, `.ned` against `MintRoute.h`, `.cc`, `.ned`) | 10.99 % | 31.84 % | 16.34 % |
 
 All 14 baseline method names exist in the generated module; 3 of the 14 are statement-identical
 (`handleSelfMessage`, `setDownControlInfo`, `resolveBroadcast`), and 4 of the 18 with the parent

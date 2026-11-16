@@ -128,7 +128,7 @@ support:
 | Scope | Precision | Recall | F |
 |---|---|---|---|
 | the 21 functions the structure needs (20 defined, 0 statement-identical) | 31.89 % | 25.56 % | 28.37 % |
-| all three files (`.h`, `.cc`, `.ned` against `Aodv.h`, `.cc`, `.ned`) | 4.49 % | 10.09 % | 6.21 % |
+| all three files (`.h`, `.cc`, `.ned` against `Aodv.h`, `.cc`, `.ned`) | 4.48 % | 10.09 % | 6.20 % |
 
 The 21 are chosen from the 51 functions in `Aodv.cc`. Of the other 30, 15 are not needed here (the
 data path, route expiry, RREP-acknowledgement, gratuitous replies, the blacklist, the link-break
