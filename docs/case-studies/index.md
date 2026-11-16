@@ -27,7 +27,7 @@ baseline:
 | SensorApp V2 | INET `SensorApp` | 15 of 15 | 100 % | 100 % | 100 % |
 | MintRoute | INET's MintRoute port | 18 | 37.23 % | 43.21 % | 40.00 % |
 | AODV | INET's `Aodv` | 21 | 31.89 % | 25.56 % | 28.37 % |
-| DSR | `DSRRoute` and `CTL6`, written for this project | 22 | 3.55 % | 3.47 % | 3.51 % |
+| DSR | `DSRRoute` and `CTL6`, written for this project | 22 | 28.22 % | 39.31 % | 32.85 % |
 
 **Behaviour**, one line per case study:
 
@@ -50,9 +50,10 @@ How to read the similarity table:
 - **The figures are not a ranking across rows.** The baselines differ in kind: a module that
   shares `SensorApp`'s structure, a module that shares MintRoute's shell, a routing daemon over
   UDP and IP (AODV), and a protocol written for this project from a fragment printed in a report (DSR).
-- **DSR's figures carry little weight.** Of its six matching statements, all are `else {` or
-  `break;`. Its baseline is written from the same sources as the test code, so it is not an
-  independent check. The route tests, not the similarity score, are the DSR evidence.
+- **DSR's figures measure agreement with a reading of the same source.** Its baseline is written
+  from the same printed figures as the test code, which was ported from that baseline on
+  2026-11-17 (before the port: 3.51 %), so it is not an independent check. The route tests, not
+  the similarity score, are the DSR evidence.
 
 ## What the case studies do not show
 

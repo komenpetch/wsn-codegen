@@ -29,10 +29,10 @@ npm run generate -- <pattern project> out --v4 --routing dsr
 
 | Generated | Pasted (`[DSR test code]`, switched by `dsr = true`) |
 |---|---|
-| `RreqPkt`, `RrepPkt` and `RrerPkt` packet classes | `DsrRreqPkt` and `DsrRrepPkt`, extending them with the route record |
+| `RreqPkt`, `RrepPkt` and `RrerPkt` packet classes | `DSRPkt`, the baseline's one packet class for RREQ and RREP, carrying the route record |
 | the RREQ flood, with duplicate suppression, and the transmit named `sendRREQ` | the route record: the originator first, each forwarder appended, 4 bytes per entry on the air |
 | one timer per packet type; the neighbour table and its counters | the sink's RREP along the reversed record, taken at the arrival before the model |
-| the route-table operation `addEntry` and route publication into INET's table | `reverseRoute`, `updateRouteCacheTable`, `selectRoute` and `sendRREP`, under the Final Report's names; the route cache, with `addEntry(me, sink, path[0])` |
+| the route-table operation `addEntry` and route publication into INET's table | the controller `ctl6` with the Final Report's events (`create_rreq`, `receive_rreqPkt`, `create_rrep`, `reverse_path_loop`, ...); `handleLowerMsg`, `reverseRoute`, `updateRouteCacheTable`, `selectRoute` and `sendRREP` with the Final Report's signatures; the route cache, with `addEntry(me, sink, path[0])` |
 | | tick-driven retries; the maximum path length of 20 |
 
 ## Run it
@@ -109,7 +109,7 @@ path, 8 by flood); paths longer than the shortest in 1, 0, 1, 2 and 0 of 8 senso
 caught 10 of 10 doctored copies.
 
 Compared sensor by sensor with `Route360`, every sensor is routed on both sides in all five runs:
-the same path in 29 of 40, the same hop count in 35 of 40, the same first hop in 31 of 40. The
+the same path in 29 of 40, the same hop count in 34 of 40, the same first hop in 31 of 40. The
 baseline routes earlier (1.1 to 8.1 s against 5.1 to 12.0 s), because its first datagram starts a
 discovery at about 1 s and the generated module waits for its 5 s tick.
 
@@ -117,19 +117,27 @@ discovery at about 1 s and the generated module waits for its 5 s tick.
 
 | Scope | Precision | Recall | F |
 |---|---|---|---|
-| 22 functions: the 6 `DSRRoute` functions and 16 of `CTL6`'s (its 7 data events left out) | 3.55 % | 3.47 % | 3.51 % |
-| all three files (`DSRRoute.h`, `CTL6.h`, `.cc` and `.ned` against the generated three) | 5.76 % | 19.53 % | 8.90 % |
+| 22 functions: the 6 `DSRRoute` functions and 16 of `CTL6`'s (its 7 data events left out) | 28.22 % | 39.31 % | 32.85 % |
+| all three files (`DSRRoute.h`, `CTL6.h`, `.cc` and `.ned` against the generated three) | 7.13 % | 25.90 % | 11.18 % |
 
-6 of the 22 functions exist in the generated module under the baseline's name and none is
-statement-identical.
+All 22 functions exist in the module under the baseline's name, and 2 are statement-identical.
+Split by baseline file: the 6 `DSRRoute` functions 20.81 / 33.64 / 25.71 %, the 16 `CTL6` events
+47.06 / 48.48 / 47.76 %.
 
-**These numbers carry very little weight, and no reading should lean on them.** The six statements
-in common are `else {` twice and `break;` four times, so no statement of DSR's logic matches.
-Forty-four of the 92 matching statements in the three-file row are in the `.ned`, whose baseline
-has the same shape as MintRoute's. The reasons are decided, not accidental: node ids against
-`L3Address` in every signature; state changes through the controller in the baseline and inline in
-the module; and the baseline's printed signatures against the test code's own
-(`selectRoute(myNetwAddr, path)` against `selectRoute(src, dest)`).
+**Before 2026-11-17 these figures were 3.55 / 3.47 / 3.51 % and 5.76 / 19.53 / 8.90 %.** The test
+code had been written from the thesis and the Final Report before the baseline existed, and never
+took its shape: its own signatures, state changed inline instead of through the controller, two
+packet classes instead of one. Its six matching statements were `else {` and `break;`. It is now a
+port of the baseline, keeping node ids, the model's own RREQ flood and the five assumptions, with
+nothing added only to match. Every run is unchanged: all thirteen configurations end at the same
+event with every scalar equal, and every route picture is byte for byte the same. One step was not
+taken over: re-sending the received RREP frame, as the baseline does, delayed every forwarded RREP,
+so the port sends a new frame.
+
+**Read these numbers with the baseline's provenance in mind.** The baseline was written from the
+same printed figures as the test code, so the score measures agreement between two readings of
+one source. Forty-four of the 122 matching statements in the three-file row are in the `.ned`,
+whose baseline has the same shape as MintRoute's. The route tests remain the DSR evidence.
 
 ## What it does not show
 

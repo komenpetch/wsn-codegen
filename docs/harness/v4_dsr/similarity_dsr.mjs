@@ -12,8 +12,9 @@
 // scored (see NOT_SCORED). Pairing, as agreed 2026-10-28:
 //   - by name: sendRREQ, sendRREP, reverseRoute, updateRouteCacheTable, selectRoute;
 //   - handleLowerMsg (Fig 6.10) against v4's RREQ handler onReceiveRreqPkt followed by
-//     its arrival handleLowerPacket(Packet *), which takes the RREP before the model:
-//     together they do Fig 6.10's job (RREQ case first, as the figure orders it);
+//     its arrival handleLowerPacket(Packet *), which takes the RREP before the model,
+//     and (since the 2026-11-17 port) the module's own handleLowerMsg, which handles
+//     it: together they do Fig 6.10's job (RREQ case first, as the figure orders it);
 //   - handleUpperMsg (Fig 6.9) is not ported: v4 sends no DATA (D10).
 // ⚠ Not an independent baseline: both sides were written from the same sources (Q2).
 //
@@ -38,7 +39,9 @@ const MOD_CLASS = SELF ? 'DSRRoute' : 'EbWsn';
 // start of its parameter list.
 const PRINTED = [
   { fn: 'handleUpperMsg', module: null, why: 'not ported: v4 sends no DATA (D10)' },
-  { fn: 'handleLowerMsg', module: [{ name: 'onReceiveRreqPkt' }, { name: 'handleLowerPacket', params: 'Packet' }], mixed: true },
+  // Since the 2026-11-17 port the module has its own handleLowerMsg (the RREP case);
+  // the RREQ case stays in onReceiveRreqPkt, and the generated arrival stays in.
+  { fn: 'handleLowerMsg', module: [{ name: 'onReceiveRreqPkt' }, { name: 'handleLowerPacket', params: 'Packet' }, { name: 'handleLowerMsg' }], mixed: true },
   { fn: 'sendRREQ', module: [{ name: 'sendRREQ' }], mixed: true },
   { fn: 'sendRREP', module: [{ name: 'sendRREP' }] },
   { fn: 'reverseRoute', module: [{ name: 'reverseRoute' }] },

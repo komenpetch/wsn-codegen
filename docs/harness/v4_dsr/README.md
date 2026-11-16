@@ -162,7 +162,7 @@ where the v4 test code has its own (`selectRoute(src, dest)`,
 
 `compare_dsr.mjs` on the five recorded pairs (paired by seed set only; the two
 modules draw from the RNG differently): every sensor routed on both sides in all
-five; same path 29 of 40, same hop count 35 of 40, same first hop 31 of 40.
+five; same path 29 of 40, same hop count 34 of 40, same first hop 31 of 40.
 Paths longer than the shortest: v4 6 of 40, baseline 4 of 40. The baseline routes
 earlier (1.1-8.1 s, its first datagram at about 1 s) than v4 (5.1-12.0 s, its
 first RREQ tick at 5.1-5.9 s). RREQs 8 on both sides in four runs; v4 #4 sends
@@ -178,3 +178,36 @@ probes, and the DSR baseline (`DSRRoute.{h,cc,ned}`, `CTL6.{h,cc}`,
 DSR test code pasted in; they are `scratch/v4_dsr_2026-10-24/paste_dsr/edited/`,
 made by `tools/make_paste_dsr.mjs` from `original/`), the Makefile, `out/`,
 `results/`, the logs and the executable. Change a file here, then copy it back.
+
+## The DSR test code ported from the baseline (2026-11-17)
+
+The DSR test code pasted into `EbWsn.*` (source:
+`scratch/v4_dsr_2026-10-24/paste_dsr/`) was rewritten as a port of this folder's
+baseline: one packet class `DSRPkt` for RREQ and RREP (in place of plan B2's
+`DsrRreqPkt`/`DsrRrepPkt`), the controller object `ctl6` with `CTL6.cc`'s events,
+and the shell functions `handleLowerMsg`, `sendRREP`, `reverseRoute`,
+`updateRouteCacheTable`, `selectRoute`, `sendToNextHop` with the printed
+signatures. Node ids, the model's own RREQ flood and the five assumptions are
+kept. The staged `EbWsn.*` are the ported files (`.h` bfeab8c4, `.cc` 0a72a325,
+`.ned` a21e0296 unchanged).
+
+One step of the baseline was not taken over: re-sending the received RREP
+frame made forwarded RREPs arrive later (four runs ended at another event), so
+the port sends a new frame, as the code did before.
+
+Runs unchanged: all thirteen configs (Control, Route360 #0-#4, Route360Plain
+#0-#4, FailSensor5, FailSensor6) end at the recorded event with every `scalar`
+line equal and every picture byte-identical; Baseline unchanged. `route.mjs`
+12/12, `tree_svg.mjs` 12/12, `baseline_dsr.mjs` 5/5, `invariants.sh` 13/13,
+`type_check.sh` and `leak_check.sh` green on Route360 #0 and FailSensor5.
+`compare_dsr.mjs` unchanged (same path 29, hop count 34, first hop 31 of 40).
+
+Score after the port (`similarity_dsr.mjs`, which now also pairs the module's
+own `handleLowerMsg` into `handleLowerMsg`): 6 of 7 defined, 0 identical,
+**sym 22.9 %, recall 25.5 %** (was 3.7 % / 4.3 %). Precision/recall
+(`scratch/prf_dsr.mjs`, test support removed): 22 protocol functions
+241/173/68 = P 28.22 %, R 39.31 %, F 32.85 % (was 3.55 / 3.47 / 3.51 %), 22/22
+defined, 2/22 identical; all three files 1712/471/122 = P 7.13 %, R 25.90 %,
+F 11.18 % (was 5.76 / 19.53 / 8.90 %). A separate Python recount agrees.
+⚠ The baseline is not independent (written from the same Final Report
+figures), so the higher figure measures agreement with the printed structure.
