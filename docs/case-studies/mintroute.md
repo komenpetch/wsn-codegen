@@ -142,6 +142,41 @@ choice. The figure stays below 100 % for reasons the model decides: the generate
 build the model's header where `MintRoute.cc` builds its own, and the receive handlers carry the
 model's bodies.
 
+## Code complexity
+
+The same scored version against `MintRoute.h` and `MintRoute.cc`, one or more indicators for each
+of the six keys for a reliable program (the method is on the [case studies](index.md) page):
+
+| Key | Indicator | Module (generated and pasted) | `MintRoute.cc` |
+|---|---|---|---|
+| | functions | 123 | 31 |
+| control structure | CCN total / average | 550 / 4.47 | 114 / 3.68 |
+| | functions above CCN 10 / above 20 | 15 / 3 | 2 / 0 |
+| | highest CCN | `runDeliveryEvents` 23, `create_routePkt` 22, `create_beaconPkt` 22 | `chooseParent` 17, `initialize` 11 |
+| | deepest brace nesting; `goto` | 5; 0 | 3; 0 |
+| execution time | deepest loop nesting; functions with nested loops | 2; 3 | 1; 0 |
+| exception handling | divisions with an unchecked divisor | 1 | 1 |
+| | `map::at` calls / with no lookup before them | 35 / 1 | 0 / 0 |
+| | `throw`; `try`/`catch` | 4; 0 | 4; 0 |
+| meaningful variable | names of one or two characters | 24 of 106 (22.6 %) | 7 of 56 (12.5 %) |
+| program structure | lines of code in functions, average per function | 1,304, 10.6 | 496, 16.0 |
+| | functions above 50 lines | 2 | 3 |
+| program description | comment lines; functions with a header comment | 26.6 %; 35.8 % | 7.0 %; 9.7 % |
+
+By origin: the 98 generated functions average CCN 4.69, the 19 hand-written ones (the parent
+choice and its route fields) 2.37, and the 6 generated functions the test code edits 7.50.
+
+- **The flagged items are safe in context.** The unchecked division is `% estimateToRouteRatio`,
+  ported line for line from `MintRoute.cc`, which has the same one; the divisor is a NED parameter
+  with default 3. The one `at()` without a lookup is `received.at({y, x})` in `updateNbrCounters`: a guard
+  just before it requires `{y, x}` in the neighbour table, and the model's invariant makes `received`
+  total on that table.
+- **The short names are the model's.** Event-B parameters are `x`, `y`, `nb`, `nh`, `pkt`, and the
+  generated code keeps them so that each line can be traced back to its clause.
+- **The nested loops are the scheduler's.** The two receive events bind a packet and a receiver by
+  walking a map from packets to sets of nodes, and `runDeliveryEvents` repeats its round, at most
+  64 times, around the drains that walk the pending pairs.
+
 ## What it does not show
 
 - **The link cost is ETX, and the Event-B model's differs.** The thesis text, the MiXiM code and

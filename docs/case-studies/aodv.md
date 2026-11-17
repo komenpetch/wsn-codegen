@@ -140,6 +140,45 @@ The generated code alone scores 0 on the 21 functions, because the routing logic
 part; what the generator contributes shows in the four RREQ names it carries and in the run
 results, not in this table.
 
+## Code complexity
+
+The same scored version against `Aodv.h` and `Aodv.cc`, one or more indicators for each of the
+six keys for a reliable program (the method is on the [case studies](index.md) page):
+
+| Key | Indicator | Module (generated and pasted) | `Aodv.cc` |
+|---|---|---|---|
+| | functions | 167 | 58 |
+| control structure | CCN total / average | 681 / 4.08 | 264 / 4.55 |
+| | functions above CCN 10 / above 20 | 18 / 5 | 7 / 2 |
+| | highest CCN | `createRREQ` 25, `runDeliveryEvents` 23, `create_rrepPkt` 22 | `handleRREQ` 25, `handleRREP` 21, `datagramForwardHook` 18 |
+| | deepest brace nesting; `goto` | 5; 0 | 5; 0 |
+| execution time | deepest loop nesting; functions with nested loops | 2; 3 | 0; 0 |
+| exception handling | divisions with an unchecked divisor | 0 | 0 |
+| | `at()` calls / with no lookup before them | 39 / 4 | 0 / 0 |
+| | `throw`; `ASSERT`; `try`/`catch` | 4; 6; 0 | 5; 15; 0 |
+| meaningful variable | names of one or two characters | 24 of 149 (16.1 %) | 5 of 102 (4.9 %) |
+| program structure | lines of code in functions, average per function | 1,721, 10.3 | 948, 16.3 |
+| | functions above 50 lines | 5 | 3 |
+| program description | comment lines; functions with a header comment | 26.7 %; 38.3 % | 30.6 %; 5.2 % |
+
+By origin: the 101 generated functions average CCN 4.48, the 58 hand-written ones (the ported
+AODV logic) 2.19, and the 8 generated functions the test code edits 12.75. The edited ones are
+the highest: `createRREQ`, `handleLowerPacket` and `handleRREQ` are generated methods with the
+ported AODV steps pasted into them, which is why `createRREQ` reaches `handleRREQ`'s 25 in the
+baseline.
+
+- **This is the one case where the module's average is below the baseline's.** INET's AODV
+  concentrates its logic in a few long handlers; the module spreads the same work over the
+  model's events and the ported functions, which are shorter.
+- **The four `at()` calls without a lookup are safe in context.** Two are
+  `std::vector::at` inside the `UnreachableNode` array accessors, which check the index
+  themselves; one is in `updateNbrCounters`, where a guard and the model's invariant put the key
+  in the table first; the last is in `sendRREP`, which is called only after `handleRREQ` has
+  created the reverse route it looks up.
+- **Most short names are the model's.** 20 of the 24 occur in the generated functions, which keep
+  the Event-B parameter names (`x`, `nb`, `nh`, `pkt`) so each line can be traced to its clause;
+  the ported code has 5 (`f`, `v`, `n`, `i`, `j`).
+
 ## What it does not show
 
 - **The logic is ported from INET's `Aodv`, not translated from RTMCS.** Structure 4 refuses the

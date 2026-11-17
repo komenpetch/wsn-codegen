@@ -90,6 +90,40 @@ of `safetyThreshold` that the model lacks, so today's output leaves none of the 
 shell and its similarity to `SensorApp` did not change. `activate` is still never called in a run,
 so no packet count moves.
 
+## Code complexity
+
+Today's V2 output (`--v2`, generator at `b162770`) against `SensorApp.h` and `SensorApp.cc`, one
+or more indicators for each of the six keys for a reliable program (the method is on the
+[case studies](index.md) page). Every function in the module is generated; nothing is pasted.
+
+| Key | Indicator | V2 | `SensorApp.cc` |
+|---|---|---|---|
+| | functions | 32 | 16 |
+| control structure | CCN total / average | 133 / 4.16 | 43 / 2.69 |
+| | functions above CCN 10 / above 20 | 2 / 0 | 0 / 0 |
+| | highest CCN | `creatingDataPacket` 14, `creatingControlPacket` 11, `openSocket` 10 | `openSocket` 10, `scheduleNextSensing` 5, `initialize` 4 |
+| | deepest brace nesting; `goto` | 2; 0 | 2; 0 |
+| execution time | deepest loop nesting; functions with nested loops | 1; 0 | 0; 0 |
+| exception handling | divisions with an unchecked divisor | 0 | 0 |
+| | `map::at` calls / with no lookup before them | 11 / 5 | 0 / 0 |
+| | `throw`; `ASSERT`; `try`/`catch` | 2; 1; 0 | 2; 1; 0 |
+| meaningful variable | names of one or two characters | 9 of 28 (32.1 %) | 0 of 13 |
+| program structure | lines of code in functions, average per function | 349, 10.9 | 139, 8.7 |
+| | functions above 50 lines | 0 | 0 |
+| program description | comment lines; functions with a header comment | 16.3 %; 18.8 % | 21.1 %; 6.3 % |
+
+- **The shell is `SensorApp`'s own, so the difference is the model's events.** `openSocket` scores
+  10 in both, and the 15 shell functions are statement-identical to the baseline. The two
+  functions above 10 are the creating events, whose guards each become one `if`.
+- **The five `at()` calls with no lookup before them would throw if they ran, and they never run.**
+  They read `initialSrcAddr` and `type` in the two creating events and `emergencyAlert` in
+  `activate`. These maps are empty in structure 2, which binds no node or packet identity, and no
+  code in the module calls these three events: in structure 2 the shell's transmit path makes the
+  traffic. In the network-layer structures the same reads go to the packet's own fields or to
+  state the node-identity binding fills at start-up.
+- **The short names are the model's** (`x`, `y`, `p`, `nb`, `sf`), kept so that each line can be
+  traced to its Event-B clause.
+
 ## What it does not show
 
 - **One model.** The figures come from one project. The nine-node runs of the network case

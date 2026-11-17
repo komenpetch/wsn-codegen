@@ -60,6 +60,40 @@ How to read the similarity table:
   2026-11-17 (before the port: 3.51 %), so it is not an independent check. The route tests, not
   the similarity score, are the DSR evidence.
 
+**Code complexity**, module against baseline, both as scored above (the module with
+the measurement support removed):
+
+| Case study | Functions | Total CCN | Average CCN | Functions above CCN 10 | Highest CCN |
+|---|---|---|---|---|---|
+| SensorApp V2 | 32 / 16 | 133 / 43 | 4.16 / 2.69 | 2 / 0 | 14 / 10 |
+| MintRoute | 123 / 31 | 550 / 114 | 4.47 / 3.68 | 15 / 2 | 23 / 17 |
+| AODV | 167 / 58 | 681 / 264 | 4.08 / 4.55 | 18 / 7 | 25 / 25 |
+| DSR | 141 / 49 | 590 / 104 | 4.18 / 2.12 | 15 / 1 | 23 / 15 |
+
+Each cell is *module / baseline*. CCN is McCabe's cyclomatic complexity of one
+function: 1 plus each `if`, `for`, `while`, `case`, `catch`, `&&`, `||` and `?`. Measured on
+2026-11-17 with the generator at `b162770`; SensorApp V2 is today's `--v2` output, not the
+paper's `7ca40c2` one.
+
+How to read the complexity table:
+
+- **The method follows the six keys for a reliable program**: control structure, execution time,
+  exception handling, meaningful variable names, program structure, and the program's description.
+  The keys say what to look at, not how to count it, so each key gets one or more indicators. CCN
+  is the first key's; each case-study page has a table with all six.
+- **The totals are not comparable; the averages are.** The generated module holds the whole Event-B
+  model, so it has two to four times as many functions as the baseline and its total grows with
+  them.
+- **Most of the complexity is in the generated event methods.** Every guard of an Event-B event is
+  one `if`, so an event with many guards scores high: the highest in each protocol module are the
+  creating events (22 to 23) and `runDeliveryEvents` (23). By origin, in the three protocol
+  modules the generated functions average 4.4 to 4.7, the hand-written test code 1.9 to 2.4, and
+  the few generated functions the test code edits 7.5 to 12.8.
+- **The counter is a small C++ scanner, not a compiler.** Its CCN figures were checked against a
+  second, separately written counter, which gives the same highest functions and the same counts
+  above 10.
+- **No module and no baseline uses `goto` or `try`/`catch`.**
+
 ## What the case studies do not show
 
 Stated plainly, because a generator that overstates its reach is worse than one that does less.

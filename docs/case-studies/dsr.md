@@ -139,6 +139,41 @@ same printed figures as the test code, so the score measures agreement between t
 one source. Forty-four of the 122 matching statements in the three-file row are in the `.ned`,
 whose baseline has the same shape as MintRoute's. The route tests remain the DSR evidence.
 
+## Code complexity
+
+The same scored version against `DSRRoute.h`, `DSRRoute.cc`, `CTL6.h` and `CTL6.cc`, one or more
+indicators for each of the six keys for a reliable program (the method is on the
+[case studies](index.md) page):
+
+| Key | Indicator | Module (generated and pasted) | `DSRRoute` and `CTL6` |
+|---|---|---|---|
+| | functions | 141 | 49 |
+| control structure | CCN total / average | 590 / 4.18 | 104 / 2.12 |
+| | functions above CCN 10 / above 20 | 15 / 4 | 1 / 0 |
+| | highest CCN | `runDeliveryEvents` 23, `create_rreqPkt` 23, `create_rrepPkt` 22 | `handleLowerMsg` 15, `finish` 7, `initialize` 6 |
+| | deepest brace nesting; `goto` | 5; 0 | 4; 0 |
+| execution time | deepest loop nesting; functions with nested loops | 2; 3 | 0; 0 |
+| exception handling | divisions with an unchecked divisor | 0 | 0 |
+| | `map::at` calls / with no lookup before them | 36 / 1 | 0 / 0 |
+| | `throw`; `try`/`catch` | 4; 0 | 5; 0 |
+| meaningful variable | names of one or two characters | 23 of 102 (22.5 %) | 5 of 38 (13.2 %) |
+| program structure | lines of code in functions, average per function | 1,429, 10.1 | 420, 8.6 |
+| | functions above 50 lines | 2 | 1 |
+| program description | comment lines; functions with a header comment | 28.2 %; 42.6 % | 20.7 %; 73.5 % |
+
+By origin: the 103 generated functions average CCN 4.44, the 32 hand-written ones (the port of
+`DSRRoute` and `CTL6`) 1.91, and the 6 generated functions the test code edits 12.00.
+
+- **The baseline is the least complex of the four, and that is its provenance, not a merit of
+  DSR.** It was written for this project from a printed fragment, one short method per event of
+  the Final Report's controller, so its average sits near 2; the hand-written part of the module,
+  ported from it, sits at 1.91.
+- **The one `at()` without a lookup is in `updateNbrCounters`**, where a guard and the model's
+  invariant put the key in the table first, as in the other two network modules.
+- **The rest of the module is the same generated code as AODV's.** The DSR and AODV options give
+  the same split of control packets, so the generated functions and their figures are almost the
+  same; only the pasted logic differs.
+
 ## What it does not show
 
 - **The reverse-path guard is not generated.** The Final Report's event `reverse_path_loop`
