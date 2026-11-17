@@ -10,7 +10,7 @@ compares with its baseline**, and **what it does not show**.
 | SensorApp (application layer) | 2 | INET's `SensorApp` | [SensorApp](sensorapp.md) |
 | MintRoute (tree collection) | 4, flooding split | INET's MintRoute port | [MintRoute](mintroute.md) |
 | AODV (on-demand routing) | 4, AODV split | INET's `Aodv` | [AODV](aodv.md) |
-| DSR (source routing) | 4, DSR split | `DSRRoute` and `CTL6`, written for this project from the Final Report | [DSR](dsr.md) |
+| DSR (source routing) | 4, DSR split | INET DSR module written for this project from the Final Report (`DSRRoute` and `CTL6`) | [DSR](dsr.md) |
 
 ## Results at a glance
 
@@ -27,7 +27,7 @@ baseline:
 | SensorApp V2 | INET `SensorApp` | 15 of 15 | 100 % | 100 % | 100 % |
 | MintRoute | INET's MintRoute port | 18 | 37.12 % | 43.21 % | 39.93 % |
 | AODV | INET's `Aodv` | 21 | 31.89 % | 25.56 % | 28.37 % |
-| DSR | `DSRRoute` and `CTL6`, written for this project | 22 | 28.22 % | 39.31 % | 32.85 % |
+| DSR | INET DSR module written for this project (`DSRRoute` and `CTL6`) | 22 | 28.22 % | 39.31 % | 32.85 % |
 
 SensorApp V2 is the paper's figure, measured at commit `7ca40c2`. The three protocol rows were
 measured on 2026-11-17 with the generator at `b162770`, which translates PActivate (the actuation
